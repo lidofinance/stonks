@@ -2,7 +2,7 @@
 pragma solidity ^0.8.13;
 
 import {Stonks} from "./Stonks.sol";
-import {PriceChecker} from "./PriceCheker.sol";
+import {PriceChecker} from "./PriceChecker.sol";
 
 contract StonksFactory {
     event PriceCheckerDeployed(address priceCheckerAddress);
