@@ -4,47 +4,52 @@ pragma solidity ^0.8.13;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {GPv2Order} from "./lib/GPv2Order.sol";
+import {IPriceChecker} from "./interfaces/IPriceChecker.sol";
 
 import {ICoWSwapSettlement} from "./interfaces/ICoWSwapSettlement.sol";
 import {ERC1271_MAGIC_VALUE, IERC1271} from "./interfaces/IERC1271.sol";
 
 contract Order is IERC1271 {
-    address public immutable owner;
+    address public immutable operator;
+    address public immutable stonks;
+    address public immutable priceChecker;
 
     IERC20 public immutable tokenFrom;
-    IERC20 public immutable tokenTo;
-
-    uint32 public immutable validFrom;
     uint32 public immutable validTo;
 
     bytes32 public orderHash;
 
     constructor(
-        address owner_,
-        IERC20 tokenFrom_,
-        IERC20 tokenTo_,
-        uint32 validFrom_,
-        uint32 validTo_,
+        address operator_,
+        address priceChecker_,
+        address settlement_,
         bytes32 orderHash_,
-        address relayer_
+        GPv2Order.Data memory order_
     ) {
-        owner = owner_;
+        operator = operator_;
+        priceChecker = priceChecker_;
+        stonks = msg.sender;
 
-        tokenFrom = tokenFrom_;
-        tokenTo = tokenTo_;
-
-        validFrom = validFrom_;
-        validTo = validTo_;
-
+        tokenFrom = order_.sellToken;
+        validTo = order_.validTo;
         orderHash = orderHash_;
 
-        tokenFrom.approve(relayer_, type(uint256).max);
+        tokenFrom.approve(settlement_, type(uint256).max);
     }
 
     function isValidSignature(bytes32 hash, bytes calldata) external view returns (bytes4 magicValue) {
-        require(hash == orderHash, "invalid order");
-        require(validFrom <= block.timestamp && block.timestamp <= validTo, "invalid time");
+        require(hash == orderHash, "Order: invalid order");
+        require(block.timestamp <= validTo, "invalid time");
+
+        // TODO: check if price is much higher than suggested
 
         return ERC1271_MAGIC_VALUE;
+    }
+
+    function cancel() external {
+        require(msg.sender == operator, "Order: not operator");
+        require(validTo < block.timestamp, "Order: not expired");
+
+        tokenFrom.transfer(stonks, tokenFrom.balanceOf(address(this)));
     }
 }

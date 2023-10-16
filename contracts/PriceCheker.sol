@@ -22,33 +22,34 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  */
 contract PriceChecker is IPriceChecker {
     IChainlinkPriceFeedV3 public chainlinkPriceFeed;
+
     uint16 private constant MAX_BASIS_POINTS = 10_000;
-    address public immutable firstToken;
-    address public immutable secondToken;
+    uint16 public immutable marginBasisPoints;
 
-    constructor(address priceFeedAddress, address firstTokenAddress, address secondTokenAddress) {
-        require(firstTokenAddress != address(0), "PriceChecker: invalid firstTokenAddress");
-        require(secondTokenAddress != address(0), "PriceChecker: invalid secondTokenAddress");
-        require(
-            firstTokenAddress != secondTokenAddress,
-            "PriceChecker: firstTokenAddress and secondTokenAddress cannot be the same"
-        );
-        require(priceFeedAddress != address(0), "PriceChecker: invalid price feed address");
+    address public immutable tokenA;
+    address public immutable tokenB;
 
-        chainlinkPriceFeed = IChainlinkPriceFeedV3(priceFeedAddress);
-        firstToken = firstTokenAddress;
-        secondToken = secondTokenAddress;
+    constructor(address priceFeed_, address tokenA_, address tokenB_, uint16 marginBasisPoints_) {
+        require(tokenA_ != address(0), "PriceChecker: invalid tokenA_ address");
+        require(tokenB_ != address(0), "PriceChecker: invalid tokenB_ address");
+        require(tokenA_ != tokenB_, "PriceChecker: tokenA_ and tokenB_ cannot be the same");
+        require(priceFeed_ != address(0), "PriceChecker: invalid price feed address");
+
+        chainlinkPriceFeed = IChainlinkPriceFeedV3(priceFeed_);
+        marginBasisPoints = marginBasisPoints_;
+        tokenA = tokenA_;
+        tokenB = tokenB_;
     }
 
     /**
      * @dev Returns the expected output amount for the given input parameters.
      */
-    function getExpectedOut(uint256 inputAmount, address inputToken, address outputToken, uint16 marginBasisPoints)
+    function getExpectedOut(uint256 inputAmount, address inputToken, address outputToken)
         external
         view
         returns (uint256)
     {
-        return _getExpectedOutFromChainlink(inputAmount, inputToken, outputToken, marginBasisPoints);
+        return _getExpectedOutFromChainlink(inputAmount, inputToken, outputToken);
     }
 
     /**
@@ -57,23 +58,22 @@ contract PriceChecker is IPriceChecker {
     function _getExpectedOutFromChainlink(
         uint256 amountToSell,
         address sellToken,
-        address buyToken,
-        uint16 marginInBasisPoints
+        address buyToken
     ) internal view returns (uint256 expectedOutputAmount) {
         require(sellToken != buyToken, "PriceChecker: Input and output tokens cannot be the same");
         require(
-            (sellToken == firstToken || sellToken == secondToken) && (buyToken == firstToken || buyToken == secondToken),
+            (sellToken == tokenA || sellToken == tokenB) && (buyToken == tokenA || buyToken == tokenB),
             "PriceChecker: Invalid tokens"
         );
 
-        bool isInverted = (sellToken != firstToken);
+        bool isInverted = (sellToken != tokenA);
         uint256 currentPrice = _fetchPrice(isInverted);
 
         uint8 decimalsOfSellToken = IERC20Metadata(sellToken).decimals();
         uint8 decimalsOfBuyToken = IERC20Metadata(buyToken).decimals();
 
         expectedOutputAmount = (
-            (amountToSell * currentPrice * (MAX_BASIS_POINTS - marginInBasisPoints)) / MAX_BASIS_POINTS
+            (amountToSell * currentPrice * (MAX_BASIS_POINTS - marginBasisPoints)) / MAX_BASIS_POINTS
         ) / (10 ** (18 + decimalsOfSellToken - decimalsOfBuyToken));
     }
 
