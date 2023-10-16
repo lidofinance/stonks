@@ -40,7 +40,7 @@ contract Stonks {
         priceChecker = priceChecker_;
     }
 
-    function createOrder() external {
+    function placeOrder() external {
         uint256 balance = IERC20(tokenFrom).balanceOf(address(this));
 
         require(balance > 0, "Stonks: no balance");

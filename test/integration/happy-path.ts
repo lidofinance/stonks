@@ -56,7 +56,7 @@ describe("Happy path", function () {
         })
 
         it("should create order", async () => {
-            const orderTx = await subject.createOrder()
+            const orderTx = await subject.placeOrder()
             const orderReceipt = await orderTx.wait()
 
             if (!orderReceipt) throw new Error("No order receipt")
