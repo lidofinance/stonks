@@ -1,8 +1,8 @@
 import { ethers, network } from "hardhat";
 import { expect } from "chai"
-import { deployStonks } from "../../scripts/stonks";
+import { deployStonks } from "../../scripts/deployments/stonks";
 import { PriceChecker, Stonks, } from "../../typechain-types";
-import { mainnet } from "../utils/contracts";
+import { mainnet } from "../../utils/contracts";
 
 describe("Stonks", function () {
     let subject: Stonks;
@@ -13,11 +13,11 @@ describe("Stonks", function () {
         snapshotId = await network.provider.send('evm_snapshot')
 
         const { stonks, priceChecker  } = await deployStonks({
-            stonks: {
+            stonksParams: {
                 tokenFrom: mainnet.STETH,
                 tokenTo: mainnet.DAI
             },
-            priceChecker: {
+            priceCheckerParams: {
                 tokenA: mainnet.STETH,
                 tokenB: mainnet.DAI,
                 priceFeed: mainnet.STETH_USD_PRICE_FEED,
@@ -51,7 +51,15 @@ describe("Stonks", function () {
         })
     })
 
-    this.afterAll(async function () {
+    describe("order placement", function (){
+        it("should not place order when balance is zero", async function () {
+            expect(subject.placeOrder()).to.be.rejectedWith("Stonks: insufficient balance")
+        })
+        
+        it("should place order")
+    })
+
+    this.afterEach(async function () {
         await network.provider.send("evm_revert", [snapshotId]);
     })
 })

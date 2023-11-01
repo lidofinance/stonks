@@ -15,6 +15,8 @@ contract Order is IERC1271 {
     address public immutable priceChecker;
 
     IERC20 public immutable tokenFrom;
+    IERC20 public immutable tokenTo;
+
     uint32 public immutable validTo;
 
     bytes32 public orderHash;
@@ -24,14 +26,17 @@ contract Order is IERC1271 {
         address priceChecker_,
         address settlement_,
         bytes32 orderHash_,
-        GPv2Order.Data memory order_
+        address tokenFrom_,
+        address tokenTo_,
+        uint32 validTo_
     ) {
         operator = operator_;
         priceChecker = priceChecker_;
         stonks = msg.sender;
 
-        tokenFrom = order_.sellToken;
-        validTo = order_.validTo;
+        tokenFrom = IERC20(tokenFrom_);
+        tokenTo = IERC20(tokenTo_);
+        validTo = validTo_;
         orderHash = orderHash_;
 
         tokenFrom.approve(settlement_, type(uint256).max);
@@ -40,6 +45,13 @@ contract Order is IERC1271 {
     function isValidSignature(bytes32 hash, bytes calldata) external view returns (bytes4 magicValue) {
         require(hash == orderHash, "Order: invalid order");
         require(block.timestamp <= validTo, "invalid time");
+
+        // uint256 expectedOut = IPriceChecker(priceChecker).getExpectedOut(
+        //     IERC20(tokenFrom).balanceOf(address(this)),
+        //     address(tokenFrom),
+        //     address(tokenTo),
+        //     new bytes(0)
+        // );
 
         // TODO: check if price is much higher than suggested
 

@@ -1,7 +1,7 @@
 import { ethers, network } from "hardhat";
 import { PriceChecker, StonksFactory } from "../../typechain-types";
 
-import { mainnet } from "../../test/utils/contracts";
+import { mainnet } from "../../utils/contracts";
 
 describe("Stonks factory", function () {
     let subject: StonksFactory;

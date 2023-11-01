@@ -10,8 +10,6 @@ import {GPv2Order} from "./lib/GPv2Order.sol";
 import {IPriceChecker} from "./interfaces/IPriceChecker.sol";
 import {ICoWSwapSettlement} from "./interfaces/ICoWSwapSettlement.sol";
 
-import "hardhat/console.sol";
-
 contract Stonks {
     using GPv2Order for *;
 
@@ -20,14 +18,18 @@ contract Stonks {
     address public immutable tokenFrom;
     address public immutable tokenTo;
 
-    address public constant ARAGON_AGENT = address(0);
-    address public constant TREASURY = 0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c;
-    address public constant TREASURY_MULTISIG = address(0);
+    // address public constant ARAGON_AGENT = address(0);
+    // address public constant TREASURY = 0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c;
+    // address public constant TREASURY_MULTISIG = address(0);
     address public constant SETTLEMENT = 0x9008D19f58AAbD9eD0D60971565AA8510560ab41;
+
+    address public constant ARAGON_AGENT = 0x7Cd64b87251f793027590c34b206145c3aa362Ae;
+    address public constant TREASURY = 0x7Cd64b87251f793027590c34b206145c3aa362Ae;
+    address public constant TREASURY_MULTISIG = 0x7Cd64b87251f793027590c34b206145c3aa362Ae;
 
     bytes32 public constant APP_DATA = keccak256("Lido does stonks");
 
-    event OrderCreated(address indexed order, GPv2Order.Data orderData);
+    event OrderCreated(address indexed order, bytes32 orderHash, GPv2Order.Data orderData);
 
     constructor(address tokenFrom_, address tokenTo_, address priceChecker_) {
         require(tokenFrom_ != address(0), "Stonks: invalid tokenFrom_ address");
@@ -43,9 +45,15 @@ contract Stonks {
     function placeOrder() external {
         uint256 balance = IERC20(tokenFrom).balanceOf(address(this));
 
-        require(balance > 0, "Stonks: no balance");
+        require(balance > 0, "Stonks: insufficient balance");
 
-        uint256 buyAmount = IPriceChecker(priceChecker).getExpectedOut(balance, address(tokenFrom), address(tokenTo));
+        uint256 buyAmount =
+            IPriceChecker(priceChecker).getExpectedOut(
+                balance,
+                address(tokenFrom),
+                address(tokenTo),
+                new bytes(0)
+            );
 
         GPv2Order.Data memory order = GPv2Order.Data({
             sellToken: IERC20Metadata(tokenFrom),
@@ -53,7 +61,7 @@ contract Stonks {
             receiver: TREASURY,
             sellAmount: balance,
             buyAmount: buyAmount,
-            validTo: uint32(block.timestamp + 60 minutes),
+            validTo: uint32(block.timestamp + 600 minutes),
             appData: APP_DATA,
             feeAmount: 0,
             kind: GPv2Order.KIND_SELL,
@@ -67,12 +75,14 @@ contract Stonks {
             priceChecker,
             SETTLEMENT,
             orderHash,
-            order
+            tokenFrom,
+            tokenTo,
+            order.validTo
         );
 
         IERC20(tokenFrom).transfer(address(instance), balance);
 
-        emit OrderCreated(address(instance), order);
+        emit OrderCreated(address(instance), orderHash, order);
     }
 
     modifier onlyOperator() {

@@ -1,8 +1,8 @@
 import { ethers, network } from "hardhat";
 import { expect } from "chai"
-import { deployStonks } from "../../scripts/stonks";
+import { deployStonks } from "../../scripts/deployments/stonks";
 import { PriceChecker, Stonks, Order, Stonks__factory } from "../../typechain-types";
-import { mainnet } from "../utils/contracts";
+import { mainnet } from "../../utils/contracts";
 
 const STETH_INACCURACY = BigInt(5)
 
@@ -15,11 +15,11 @@ describe("Happy path", function () {
         snapshotId = await network.provider.send('evm_snapshot')
 
         const { stonks, priceChecker } = await deployStonks({
-            stonks: {
+            stonksParams: {
                 tokenFrom: mainnet.STETH,
                 tokenTo: mainnet.DAI
             },
-            priceChecker: {
+            priceCheckerParams: {
                 tokenA: mainnet.STETH,
                 tokenB: mainnet.DAI,
                 priceFeed: mainnet.STETH_USD_PRICE_FEED,
@@ -55,7 +55,7 @@ describe("Happy path", function () {
             expect(await stethTreasury.balanceOf(await subject.getAddress())).to.greaterThanOrEqual(value - STETH_INACCURACY)
         })
 
-        it("should create order", async () => {
+        it("should place order", async () => {
             const orderTx = await subject.placeOrder()
             const orderReceipt = await orderTx.wait()
 

@@ -1,7 +1,7 @@
 import { PriceChecker } from "../../typechain-types";
 import { ethers } from "hardhat";
 
-import { mainnet } from "../../test/utils/contracts";
+import { mainnet } from "../../utils/contracts";
 
 describe("Price checker", function () {
     let subject: PriceChecker;

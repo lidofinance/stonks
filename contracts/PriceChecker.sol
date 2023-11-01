@@ -44,7 +44,7 @@ contract PriceChecker is IPriceChecker {
     /**
      * @dev Returns the expected output amount for the given input parameters.
      */
-    function getExpectedOut(uint256 inputAmount, address inputToken, address outputToken)
+    function getExpectedOut(uint256 inputAmount, address inputToken, address outputToken, bytes calldata)
         external
         view
         returns (uint256)
