@@ -21,6 +21,8 @@ contract Order is IERC1271 {
 
     bytes32 public orderHash;
 
+    address public constant VAULT_RELAYER = 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110;
+
     constructor(
         address operator_,
         address priceChecker_,
@@ -39,7 +41,7 @@ contract Order is IERC1271 {
         validTo = validTo_;
         orderHash = orderHash_;
 
-        tokenFrom.approve(settlement_, type(uint256).max);
+        tokenFrom.approve(VAULT_RELAYER, type(uint256).max);
     }
 
     function isValidSignature(bytes32 hash, bytes calldata) external view returns (bytes4 magicValue) {

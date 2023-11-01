@@ -1,17 +1,18 @@
 import { ethers } from 'hardhat'
-import { getPlaceOrderEvent } from "../../utils/get-events"
+import { postCowOrder } from "./cowswap"
+import { getPlaceOrderData } from "../../utils/get-events"
 
-const txHash: string = "0xad2b6563d8f0b0ef5a7eac47da838d79665544855ff6a81443a350c284d67abb"
+const txHash: string = "0x99b885c990f41b7b699bcb8497fb33d802e21d571f97f7024a6812b1068149ea"
 
 async function main() {
-    const [signer] = await ethers.getSigners();
-    const tx = await ethers.provider.getTransactionReceipt(txHash)
+    const txReceipt = await ethers.provider.getTransactionReceipt(txHash)
 
-    if (!tx) throw Error("No tx found")
+    if (!txReceipt) throw Error("No tx receipt found")
 
-    const orderEvent = await getPlaceOrderEvent(tx)
+    const orderData = getPlaceOrderData(txReceipt)
+    const orderUid = await postCowOrder(orderData.order, orderData.address)
 
-    console.log(orderEvent)
+    console.log(orderUid)
 }
 
 main().then(() => process.exit(0))
