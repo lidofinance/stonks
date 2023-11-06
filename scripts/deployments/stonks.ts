@@ -4,7 +4,8 @@ import { PriceChecker, Stonks } from "../../typechain-types";
 export type DeployStonksParams = {
     stonksParams: {
         tokenFrom: string
-        tokenTo: string,
+        tokenTo: string
+        operator: string
         priceCheckerAddress?: string
     }
     priceCheckerParams?: {
@@ -21,16 +22,17 @@ type ReturnType = {
 
 
 export async function deployStonks({
-    stonksParams: { tokenFrom, tokenTo, priceCheckerAddress },
+    stonksParams: { tokenFrom, tokenTo, priceCheckerAddress, operator },
     priceCheckerParams
 }: DeployStonksParams): Promise<ReturnType> {
     const ContractFactory = await ethers.getContractFactory("Stonks");
-    const PriceCheckerFactory = await ethers.getContractFactory("PriceChecker");
 
     let priceChecker: PriceChecker | undefined;
 
     if (priceCheckerParams) {
+        const PriceCheckerFactory = await ethers.getContractFactory("PriceChecker");
         const { tokenA, tokenB, priceFeed, marginInBps } = priceCheckerParams;
+
         priceChecker = await PriceCheckerFactory.deploy(priceFeed, tokenA, tokenB, marginInBps);
         await priceChecker.waitForDeployment();
 
@@ -41,8 +43,7 @@ export async function deployStonks({
         throw new Error()
     }
 
-    const stonks = await ContractFactory.deploy(tokenFrom, tokenTo, await priceChecker.getAddress());
-
+    const stonks = await ContractFactory.deploy(tokenFrom, tokenTo, operator, await priceChecker.getAddress());
     await stonks.waitForDeployment();
 
     return { stonks, priceChecker };

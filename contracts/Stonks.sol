@@ -2,36 +2,26 @@
 pragma solidity ^0.8.13;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+import {RecoverERC20} from "./RecoverERC20.sol";
 import {Order} from "./Order.sol";
-import {GPv2Order} from "./lib/GPv2Order.sol";
 
-import {IPriceChecker} from "./interfaces/IPriceChecker.sol";
-import {ICoWSwapSettlement} from "./interfaces/ICoWSwapSettlement.sol";
-
-contract Stonks {
-    using GPv2Order for *;
+contract Stonks is RecoverERC20 {
+    using SafeERC20 for IERC20;
 
     address public priceChecker;
 
+    Order public immutable orderInstance;
+
     address public immutable tokenFrom;
     address public immutable tokenTo;
-
-    // address public constant ARAGON_AGENT = address(0);
-    // address public constant TREASURY = 0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c;
-    // address public constant TREASURY_MULTISIG = address(0);
-    address public constant SETTLEMENT = 0x9008D19f58AAbD9eD0D60971565AA8510560ab41;
+    address public immutable operator;
 
     address public constant ARAGON_AGENT = 0x7Cd64b87251f793027590c34b206145c3aa362Ae;
-    address public constant TREASURY = 0x7Cd64b87251f793027590c34b206145c3aa362Ae;
-    address public constant TREASURY_MULTISIG = 0x7Cd64b87251f793027590c34b206145c3aa362Ae;
+    bytes32 public constant APP_DATA = keccak256("LIDO_DOES_STONKS");
 
-    bytes32 public constant APP_DATA = keccak256("Lido does stonks");
-
-    event OrderCreated(address indexed order, bytes32 orderHash, GPv2Order.Data orderData);
-
-    constructor(address tokenFrom_, address tokenTo_, address priceChecker_) {
+    constructor(address tokenFrom_, address tokenTo_, address operator_, address priceChecker_) {
         require(tokenFrom_ != address(0), "Stonks: invalid tokenFrom_ address");
         require(tokenTo_ != address(0), "Stonks: invalid tokenTo_ address");
         require(tokenFrom_ != tokenTo_, "Stonks: tokenFrom_ and tokenTo_ cannot be the same");
@@ -39,7 +29,10 @@ contract Stonks {
 
         tokenFrom = tokenFrom_;
         tokenTo = tokenTo_;
+        operator = operator_;
         priceChecker = priceChecker_;
+
+        orderInstance = new Order(tokenFrom_, tokenTo_, operator_, priceChecker_);
     }
 
     function placeOrder() external {
@@ -47,46 +40,36 @@ contract Stonks {
 
         require(balance > 0, "Stonks: insufficient balance");
 
-        uint256 buyAmount =
-            IPriceChecker(priceChecker).getExpectedOut(
-                balance,
-                address(tokenFrom),
-                address(tokenTo),
-                new bytes(0)
-            );
+        Order orderCopy = Order(createOrderCopy());
+        IERC20(tokenFrom).safeTransfer(address(orderCopy), balance);
+        orderCopy.initialize();
+    }
 
-        GPv2Order.Data memory order = GPv2Order.Data({
-            sellToken: IERC20Metadata(tokenFrom),
-            buyToken: IERC20Metadata(tokenTo),
-            receiver: TREASURY,
-            sellAmount: balance,
-            buyAmount: buyAmount,
-            validTo: uint32(block.timestamp + 600 minutes),
-            appData: APP_DATA,
-            feeAmount: 0,
-            kind: GPv2Order.KIND_SELL,
-            partiallyFillable: false,
-            sellTokenBalance: GPv2Order.BALANCE_ERC20,
-            buyTokenBalance: GPv2Order.BALANCE_ERC20
-        });
-        bytes32 orderHash = order.hash(ICoWSwapSettlement(SETTLEMENT).domainSeparator());
-        Order instance = new Order(
-            TREASURY_MULTISIG,
-            priceChecker,
-            SETTLEMENT,
-            orderHash,
-            tokenFrom,
-            tokenTo,
-            order.validTo
-        );
+    function recoverERC20(address token_) external onlyOperator {
+        uint256 balance = IERC20(token_).balanceOf(address(this));
+        require(balance > 0, "Stonks: insufficient balance");
+        _recoverERC20(token_, ARAGON_AGENT, balance);
+    }
 
-        IERC20(tokenFrom).transfer(address(instance), balance);
-
-        emit OrderCreated(address(instance), orderHash, order);
+    function createOrderCopy() internal returns (address orderContract) {
+        bytes20 addressBytes = bytes20(address(orderInstance));
+        assembly {
+            let clone_code := mload(0x40)
+            mstore(
+                clone_code,
+                0x3d602d80600a3d3981f3363d3d373d3d3d363d73000000000000000000000000
+            )
+            mstore(add(clone_code, 0x14), addressBytes)
+            mstore(
+                add(clone_code, 0x28),
+                0x5af43d82803e903d91602b57fd5bf30000000000000000000000000000000000
+            )
+            orderContract := create(0, clone_code, 0x37)
+        }
     }
 
     modifier onlyOperator() {
-        require(msg.sender == TREASURY_MULTISIG || msg.sender == ARAGON_AGENT, "Stonks: not operator");
+        require(msg.sender == operator || msg.sender == ARAGON_AGENT, "Stonks: not operator");
         _;
     }
 }

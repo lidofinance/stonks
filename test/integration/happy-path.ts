@@ -1,23 +1,27 @@
-import { ethers, network } from "hardhat";
+import { ethers, network } from "hardhat"
+import { Signer } from "ethers"
 import { expect } from "chai"
-import { deployStonks } from "../../scripts/deployments/stonks";
-import { PriceChecker, Stonks, Order, Stonks__factory } from "../../typechain-types";
-import { mainnet } from "../../utils/contracts";
+import { deployStonks } from "../../scripts/deployments/stonks"
+import { PriceChecker, Stonks, Order, Stonks__factory } from "../../typechain-types"
+import { mainnet } from "../../utils/contracts"
 
 const STETH_INACCURACY = BigInt(5)
 
 describe("Happy path", function () {
+    let signer: Signer
     let subject: Stonks;
     let subjectPriceChecker: PriceChecker
     let snapshotId: string
 
     this.beforeAll(async function () {
         snapshotId = await network.provider.send('evm_snapshot')
+        signer = (await ethers.getSigners())[0]
 
         const { stonks, priceChecker } = await deployStonks({
             stonksParams: {
                 tokenFrom: mainnet.STETH,
-                tokenTo: mainnet.DAI
+                tokenTo: mainnet.DAI,
+                operator: await signer.getAddress()
             },
             priceCheckerParams: {
                 tokenA: mainnet.STETH,
@@ -74,26 +78,26 @@ describe("Happy path", function () {
             expect(await steth.balanceOf(await subject.getAddress())).to.lessThanOrEqual(STETH_INACCURACY)
         })
 
-        it("settlement should check hash", async() => {})
-        it("should not be possible to cancel order due to expiration time", () => {})
-        it ("should be possible to cancel order after expiration time", async () => {})
+        it("settlement should check hash", async () => { })
+        it("should not be possible to cancel order due to expiration time", () => { })
+        it("should be possible to cancel order after expiration time", async () => { })
 
         it("settlement should pull off assets from order contract", async () => {
             await network.provider.request({
                 method: "hardhat_impersonateAccount",
                 params: [mainnet.SETTLEMENT],
             });
-            const settlmentSigner = await ethers.provider.getSigner(mainnet.SETTLEMENT)
-            const stethSettlement = await ethers.getContractAt("IERC20", mainnet.STETH, settlmentSigner)
+            const relayerSigner = await ethers.provider.getSigner(mainnet.VAULT_RELAYER)
+            const stethRelayer = await ethers.getContractAt("IERC20", mainnet.STETH, relayerSigner)
             const orderAddress = await order.getAddress()
 
-            await stethSettlement.transferFrom(
+            await stethRelayer.transferFrom(
                 orderAddress,
                 mainnet.SETTLEMENT,
-                await stethSettlement.balanceOf(await order.getAddress())
+                await stethRelayer.balanceOf(await order.getAddress())
             )
 
-            expect(await stethSettlement.balanceOf(await order.getAddress())).to.lessThanOrEqual(STETH_INACCURACY)
+            expect(await stethRelayer.balanceOf(await order.getAddress())).to.lessThanOrEqual(STETH_INACCURACY)
         })
     })
 })

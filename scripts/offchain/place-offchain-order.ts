@@ -2,7 +2,7 @@ import { ethers } from 'hardhat'
 import { postCowOrder } from "./cowswap"
 import { getPlaceOrderData } from "../../utils/get-events"
 
-const txHash: string = "0x99b885c990f41b7b699bcb8497fb33d802e21d571f97f7024a6812b1068149ea"
+const txHash: string = "0xe591d1249eb4d231155dce7eda2e419d302717ace28c44c707cbd9379a79962f"
 
 async function main() {
     const txReceipt = await ethers.provider.getTransactionReceipt(txHash)

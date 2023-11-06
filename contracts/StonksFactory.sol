@@ -9,7 +9,7 @@ contract StonksFactory {
     event StonksDeployed(address stonksAddress);
 
     function deployStonks(address tokenFrom_, address tokenTo_, address priceChecker_) public returns (address) {
-        return address(new Stonks(tokenFrom_, tokenTo_, priceChecker_));
+        return address(new Stonks(tokenFrom_, tokenTo_, priceChecker_, address(0)));
     }
 
     function deployPriceChecker(

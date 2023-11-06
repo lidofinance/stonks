@@ -1,7 +1,8 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
-import "@foundry-rs/hardhat-anvil";
+// import "@foundry-rs/hardhat-anvil";
 import * as dotenv from "dotenv";
+import "./utils/assert"
 
 dotenv.config();
 

@@ -5,17 +5,15 @@ export const postCowOrder = async (orderPayload: Order, contract: string) => {
     let timesToRetry = 3
     let orderUid: string | undefined
 
-    const payload = { 
+    const payload = {
         ...orderPayload,
         from: contract,
         kind: "sell",
         signingScheme: "eip1271",
-        sellTokenBalance: 'erc20', 
+        sellTokenBalance: 'erc20',
         buyTokenBalance: 'erc20',
         signature: "0x"
     }
-
-    console.log(payload)
 
     while (timesToRetry > 0) {
         try {
@@ -41,33 +39,33 @@ export const postCowOrder = async (orderPayload: Order, contract: string) => {
 
 export const encodeCowOrderForIsValidSignature = (args: Order) => {
     return ethers.AbiCoder.defaultAbiCoder().encode(
-      [
-        'address',
-        'address',
-        'address',
-        'uint256',
-        'uint256',
-        'uint32',
-        'bytes32',
-        'uint256',
-        'bytes32',
-        'bool',
-        'bytes32',
-        'bytes32',
-      ],
-      [
-        args.sellToken,
-        args.buyToken,
-        args.receiver,
-        args.sellAmount,
-        args.buyAmount,
-        args.validTo,
-        args.appData,
-        args.feeAmount,
-        args.kind,
-        false,
-        args.sellTokenBalance,
-        args.buyTokenBalance
-      ],
+        [
+            'address',
+            'address',
+            'address',
+            'uint256',
+            'uint256',
+            'uint32',
+            'bytes32',
+            'uint256',
+            'bytes32',
+            'bool',
+            'bytes32',
+            'bytes32',
+        ],
+        [
+            args.sellToken,
+            args.buyToken,
+            args.receiver,
+            args.sellAmount,
+            args.buyAmount,
+            args.validTo,
+            args.appData,
+            args.feeAmount,
+            args.kind,
+            false,
+            args.sellTokenBalance,
+            args.buyTokenBalance
+        ],
     )
-  }
+}
