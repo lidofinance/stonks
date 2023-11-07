@@ -23,7 +23,9 @@ export const fillUpERC20FromTreasury = async ({ token, amount, address }: FillUp
     await transferTx.wait()
 }
 
-const fillUpBalance = async (to: string, value: string | bigint) => {
-    const [signer] = await ethers.getSigners()
-    signer.sendTransaction({ to, value })
+export const fillUpBalance = async (to: string, value: string | bigint) => {
+    await network.provider.request({
+        method: "hardhat_setBalance",
+        params: [to, `0x${value.toString()}`],
+    });
 }

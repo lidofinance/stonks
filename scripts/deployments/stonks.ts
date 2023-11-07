@@ -1,4 +1,7 @@
 import { ethers } from "hardhat";
+
+import { deployStonksFactory } from "./stonks-factory";
+import { getStonksDeployment, getPriceCheckerDeployment } from "../../utils/get-events"
 import { PriceChecker, Stonks } from "../../typechain-types";
 
 export type DeployStonksParams = {
@@ -25,26 +28,32 @@ export async function deployStonks({
     stonksParams: { tokenFrom, tokenTo, priceCheckerAddress, operator },
     priceCheckerParams
 }: DeployStonksParams): Promise<ReturnType> {
-    const ContractFactory = await ethers.getContractFactory("Stonks");
+    const { stonksFactory } = await deployStonksFactory();
 
     let priceChecker: PriceChecker | undefined;
 
     if (priceCheckerParams) {
-        const PriceCheckerFactory = await ethers.getContractFactory("PriceChecker");
         const { tokenA, tokenB, priceFeed, marginInBps } = priceCheckerParams;
+        const deployPriceCheckerTX = await stonksFactory.deployPriceChecker(priceFeed, tokenA, tokenB, marginInBps);
+        const receipt = await deployPriceCheckerTX.wait();
 
-        priceChecker = await PriceCheckerFactory.deploy(priceFeed, tokenA, tokenB, marginInBps);
-        await priceChecker.waitForDeployment();
+        if (!receipt) throw new Error("No transaction receipt");
 
-        priceCheckerAddress = await priceChecker.getAddress()
+        const { address } = getPriceCheckerDeployment(receipt)
+        priceChecker = await ethers.getContractAt("PriceChecker", address)
     } else if (priceCheckerAddress) {
         priceChecker = await ethers.getContractAt("PriceChecker", priceCheckerAddress)
     } else {
         throw new Error()
     }
 
-    const stonks = await ContractFactory.deploy(tokenFrom, tokenTo, operator, await priceChecker.getAddress());
-    await stonks.waitForDeployment();
+    const deployStonksTx = await stonksFactory.deployStonks(tokenFrom, tokenTo, operator, await priceChecker.getAddress());
+    const receipt = await deployStonksTx.wait();
+
+    if (!receipt) throw new Error("No transaction receipt");
+
+    const { address } = getStonksDeployment(receipt)
+    const stonks = await ethers.getContractAt("Stonks", address)
 
     return { stonks, priceChecker };
 }
