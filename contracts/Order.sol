@@ -50,7 +50,7 @@ contract Order is IERC1271, RecoverERC20 {
 
     function initialize() external {
         uint256 balance = tokenFrom.balanceOf(address(this));
-        uint256 buyAmount = priceChecker.getExpectedOut(balance, address(tokenFrom), address(tokenTo), new bytes(0));
+        uint256 buyAmount = priceChecker.getExpectedOut(balance, address(tokenFrom), address(tokenTo));
 
         validTo = uint32(block.timestamp + 60 minutes);
 

@@ -1,12 +1,35 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
-import "./interfaces/IChainlinkPriceFeedV3.sol";
-import "./interfaces/IPriceChecker.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
+import {IPriceChecker} from "./interfaces/IPriceChecker.sol";
+
+interface IFeedRegistry {
+    function getFeed(address base, address quote)
+        external
+        view
+        returns (address aggregator);
+
+    function latestRoundData(address base, address quote)
+        external
+        view
+        returns (
+            uint80 roundId,
+            int256 answer,
+            uint256 startedAt,
+            uint256 updatedAt,
+            uint80 answeredInRound
+        );
+
+    function decimals(address base, address quote)
+        external
+        view
+        returns (uint256);
+}
+
 /**
- * @title PriceChecker
+ * @title StablePriceChecker
  * @dev This contract provides functionalities to retrieve expected token conversion rates
  * based on the Chainlink Price Feed. It allows users to get the expected output amount of one token
  * in terms of another token, considering a specific margin. The contract assumes a relationship between
@@ -20,76 +43,122 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  * Note: This contract assumes that token prices can be inverted (e.g., if it knows the price of A in terms
  * of B, it can calculate the price of B in terms of A).
  */
-contract PriceChecker is IPriceChecker {
-    IChainlinkPriceFeedV3 public chainlinkPriceFeed;
+contract StablePriceChecker is IPriceChecker {
+    // -------------
+    // CONSTANTS
+    // -------------
+    // Fiat currencies follow https://en.wikipedia.org/wiki/ISO_4217
+    address public constant USD = address(840);
+    uint256 private constant MAX_BASIS_POINTS = 10_000;
 
-    uint16 private constant MAX_BASIS_POINTS = 10_000;
-    uint16 public immutable marginBasisPoints;
+    // -------------
+    // STATE
+    // -------------
 
-    address public immutable tokenA;
-    address public immutable tokenB;
+    uint256 public immutable marginBP;
+    IFeedRegistry public immutable feedRegistry;
 
-    constructor(address priceFeed_, address tokenA_, address tokenB_, uint16 marginBasisPoints_) {
-        require(tokenA_ != address(0), "PriceChecker: invalid tokenA_ address");
-        require(tokenB_ != address(0), "PriceChecker: invalid tokenB_ address");
-        require(tokenA_ != tokenB_, "PriceChecker: tokenA_ and tokenB_ cannot be the same");
-        require(priceFeed_ != address(0), "PriceChecker: invalid price feed address");
+    mapping(address => bool) public allowedTokensToSell;
+    mapping(address => bool) public allowedStableTokensToBuy;
 
-        chainlinkPriceFeed = IChainlinkPriceFeedV3(priceFeed_);
-        marginBasisPoints = marginBasisPoints_;
-        tokenA = tokenA_;
-        tokenB = tokenB_;
+    // -------------
+    // CONSTRUCTOR
+    // -------------
+
+    /// @param _feedRegistry Chainlink Price Feed Registry
+    /// @param _allowedTokensToSell List of addresses which allowed to use as sell tokens
+    /// @param _allowedStableTokensToBuy List of addresses of stable tokens
+    /// @param _marginBP margin
+    constructor(
+        address _feedRegistry,
+        address[] memory _allowedTokensToSell,
+        address[] memory _allowedStableTokensToBuy,
+        uint256 _marginBP
+    ) {
+        require(
+            _feedRegistry != address(0),
+            "PriceChecker: invalid feed registry address"
+        );
+        feedRegistry = IFeedRegistry(_feedRegistry);
+
+        for (uint256 i = 0; i < _allowedStableTokensToBuy.length; ++i) {
+            require(
+                _allowedStableTokensToBuy[i] != address(0),
+                "PriceChecker: invalid address"
+            );
+
+            allowedStableTokensToBuy[_allowedStableTokensToBuy[i]] = true;
+        }
+
+        for (uint256 i = 0; i < _allowedTokensToSell.length; ++i) {
+            require(
+                _allowedTokensToSell[i] != address(0),
+                "PriceChecker: invalid address"
+            );
+
+            require(
+                feedRegistry.getFeed(_allowedTokensToSell[i], USD) !=
+                    address(0),
+                "PriceChecker: No price feed found"
+            );
+
+            allowedTokensToSell[_allowedTokensToSell[i]] = true;
+        }
+
+        marginBP = _marginBP;
     }
 
     /**
      * @dev Returns the expected output amount for the given input parameters.
      */
-    function getExpectedOut(uint256 inputAmount, address inputToken, address outputToken, bytes calldata)
-        external
-        view
-        returns (uint256)
-    {
-        return _getExpectedOutFromChainlink(inputAmount, inputToken, outputToken);
-    }
-
-    /**
-     * @dev Internal function to calculate expected output amount using Chainlink Price Feed.
-     */
-    function _getExpectedOutFromChainlink(
-        uint256 amountToSell,
-        address sellToken,
-        address buyToken
-    ) internal view returns (uint256 expectedOutputAmount) {
-        require(sellToken != buyToken, "PriceChecker: Input and output tokens cannot be the same");
+    function getExpectedOut(
+        uint256 _amount,
+        address _tokenFrom,
+        address _tokenTo
+    ) external view returns (uint256 expectedOutputAmount) {
         require(
-            (sellToken == tokenA || sellToken == tokenB) && (buyToken == tokenA || buyToken == tokenB),
-            "PriceChecker: Invalid tokens"
+            _tokenFrom != _tokenTo,
+            "PriceChecker: Input and output tokens cannot be the same"
         );
 
-        bool isInverted = (sellToken != tokenA);
-        uint256 currentPrice = _fetchPrice(isInverted);
+        require(
+            allowedTokensToSell[_tokenFrom] == true,
+            "PriceChecker: Token is not allowed to sell"
+        );
 
-        uint8 decimalsOfSellToken = IERC20Metadata(sellToken).decimals();
-        uint8 decimalsOfBuyToken = IERC20Metadata(buyToken).decimals();
+        require(
+            allowedStableTokensToBuy[_tokenTo] == true,
+            "PriceChecker: Token is not allowed to buy"
+        );
 
-        expectedOutputAmount = (
-            (amountToSell * currentPrice * (MAX_BASIS_POINTS - marginBasisPoints)) / MAX_BASIS_POINTS
-        ) / (10 ** (18 + decimalsOfSellToken - decimalsOfBuyToken));
+        (uint256 currentPrice, uint256 feedDecimals) = _fetchPrice(
+            _tokenFrom,
+            USD
+        );
+
+        uint8 decimalsOfSellToken = IERC20Metadata(_tokenFrom).decimals();
+        uint8 decimalsOfBuyToken = IERC20Metadata(_tokenTo).decimals();
+
+        expectedOutputAmount = ((_amount *
+            currentPrice *
+            (MAX_BASIS_POINTS - marginBP)) /
+            MAX_BASIS_POINTS /
+            (10**(decimalsOfSellToken + decimalsOfBuyToken - feedDecimals)));
     }
 
     /**
-     * @dev Internal function to get price from Chainlink Price Feed, optionally inverted.
+     * @dev Internal function to get price from Chainlink Price Feed Registry.
      */
-    function _fetchPrice(bool inverted) internal view returns (uint256) {
-        uint256 decimals = chainlinkPriceFeed.decimals();
-
-        (, int256 price,,,) = chainlinkPriceFeed.latestRoundData();
+    function _fetchPrice(address base, address quote)
+        internal
+        view
+        returns (uint256, uint256)
+    {
+        (, int256 price, , , ) = feedRegistry.latestRoundData(base, quote);
         require(price > 0, "Unexpected price feed answer");
 
-        if (inverted) {
-            return (10 ** (decimals * 2)) / uint256(price) * (10 ** (18 - decimals));
-        }
+        uint256 decimals = feedRegistry.decimals(base, quote);
 
-        return uint256(price) * (10 ** (18 - decimals));
+        return (uint256(price), decimals);
     }
 }
