@@ -76,10 +76,22 @@ describe("Happy path", function () {
         })
 
         it("settlement should check hash", async () => { })
+
         it("should not be possible to cancel order due to expiration time", () => {
             expect(order.cancel()).to.be.revertedWith("Order: order is expired")
         })
-        it("should be possible to cancel order after expiration time", async () => { })
+
+        it("should be possible to cancel order after expiration time", async () => {
+            const localSnapshotId = await network.provider.send('evm_snapshot')
+
+            await network.provider.send("evm_increaseTime", [60 * 60 * 24 * 7])
+            await order.cancel()
+
+            const steth = await ethers.getContractAt("IERC20", mainnet.STETH)
+            expect(isClose(await steth.balanceOf(await order.getAddress()), BigInt(0))).to.be.true
+
+            await network.provider.send("evm_revert", [localSnapshotId]);
+        })
 
         it("settlement should pull off assets from order contract", async () => {
             await network.provider.send("hardhat_setCode", [mainnet.VAULT_RELAYER, "0x"]);
