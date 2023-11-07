@@ -4,7 +4,7 @@ pragma solidity ^0.8.13;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {RecoverERC20} from "./RecoverERC20.sol";
+import {RecoverERC20} from "./lib/RecoverERC20.sol";
 import {Order} from "./Order.sol";
 
 contract Stonks is RecoverERC20 {
@@ -16,22 +16,20 @@ contract Stonks is RecoverERC20 {
 
     address public immutable tokenFrom;
     address public immutable tokenTo;
-    address public immutable operator;
 
-    address public constant ARAGON_AGENT = 0x7Cd64b87251f793027590c34b206145c3aa362Ae;
-
-    constructor(address tokenFrom_, address tokenTo_, address operator_, address priceChecker_) {
+    constructor(address tokenFrom_, address tokenTo_, address operator_, address priceChecker_, address order_) {
         require(tokenFrom_ != address(0), "Stonks: invalid tokenFrom_ address");
         require(tokenTo_ != address(0), "Stonks: invalid tokenTo_ address");
         require(tokenFrom_ != tokenTo_, "Stonks: tokenFrom_ and tokenTo_ cannot be the same");
         require(priceChecker_ != address(0), "Stonks: invalid price checker address");
+        require(operator_ != address(0), "Stonks: invalid operator address");
+        require(order_ != address(0), "Stonks: invalid order address");
 
+        operator = operator_;
         tokenFrom = tokenFrom_;
         tokenTo = tokenTo_;
-        operator = operator_;
         priceChecker = priceChecker_;
-
-        orderInstance = new Order(tokenFrom_, tokenTo_, operator_, priceChecker_);
+        orderInstance = Order(order_);
     }
 
     function placeOrder() external {
@@ -41,13 +39,17 @@ contract Stonks is RecoverERC20 {
 
         Order orderCopy = Order(createOrderCopy());
         IERC20(tokenFrom).safeTransfer(address(orderCopy), balance);
-        orderCopy.initialize();
+        orderCopy.initialize(operator);
     }
 
     function recoverERC20(address token_) external onlyOperator {
         uint256 balance = IERC20(token_).balanceOf(address(this));
         require(balance > 0, "Stonks: insufficient balance");
         _recoverERC20(token_, ARAGON_AGENT, balance);
+    }
+
+    function getOrderParameters() external view returns (address, address, address) {
+        return (tokenFrom, tokenTo, priceChecker);
     }
 
     function createOrderCopy() internal returns (address orderContract) {
@@ -65,10 +67,5 @@ contract Stonks is RecoverERC20 {
             )
             orderContract := create(0, clone_code, 0x37)
         }
-    }
-
-    modifier onlyOperator() {
-        require(msg.sender == operator || msg.sender == ARAGON_AGENT, "Stonks: not operator");
-        _;
     }
 }

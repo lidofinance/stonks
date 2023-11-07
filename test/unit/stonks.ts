@@ -48,14 +48,23 @@ describe("Stonks", function () {
             const ContractFactory = await ethers.getContractFactory("Stonks")
 
             expect(
-                ContractFactory.deploy(ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress, signer)
+                ContractFactory.deploy(ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress)
             ).to.be.revertedWith("Stonks: invalid tokenFrom_ address")
             expect(
-                ContractFactory.deploy(mainnet.STETH, ethers.ZeroAddress, ethers.ZeroAddress, signer)
+                ContractFactory.deploy(mainnet.STETH, ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress)
             ).to.be.revertedWith("Stonks: invalid tokenTo_ address")
             expect(
-                ContractFactory.deploy(mainnet.STETH, mainnet.DAI, ethers.ZeroAddress, signer)
-            ).to.be.revertedWith("Stonks: Stonks: invalid price checker address")
+                ContractFactory.deploy(mainnet.STETH, mainnet.STETH, ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress)
+            ).to.be.revertedWith("Stonks: tokenFrom_ and tokenTo_ cannot be the same")
+            expect(
+                ContractFactory.deploy(mainnet.STETH, mainnet.DAI, ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress)
+            ).to.be.revertedWith("Stonks: invalid price checker address")
+            expect(
+                ContractFactory.deploy(mainnet.STETH, mainnet.DAI, subjectPriceChecker, ethers.ZeroAddress, ethers.ZeroAddress)
+            ).to.be.revertedWith("Stonks: invalid operator address")
+            expect(
+                ContractFactory.deploy(mainnet.STETH, mainnet.DAI, subjectPriceChecker, signer, ethers.ZeroAddress)
+            ).to.be.revertedWith("Stonks: invalid order address")
         })
     })
 
@@ -64,7 +73,7 @@ describe("Stonks", function () {
             expect(subject.placeOrder()).to.be.rejectedWith("Stonks: insufficient balance")
         })
 
-        it.only("should place order", async function () {
+        it("should place order", async function () {
             const steth = await ethers.getContractAt("IERC20", mainnet.STETH, signer)
 
             await fillUpERC20FromTreasury({ token: mainnet.STETH, amount, address: await subject.getAddress() })
@@ -72,8 +81,6 @@ describe("Stonks", function () {
 
             const tx = await subject.placeOrder()
             const receipt = await tx.wait()
-
-            console.log(receipt)
         })
     })
 
