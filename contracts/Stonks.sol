@@ -19,7 +19,6 @@ contract Stonks is RecoverERC20 {
     address public immutable operator;
 
     address public constant ARAGON_AGENT = 0x7Cd64b87251f793027590c34b206145c3aa362Ae;
-    bytes32 public constant APP_DATA = keccak256("LIDO_DOES_STONKS");
 
     constructor(address tokenFrom_, address tokenTo_, address operator_, address priceChecker_) {
         require(tokenFrom_ != address(0), "Stonks: invalid tokenFrom_ address");
