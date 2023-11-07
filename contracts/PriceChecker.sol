@@ -6,12 +6,15 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {IPriceChecker} from "./interfaces/IPriceChecker.sol";
 
 interface IFeedRegistry {
-    function getFeed(address base, address quote)
-        external
-        view
-        returns (address aggregator);
+    function getFeed(
+        address base,
+        address quote
+    ) external view returns (address aggregator);
 
-    function latestRoundData(address base, address quote)
+    function latestRoundData(
+        address base,
+        address quote
+    )
         external
         view
         returns (
@@ -22,40 +25,38 @@ interface IFeedRegistry {
             uint80 answeredInRound
         );
 
-    function decimals(address base, address quote)
-        external
-        view
-        returns (uint256);
+    function decimals(
+        address base,
+        address quote
+    ) external view returns (uint256);
 }
 
 /**
- * @title StablePriceChecker
+ * @title PriceChecker
  * @dev This contract provides functionalities to retrieve expected token conversion rates
  * based on the Chainlink Price Feed. It allows users to get the expected output amount of one token
  * in terms of another token, considering a specific margin. The contract assumes a relationship between
- * two tokens defined at deployment, specifically `firstToken` and `secondToken`.
+ * two tokens.
  *
  * The primary function `getExpectedOut` is the main point of interaction. It fetches the price of the
- * provided tokens (inputToken and outputToken) from the Chainlink Price Feed, adjusts for the desired
+ * provided token to USD from the Chainlink Price Feed, adjusts for the desired
  * margin, and then calculates the expected amount of the output token based on the input amount of the
  * sellToken.
- *
- * Note: This contract assumes that token prices can be inverted (e.g., if it knows the price of A in terms
- * of B, it can calculate the price of B in terms of A).
  */
-contract StablePriceChecker is IPriceChecker {
+contract PriceCheckerForStableSwap is IPriceChecker {
     // -------------
     // CONSTANTS
     // -------------
+
     // Fiat currencies follow https://en.wikipedia.org/wiki/ISO_4217
     address public constant USD = address(840);
+    // Max basis points for price margin
     uint256 private constant MAX_BASIS_POINTS = 10_000;
 
     // -------------
     // STATE
     // -------------
 
-    uint256 public immutable marginBP;
     IFeedRegistry public immutable feedRegistry;
 
     mapping(address => bool) public allowedTokensToSell;
@@ -68,12 +69,10 @@ contract StablePriceChecker is IPriceChecker {
     /// @param _feedRegistry Chainlink Price Feed Registry
     /// @param _allowedTokensToSell List of addresses which allowed to use as sell tokens
     /// @param _allowedStableTokensToBuy List of addresses of stable tokens
-    /// @param _marginBP margin
     constructor(
         address _feedRegistry,
         address[] memory _allowedTokensToSell,
-        address[] memory _allowedStableTokensToBuy,
-        uint256 _marginBP
+        address[] memory _allowedStableTokensToBuy
     ) {
         require(
             _feedRegistry != address(0),
@@ -104,18 +103,17 @@ contract StablePriceChecker is IPriceChecker {
 
             allowedTokensToSell[_allowedTokensToSell[i]] = true;
         }
-
-        marginBP = _marginBP;
     }
 
-    /**
-     * @dev Returns the expected output amount for the given input parameters.
-     */
+    ///
+    // @dev Returns the expected output amount after selling _tokenFrom to stable with margin
+    ///
     function getExpectedOut(
         uint256 _amount,
         address _tokenFrom,
-        address _tokenTo
-    ) external view returns (uint256 expectedOutputAmount) {
+        address _tokenTo,
+        uint256 _marginBP
+    ) external view returns (uint256 expectedOutputAmountWithMargin) {
         require(
             _tokenFrom != _tokenTo,
             "PriceChecker: Input and output tokens cannot be the same"
@@ -139,21 +137,22 @@ contract StablePriceChecker is IPriceChecker {
         uint8 decimalsOfSellToken = IERC20Metadata(_tokenFrom).decimals();
         uint8 decimalsOfBuyToken = IERC20Metadata(_tokenTo).decimals();
 
-        expectedOutputAmount = ((_amount *
-            currentPrice *
-            (MAX_BASIS_POINTS - marginBP)) /
-            MAX_BASIS_POINTS /
-            (10**(decimalsOfSellToken + decimalsOfBuyToken - feedDecimals)));
+        uint256 expectedOutputAmount = (_amount *
+            currentPrice /
+            (10 ** (decimalsOfSellToken - decimalsOfBuyToken + feedDecimals)));
+
+        expectedOutputAmountWithMargin =
+            (expectedOutputAmount * (MAX_BASIS_POINTS - _marginBP)) /
+            MAX_BASIS_POINTS;
     }
 
-    /**
-     * @dev Internal function to get price from Chainlink Price Feed Registry.
-     */
-    function _fetchPrice(address base, address quote)
-        internal
-        view
-        returns (uint256, uint256)
-    {
+    ///
+    // @dev Internal function to get price from Chainlink Price Feed Registry.
+    ///
+    function _fetchPrice(
+        address base,
+        address quote
+    ) internal view returns (uint256, uint256) {
         (, int256 price, , , ) = feedRegistry.latestRoundData(base, quote);
         require(price > 0, "Unexpected price feed answer");
 
