@@ -6,22 +6,20 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 import {GPv2Order} from "./lib/GPv2Order.sol";
-import {RecoverERC20} from "./lib/RecoverERC20.sol";
+import {AssetRecoverer} from "./lib/AssetRecoverer.sol";
 import {IPriceChecker} from "./interfaces/IPriceChecker.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
 
 import {ICoWSwapSettlement} from "./interfaces/ICoWSwapSettlement.sol";
 import {ERC1271_MAGIC_VALUE, IERC1271} from "./interfaces/IERC1271.sol";
 
-contract Order is IERC1271, RecoverERC20 {
+contract Order is IERC1271, AssetRecoverer {
     using GPv2Order for *;
     using SafeERC20 for IERC20;
 
     bytes32 public constant APP_DATA = keccak256("LIDO_DOES_STONKS");
     address public constant SETTLEMENT = 0x9008D19f58AAbD9eD0D60971565AA8510560ab41;
     address public constant VAULT_RELAYER = 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110;
-
-    address public constant TREASURY = 0x7Cd64b87251f793027590c34b206145c3aa362Ae;
 
     uint8 public constant PRICE_TOLERANCE_IN_PERCENT = 5;
 
@@ -96,9 +94,9 @@ contract Order is IERC1271, RecoverERC20 {
     function recoverERC20(address token_) external onlyOperator {
         (IERC20 tokenFrom,,) = IStonks(stonks).getOrderParameters();
         require(token_ != address(tokenFrom), "Order: cannot recover tokenFrom");
-        uint256 balance = IERC20(token_).balanceOf(address(this));
-        require(balance > 0, "Stonks: insufficient balance");
-        _recoverERC20(token_, ARAGON_AGENT, balance);
+        uint256 amount = IERC20(token_).balanceOf(address(this));
+        IERC20(token_).safeTransfer(TREASURY, amount);
+        emit ERC20Recovered(token_, TREASURY, amount);
     }
 
     function isTradePriceWithinTolerance(uint256 a, uint256 b) public pure returns (bool) {

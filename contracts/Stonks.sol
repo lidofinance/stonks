@@ -4,10 +4,10 @@ pragma solidity ^0.8.13;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {RecoverERC20} from "./lib/RecoverERC20.sol";
+import {AssetRecoverer} from "./lib/AssetRecoverer.sol";
 import {Order} from "./Order.sol";
 
-contract Stonks is RecoverERC20 {
+contract Stonks is AssetRecoverer {
     using SafeERC20 for IERC20;
 
     address public priceChecker;
@@ -40,12 +40,6 @@ contract Stonks is RecoverERC20 {
         Order orderCopy = Order(createOrderCopy());
         IERC20(tokenFrom).safeTransfer(address(orderCopy), balance);
         orderCopy.initialize(operator);
-    }
-
-    function recoverERC20(address token_) external onlyOperator {
-        uint256 balance = IERC20(token_).balanceOf(address(this));
-        require(balance > 0, "Stonks: insufficient balance");
-        _recoverERC20(token_, ARAGON_AGENT, balance);
     }
 
     function getOrderParameters() external view returns (address, address, address) {

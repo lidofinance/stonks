@@ -41,8 +41,7 @@ describe("Happy path", function () {
         let order: Order
 
         this.beforeAll(async () => {
-            const [signer] = await ethers.getSigners()
-            signer.sendTransaction({ to: mainnet.TREASURY, value })
+            fillUpBalance(mainnet.TREASURY, value)
         })
 
         it("should fill up stonks contract", async () => {
@@ -75,7 +74,7 @@ describe("Happy path", function () {
             expect(isClose(await steth.balanceOf(subject.getAddress()), BigInt(0))).to.be.true
         })
 
-        it("settlement should check hash", async () => { })
+        it("settlement should check hash", async () => {})
 
         it("should not be possible to cancel order due to expiration time", () => {
             expect(order.cancel()).to.be.revertedWith("Order: order is expired")
