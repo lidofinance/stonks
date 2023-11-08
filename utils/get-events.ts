@@ -35,7 +35,7 @@ export const getStonksDeployment = (receipt: TransactionReceipt): {
     address: string
     tokenFrom: string
     tokenTo: string
-    priceChecker: string
+    tokenConverter: string
     operator: string
     order: string
 } => {
@@ -47,18 +47,17 @@ export const getStonksDeployment = (receipt: TransactionReceipt): {
         address: data[0],
         tokenFrom: data[1],
         tokenTo: data[2],
-        priceChecker: data[3],
+        tokenConverter: data[3],
         operator: data[4],
         order: data[5],
     }
 }
 
-export const getPriceCheckerDeployment = (receipt: TransactionReceipt): {
+export const getTokenConverterDeployment = (receipt: TransactionReceipt): {
     address: string
-    priceFeed: string
-    tokenA: string
-    tokenB: string
-    marginInBps: number 
+    feedRegistryAddress: string
+    allowedTokensToSell: string[]
+    allowedStableTokensToBuy: string[]
 } => {
     const stonksFactoryInterface = StonksFactory__factory.createInterface()
     const deployEvent = stonksFactoryInterface.parseLog((receipt as any).logs[receipt.logs.length - 1])
@@ -66,9 +65,8 @@ export const getPriceCheckerDeployment = (receipt: TransactionReceipt): {
 
     return {
         address: data[0],
-        priceFeed: data[1],
-        tokenA: data[2],
-        tokenB: data[3],
-        marginInBps: Number(data[4]),
+        feedRegistryAddress: data[1],
+        allowedTokensToSell: data[2],
+        allowedStableTokensToBuy: data[3],
     }
 }

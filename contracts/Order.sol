@@ -6,8 +6,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 import {GPv2Order} from "./lib/GPv2Order.sol";
+import {ITokenConverter} from "./interfaces/ITokenConverter.sol";
 import {AssetRecoverer} from "./lib/AssetRecoverer.sol";
-import {IPriceChecker} from "./interfaces/IPriceChecker.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
 
 import {ICoWSwapSettlement} from "./interfaces/ICoWSwapSettlement.sol";
@@ -20,8 +20,9 @@ contract Order is IERC1271, AssetRecoverer {
     bytes32 public constant APP_DATA = keccak256("LIDO_DOES_STONKS");
     address public constant SETTLEMENT = 0x9008D19f58AAbD9eD0D60971565AA8510560ab41;
     address public constant VAULT_RELAYER = 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110;
-
-    uint8 public constant PRICE_TOLERANCE_IN_PERCENT = 5;
+    // Max basis points for price margin
+    uint256 private constant MAX_BASIS_POINTS = 10_000;
+    uint256 public constant PRICE_TOLERANCE_IN_PERCENT = 5;
 
     bytes32 public immutable domainSeparator;
 
@@ -43,19 +44,21 @@ contract Order is IERC1271, AssetRecoverer {
         stonks = msg.sender;
         operator = operator_;
 
-        (IERC20 tokenFrom, IERC20 tokenTo, address priceChecker) = IStonks(stonks).getOrderParameters();
+        (IERC20 tokenFrom, IERC20 tokenTo, address tokenConverter, uint256 marginBasisPoints) =
+            IStonks(stonks).getOrderParameters();
 
         validTo = uint32(block.timestamp + 60 minutes);
         sellAmount = tokenFrom.balanceOf(address(this));
-        buyAmount =
-            IPriceChecker(priceChecker).getExpectedOut(sellAmount, address(tokenFrom), address(tokenTo), new bytes(0));
+        buyAmount = ITokenConverter(tokenConverter).getExpectedOut(sellAmount, address(tokenFrom), address(tokenTo));
+
+        uint256 buyAmountWithMargin = (buyAmount * (MAX_BASIS_POINTS - marginBasisPoints)) / MAX_BASIS_POINTS;
 
         GPv2Order.Data memory order = GPv2Order.Data({
             sellToken: IERC20Metadata(address(tokenFrom)),
             buyToken: IERC20Metadata(address(tokenTo)),
             receiver: TREASURY,
             sellAmount: sellAmount,
-            buyAmount: buyAmount,
+            buyAmount: buyAmountWithMargin,
             validTo: validTo,
             appData: APP_DATA,
             feeAmount: 0,
@@ -74,25 +77,29 @@ contract Order is IERC1271, AssetRecoverer {
         require(hash == orderHash, "Order: invalid order");
         require(block.timestamp <= validTo, "Order: invalid time");
 
-        (IERC20 tokenFrom, IERC20 tokenTo, address priceChecker) = IStonks(stonks).getOrderParameters();
+        (IERC20 tokenFrom, IERC20 tokenTo, address tokenConverter, uint256 marginBasisPoints) =
+            IStonks(stonks).getOrderParameters();
 
-        uint256 currentMarketPrice = IPriceChecker(priceChecker).getExpectedOut(
-            IERC20(tokenFrom).balanceOf(address(this)), address(tokenFrom), address(tokenTo), new bytes(0)
+        uint256 currentMarketPrice = ITokenConverter(tokenConverter).getExpectedOut(
+            IERC20(tokenFrom).balanceOf(address(this)), address(tokenFrom), address(tokenTo)
         );
 
-        require(isTradePriceWithinTolerance(buyAmount, currentMarketPrice), "Order: invalid price");
+        uint256 currentMarketPriceWithMargin =
+            (currentMarketPrice * (MAX_BASIS_POINTS - marginBasisPoints)) / MAX_BASIS_POINTS;
+
+        require(isTradePriceWithinTolerance(buyAmount, currentMarketPriceWithMargin), "Order: invalid price");
 
         return ERC1271_MAGIC_VALUE;
     }
 
     function cancel() external {
         require(validTo < block.timestamp, "Order: not expired");
-        (IERC20 tokenFrom,,) = IStonks(stonks).getOrderParameters();
+        (IERC20 tokenFrom,,,) = IStonks(stonks).getOrderParameters();
         tokenFrom.safeTransfer(stonks, tokenFrom.balanceOf(address(this)));
     }
 
     function recoverERC20(address token_) external onlyOperator {
-        (IERC20 tokenFrom,,) = IStonks(stonks).getOrderParameters();
+        (IERC20 tokenFrom,,,) = IStonks(stonks).getOrderParameters();
         require(token_ != address(tokenFrom), "Order: cannot recover tokenFrom");
         uint256 amount = IERC20(token_).balanceOf(address(this));
         IERC20(token_).safeTransfer(TREASURY, amount);
@@ -103,7 +110,7 @@ contract Order is IERC1271, AssetRecoverer {
         uint256 scaleFactor = 1e18;
         uint256 scaledA = a * scaleFactor;
         uint256 scaledB = b * scaleFactor;
-        uint256 tolerance = (scaledA > scaledB ? scaledA : PRICE_TOLERANCE_IN_PERCENT) * 5 / 100;
+        uint256 tolerance = ((scaledA > scaledB ? scaledA : PRICE_TOLERANCE_IN_PERCENT) * 5) / 100;
 
         if (scaledA > scaledB) {
             return scaledA - scaledB <= tolerance;

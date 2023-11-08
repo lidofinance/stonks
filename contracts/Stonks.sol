@@ -10,26 +10,39 @@ import {Order} from "./Order.sol";
 contract Stonks is AssetRecoverer {
     using SafeERC20 for IERC20;
 
-    address public priceChecker;
+    uint256 private constant MAX_BASIS_POINTS = 10_000;
+
+    address public tokenConverter;
 
     Order public immutable orderInstance;
 
     address public immutable tokenFrom;
     address public immutable tokenTo;
 
-    constructor(address tokenFrom_, address tokenTo_, address operator_, address priceChecker_, address order_) {
+    uint256 public immutable marginBasisPoints;
+
+    constructor(
+        address tokenFrom_,
+        address tokenTo_,
+        address operator_,
+        address tokenConverter_,
+        address order_,
+        uint256 marginBasisPoints_
+    ) {
         require(tokenFrom_ != address(0), "Stonks: invalid tokenFrom_ address");
         require(tokenTo_ != address(0), "Stonks: invalid tokenTo_ address");
         require(tokenFrom_ != tokenTo_, "Stonks: tokenFrom_ and tokenTo_ cannot be the same");
-        require(priceChecker_ != address(0), "Stonks: invalid price checker address");
+        require(tokenConverter_ != address(0), "Stonks: invalid price checker address");
         require(operator_ != address(0), "Stonks: invalid operator address");
         require(order_ != address(0), "Stonks: invalid order address");
+        require(marginBasisPoints_ <= MAX_BASIS_POINTS, "Stonks: margin overflow");
 
         operator = operator_;
         tokenFrom = tokenFrom_;
         tokenTo = tokenTo_;
-        priceChecker = priceChecker_;
+        tokenConverter = tokenConverter_;
         orderInstance = Order(order_);
+        marginBasisPoints = marginBasisPoints_;
     }
 
     function placeOrder() external {
@@ -42,23 +55,17 @@ contract Stonks is AssetRecoverer {
         orderCopy.initialize(operator);
     }
 
-    function getOrderParameters() external view returns (address, address, address) {
-        return (tokenFrom, tokenTo, priceChecker);
+    function getOrderParameters() external view returns (address, address, address, uint256) {
+        return (tokenFrom, tokenTo, tokenConverter, marginBasisPoints);
     }
 
     function createOrderCopy() internal returns (address orderContract) {
         bytes20 addressBytes = bytes20(address(orderInstance));
         assembly {
             let clone_code := mload(0x40)
-            mstore(
-                clone_code,
-                0x3d602d80600a3d3981f3363d3d373d3d3d363d73000000000000000000000000
-            )
+            mstore(clone_code, 0x3d602d80600a3d3981f3363d3d373d3d3d363d73000000000000000000000000)
             mstore(add(clone_code, 0x14), addressBytes)
-            mstore(
-                add(clone_code, 0x28),
-                0x5af43d82803e903d91602b57fd5bf30000000000000000000000000000000000
-            )
+            mstore(add(clone_code, 0x28), 0x5af43d82803e903d91602b57fd5bf30000000000000000000000000000000000)
             orderContract := create(0, clone_code, 0x37)
         }
     }

@@ -1,14 +1,14 @@
-import { PriceChecker } from "../../typechain-types";
+import { ITokenConverter } from "../../typechain-types";
 import { ethers } from "hardhat";
 
 import { mainnet } from "../../utils/contracts";
 
-describe("Price checker", function () {
-    let subject: PriceChecker;
+describe("Tokens converter", function () {
+    let subject: ITokenConverter;
 
     this.beforeAll(async function () {
-        const ContractFactory = await ethers.getContractFactory("PriceChecker");
-        subject = await ContractFactory.deploy(mainnet.STETH_USD_PRICE_FEED, mainnet.STETH, mainnet.DAI, 100);
+        const ContractFactory = await ethers.getContractFactory("ChainLinkUsdTokensConverter");
+        subject = await ContractFactory.deploy(mainnet.CHAINLINK_PRICE_FEED_REGISTRY, [mainnet.STETH, mainnet.DAI, mainnet.USDC, mainnet.USDT], [mainnet.DAI, mainnet.USDC, mainnet.USDT]);
 
         await subject.waitForDeployment();
     });
@@ -19,10 +19,14 @@ describe("Price checker", function () {
             const price = await subject.getExpectedOut(stethToSell, mainnet.STETH, mainnet.DAI)
             console.log(price.toString())
         })
-
-        it("Should have the right price in the back direction", async function () {
-            const stethToSell = ethers.parseEther("1630")
-            const price = await subject.getExpectedOut(stethToSell, mainnet.DAI, mainnet.STETH)
+        it("Should have the right price in the straigt direction", async function () {
+            const stethToSell = 1000000
+            const price = await subject.getExpectedOut(stethToSell, mainnet.USDC, mainnet.DAI)
+            console.log(price.toString())
+        })
+        it("Should have the right price in the straigt direction", async function () {
+            const stethToSell = ethers.parseEther("1")
+            const price = await subject.getExpectedOut(stethToSell, mainnet.DAI, mainnet.USDC)
             console.log(price.toString())
         })
     })
