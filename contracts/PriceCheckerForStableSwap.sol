@@ -129,6 +129,11 @@ contract PriceCheckerForStableSwap is IPriceChecker {
             "PriceChecker: Token is not allowed to buy"
         );
 
+        require(
+            _marginBP <= MAX_BASIS_POINTS,
+            "PriceChecker: Margin BP overflow"
+        );
+
         (uint256 currentPrice, uint256 feedDecimals) = _fetchPrice(
             _tokenFrom,
             USD
@@ -137,9 +142,8 @@ contract PriceCheckerForStableSwap is IPriceChecker {
         uint8 decimalsOfSellToken = IERC20Metadata(_tokenFrom).decimals();
         uint8 decimalsOfBuyToken = IERC20Metadata(_tokenTo).decimals();
 
-        uint256 expectedOutputAmount = (_amount *
-            currentPrice /
-            (10 ** (decimalsOfSellToken - decimalsOfBuyToken + feedDecimals)));
+        uint256 expectedOutputAmount = ((_amount * currentPrice) /
+            (10 ** (decimalsOfSellToken + feedDecimals - decimalsOfBuyToken)));
 
         expectedOutputAmountWithMargin =
             (expectedOutputAmount * (MAX_BASIS_POINTS - _marginBP)) /

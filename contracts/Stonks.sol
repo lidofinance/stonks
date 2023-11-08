@@ -10,6 +10,8 @@ import {Order} from "./Order.sol";
 contract Stonks is RecoverERC20 {
     using SafeERC20 for IERC20;
 
+    uint256 private constant MAX_BASIS_POINTS = 10_000;
+
     address public priceChecker;
 
     Order public immutable orderInstance;
@@ -17,19 +19,39 @@ contract Stonks is RecoverERC20 {
     address public immutable tokenFrom;
     address public immutable tokenTo;
 
-    constructor(address tokenFrom_, address tokenTo_, address operator_, address priceChecker_, address order_) {
+    uint256 public immutable marginBasisPoints;
+
+    constructor(
+        address tokenFrom_,
+        address tokenTo_,
+        address operator_,
+        address priceChecker_,
+        address order_,
+        uint256 marginBasisPoints_
+    ) {
         require(tokenFrom_ != address(0), "Stonks: invalid tokenFrom_ address");
         require(tokenTo_ != address(0), "Stonks: invalid tokenTo_ address");
-        require(tokenFrom_ != tokenTo_, "Stonks: tokenFrom_ and tokenTo_ cannot be the same");
-        require(priceChecker_ != address(0), "Stonks: invalid price checker address");
+        require(
+            tokenFrom_ != tokenTo_,
+            "Stonks: tokenFrom_ and tokenTo_ cannot be the same"
+        );
+        require(
+            priceChecker_ != address(0),
+            "Stonks: invalid price checker address"
+        );
         require(operator_ != address(0), "Stonks: invalid operator address");
         require(order_ != address(0), "Stonks: invalid order address");
+        require(
+            marginBasisPoints_ <= MAX_BASIS_POINTS,
+            "Stonks: margin overflow"
+        );
 
         operator = operator_;
         tokenFrom = tokenFrom_;
         tokenTo = tokenTo_;
         priceChecker = priceChecker_;
         orderInstance = Order(order_);
+        marginBasisPoints = marginBasisPoints_;
     }
 
     function placeOrder() external {
@@ -48,8 +70,12 @@ contract Stonks is RecoverERC20 {
         _recoverERC20(token_, ARAGON_AGENT, balance);
     }
 
-    function getOrderParameters() external view returns (address, address, address) {
-        return (tokenFrom, tokenTo, priceChecker);
+    function getOrderParameters()
+        external
+        view
+        returns (address, address, address, uint256)
+    {
+        return (tokenFrom, tokenTo, priceChecker, marginBasisPoints);
     }
 
     function createOrderCopy() internal returns (address orderContract) {

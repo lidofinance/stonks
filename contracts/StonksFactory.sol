@@ -3,21 +3,20 @@ pragma solidity ^0.8.13;
 
 import {Stonks} from "./Stonks.sol";
 import {Order} from "./Order.sol";
-import {PriceChecker} from "./PriceChecker.sol";
+import {PriceCheckerForStableSwap} from "./PriceCheckerForStableSwap.sol";
 
 contract StonksFactory {
     address public immutable order;
 
     event OrderDeployed(address orderAddress);
     event PriceCheckerDeployed(
-        address priceCheckerAddress,
-        address priceFeedAddress,
-        address firstTokenAddress,
-        address secondTokenAddress,
-        uint16 marginBasisPoints
+        address indexed priceCheckerAddress,
+        address feedRegistryAddress,
+        address[] allowedTokensToSell,
+        address[] allowedStableTokensToBuy
     );
     event StonksDeployed(
-        address stonksAddress, address tokenFrom, address tokenTo, address priceChecker, address operator, address order
+        address indexed stonksAddress, address tokenFrom, address tokenTo, address priceChecker, address operator, address order, uint256 marginBasisPoints
     );
 
     constructor() {
@@ -25,37 +24,36 @@ contract StonksFactory {
         emit OrderDeployed(order);
     }
 
-    function deployStonks(address tokenFrom_, address tokenTo_, address priceChecker_, address operator_)
+    function deployStonks(address tokenFrom_, address tokenTo_, address priceChecker_, address operator_, uint256 marginBasisPoints_)
         public
         returns (address stonks)
     {
-        stonks = address(new Stonks(tokenFrom_, tokenTo_, priceChecker_, operator_, order));
-        emit StonksDeployed(stonks, tokenFrom_, tokenTo_, priceChecker_, operator_, order);
+        stonks = address(new Stonks(tokenFrom_, tokenTo_, priceChecker_, operator_, order, marginBasisPoints_));
+        emit StonksDeployed(stonks, tokenFrom_, tokenTo_, priceChecker_, operator_, order, marginBasisPoints_);
     }
 
-    function deployPriceChecker(
-        address priceFeedAddress_,
-        address firstTokenAddress_,
-        address secondTokenAddress_,
-        uint16 marginBasisPoints
+    function deployPriceCheckerForStableSwap(
+        address feedRegistry_,
+        address[] memory allowedTokensToSell_,
+        address[] memory allowedStableTokensToBuy_
     ) public returns (address priceChecker) {
         priceChecker =
-            address(new PriceChecker(priceFeedAddress_, firstTokenAddress_, secondTokenAddress_, marginBasisPoints));
+            address(new PriceCheckerForStableSwap(feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_));
         emit PriceCheckerDeployed(
-            priceChecker, priceFeedAddress_, firstTokenAddress_, secondTokenAddress_, marginBasisPoints
+            priceChecker, feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_
         );
     }
 
     function deployFullSetup(
         address tokenFrom_,
         address tokenTo_,
-        address priceFeedAddress_,
-        address firstTokenAddress_,
-        address secondTokenAddress_,
+        address feedRegistry_,
+        address[] memory allowedTokensToSell_,
+        address[] memory allowedStableTokensToBuy_,
         uint16 marginBasisPoints_
     ) external returns (address) {
         address priceChecker =
-            deployPriceChecker(priceFeedAddress_, firstTokenAddress_, secondTokenAddress_, marginBasisPoints_);
-        return deployStonks(tokenFrom_, tokenTo_, priceChecker, address(0));
+            deployPriceCheckerForStableSwap(feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_);
+        return deployStonks(tokenFrom_, tokenTo_, priceChecker, address(0), marginBasisPoints_);
     }
 }
