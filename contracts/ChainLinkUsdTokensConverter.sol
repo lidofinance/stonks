@@ -139,15 +139,16 @@ contract ChainLinkUsdTokensConverter is ITokenConverter {
             USD
         );
 
-        uint8 decimalsOfSellToken = IERC20Metadata(_tokenFrom).decimals();
-        uint8 decimalsOfBuyToken = IERC20Metadata(_tokenTo).decimals();
+        uint256 decimalsOfSellToken = IERC20Metadata(_tokenFrom).decimals();
+        uint256 decimalsOfBuyToken = IERC20Metadata(_tokenTo).decimals();
 
-        uint256 expectedOutputAmount = ((_amount * currentPrice) /
-            (10 ** (decimalsOfSellToken + feedDecimals - decimalsOfBuyToken)));
-
-        expectedOutputAmountWithMargin =
-            (expectedOutputAmount * (MAX_BASIS_POINTS - _marginBP)) /
-            MAX_BASIS_POINTS;
+        int256 grantDecimals = int256(decimalsOfSellToken + feedDecimals) -
+            int256(decimalsOfBuyToken);
+        
+        expectedOutputAmount = (
+            (_amount * currentPrice * (10 ** max(-grantDecimals, 0))) / 
+            (10 ** (max(grantDecimals, 0)))
+        );
     }
 
     
@@ -165,5 +166,9 @@ contract ChainLinkUsdTokensConverter is ITokenConverter {
         uint256 decimals = feedRegistry.decimals(base, quote);
 
         return (uint256(price), decimals);
+    }
+
+    function max(int256 a, int256 b) internal pure returns (uint256) {
+        return a >= b ? uint(a) : uint(b);
     }
 }
