@@ -50,8 +50,6 @@ contract ChainLinkUsdTokensConverter is ITokenConverter {
 
     // Fiat currencies follow https://en.wikipedia.org/wiki/ISO_4217
     address public constant USD = address(840);
-    // Max basis points for price margin
-    uint256 private constant MAX_BASIS_POINTS = 10_000;
 
     // -------------
     // STATE
@@ -111,9 +109,8 @@ contract ChainLinkUsdTokensConverter is ITokenConverter {
     function getExpectedOut(
         uint256 _amount,
         address _tokenFrom,
-        address _tokenTo,
-        uint256 _marginBP
-    ) external view returns (uint256 expectedOutputAmountWithMargin) {
+        address _tokenTo
+    ) external view returns (uint256 expectedOutputAmount) {
         require(
             _tokenFrom != _tokenTo,
             "TokenConverter: Input and output tokens cannot be the same"
@@ -127,11 +124,6 @@ contract ChainLinkUsdTokensConverter is ITokenConverter {
         require(
             allowedStableTokensToBuy[_tokenTo] == true,
             "TokenConverter: Token is not allowed to buy"
-        );
-
-        require(
-            _marginBP <= MAX_BASIS_POINTS,
-            "TokenConverter: Margin BP overflow"
         );
 
         (uint256 currentPrice, uint256 feedDecimals) = _fetchPrice(
@@ -150,8 +142,6 @@ contract ChainLinkUsdTokensConverter is ITokenConverter {
             (10 ** (max(grantDecimals, 0)))
         );
     }
-
-    
 
     ///
     // @dev Internal function to get price from Chainlink Price Feed Registry.

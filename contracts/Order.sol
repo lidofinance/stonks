@@ -17,6 +17,9 @@ contract Order is IERC1271, RecoverERC20 {
     using GPv2Order for *;
     using SafeERC20 for IERC20;
 
+    // Max basis points for price margin
+    uint256 private constant MAX_BASIS_POINTS = 10_000;
+
     bytes32 public constant APP_DATA = keccak256("LIDO_DOES_STONKS");
     address public constant SETTLEMENT =
         0x9008D19f58AAbD9eD0D60971565AA8510560ab41;
@@ -64,16 +67,18 @@ contract Order is IERC1271, RecoverERC20 {
         buyAmount = ITokenConverter(tokenConverter).getExpectedOut(
             sellAmount,
             address(tokenFrom),
-            address(tokenTo),
-            marginBasisPoints
+            address(tokenTo)
         );
+
+        uint256 buyAmountWithMargin = (buyAmount *
+            (MAX_BASIS_POINTS - marginBasisPoints)) / MAX_BASIS_POINTS;
 
         GPv2Order.Data memory order = GPv2Order.Data({
             sellToken: IERC20Metadata(address(tokenFrom)),
             buyToken: IERC20Metadata(address(tokenTo)),
             receiver: TREASURY,
             sellAmount: sellAmount,
-            buyAmount: buyAmount,
+            buyAmount: buyAmountWithMargin,
             validTo: validTo,
             appData: APP_DATA,
             feeAmount: 0,
@@ -102,15 +107,21 @@ contract Order is IERC1271, RecoverERC20 {
             uint256 marginBasisPoints
         ) = IStonks(stonks).getOrderParameters();
 
-        uint256 currentMarketPrice = ITokenConverter(tokenConverter).getExpectedOut(
-            IERC20(tokenFrom).balanceOf(address(this)),
-            address(tokenFrom),
-            address(tokenTo),
-            marginBasisPoints
-        );
+        uint256 currentMarketPrice = ITokenConverter(tokenConverter)
+            .getExpectedOut(
+                IERC20(tokenFrom).balanceOf(address(this)),
+                address(tokenFrom),
+                address(tokenTo)
+            );
+
+        uint256 currentMarketPriceWithMargin = (currentMarketPrice *
+            (MAX_BASIS_POINTS - marginBasisPoints)) / MAX_BASIS_POINTS;
 
         require(
-            isTradePriceWithinTolerance(buyAmount, currentMarketPrice),
+            isTradePriceWithinTolerance(
+                buyAmount,
+                currentMarketPriceWithMargin
+            ),
             "Order: invalid price"
         );
 
