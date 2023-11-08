@@ -20,7 +20,7 @@ describe("Stonks factory", function () {
         let priceChecker: PriceChecker
 
         it("Should deploy price checker with correct params", async () => {
-            const deployTx = await subject.deployPriceChecker(mainnet.STETH_USD_PRICE_FEED, mainnet.STETH, mainnet.DAI, 100);
+            const deployTx = await subject.deployPriceCheckerForStableSwap(mainnet.CHAINLINK_PRICE_FEED_REGISTRY, [mainnet.STETH], [mainnet.DAI]);
         })
 
     })

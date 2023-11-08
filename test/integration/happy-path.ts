@@ -22,13 +22,13 @@ describe("Happy path", function () {
             stonksParams: {
                 tokenFrom: mainnet.STETH,
                 tokenTo: mainnet.DAI,
-                operator: await signer.getAddress()
+                operator: await signer.getAddress(),
+                marginInBps: 100
             },
             priceCheckerParams: {
-                tokenA: mainnet.STETH,
-                tokenB: mainnet.DAI,
-                priceFeed: mainnet.STETH_USD_PRICE_FEED,
-                marginInBps: 100
+                priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+                allowedTokensToSell: [mainnet.STETH],
+                allowedStableTokensToBuy: [mainnet.DAI]
             }
         })
 

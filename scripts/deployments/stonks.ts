@@ -10,12 +10,12 @@ export type DeployStonksParams = {
         tokenTo: string
         operator: string
         priceCheckerAddress?: string
+        marginInBps: number
     }
     priceCheckerParams?: {
-        tokenA: string
-        tokenB: string
-        priceFeed: string
-        marginInBps: number
+        priceFeedRegistry: string
+        allowedTokensToSell: string[]
+        allowedStableTokensToBuy: string[]
     }
 }
 type ReturnType = {
@@ -25,29 +25,29 @@ type ReturnType = {
 
 
 export async function deployStonks({
-    stonksParams: { tokenFrom, tokenTo, priceCheckerAddress, operator },
+    stonksParams: { tokenFrom, tokenTo, priceCheckerAddress, operator, marginInBps },
     priceCheckerParams
 }: DeployStonksParams): Promise<ReturnType> {
+
     const { stonksFactory } = await deployStonksFactory();
 
     let priceChecker: PriceChecker | undefined;
-
     if (priceCheckerParams) {
-        const { tokenA, tokenB, priceFeed, marginInBps } = priceCheckerParams;
-        const deployPriceCheckerTX = await stonksFactory.deployPriceChecker(priceFeed, tokenA, tokenB, marginInBps);
+        const { priceFeedRegistry, allowedTokensToSell, allowedStableTokensToBuy } = priceCheckerParams;
+        const deployPriceCheckerTX = await stonksFactory.deployPriceCheckerForStableSwap(priceFeedRegistry, allowedTokensToSell, allowedStableTokensToBuy);
         const receipt = await deployPriceCheckerTX.wait();
 
         if (!receipt) throw new Error("No transaction receipt");
 
         const { address } = getPriceCheckerDeployment(receipt)
-        priceChecker = await ethers.getContractAt("PriceChecker", address)
+        priceChecker = await ethers.getContractAt("PriceCheckerForStableSwap", address)
     } else if (priceCheckerAddress) {
-        priceChecker = await ethers.getContractAt("PriceChecker", priceCheckerAddress)
+        priceChecker = await ethers.getContractAt("PriceCheckerForStableSwap", priceCheckerAddress)
     } else {
         throw new Error()
     }
 
-    const deployStonksTx = await stonksFactory.deployStonks(tokenFrom, tokenTo, operator, await priceChecker.getAddress());
+    const deployStonksTx = await stonksFactory.deployStonks(tokenFrom, tokenTo, operator, await priceChecker.getAddress(), marginInBps);
     const receipt = await deployStonksTx.wait();
 
     if (!receipt) throw new Error("No transaction receipt");
