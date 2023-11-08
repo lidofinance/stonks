@@ -7,7 +7,7 @@ describe("Price checker", function () {
     let subject: PriceChecker;
 
     this.beforeAll(async function () {
-        const ContractFactory = await ethers.getContractFactory("PriceCheckerForStableSwap");
+        const ContractFactory = await ethers.getContractFactory("ChainLinkUsdTokensConverter");
         subject = await ContractFactory.deploy(mainnet.CHAINLINK_PRICE_FEED_REGISTRY, [mainnet.STETH], [mainnet.DAI]);
 
         await subject.waitForDeployment();

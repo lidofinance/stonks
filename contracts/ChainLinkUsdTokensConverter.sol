@@ -43,7 +43,7 @@ interface IFeedRegistry {
  * margin, and then calculates the expected amount of the output token based on the input amount of the
  * sellToken.
  */
-contract PriceCheckerForStableSwap is IPriceChecker {
+contract ChainLinkUsdTokensConverter is IPriceChecker {
     // -------------
     // CONSTANTS
     // -------------
@@ -149,6 +149,8 @@ contract PriceCheckerForStableSwap is IPriceChecker {
             (expectedOutputAmount * (MAX_BASIS_POINTS - _marginBP)) /
             MAX_BASIS_POINTS;
     }
+
+    
 
     ///
     // @dev Internal function to get price from Chainlink Price Feed Registry.

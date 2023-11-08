@@ -3,7 +3,7 @@ pragma solidity ^0.8.13;
 
 import {Stonks} from "./Stonks.sol";
 import {Order} from "./Order.sol";
-import {PriceCheckerForStableSwap} from "./PriceCheckerForStableSwap.sol";
+import {ChainLinkUsdTokensConverter} from "./ChainLinkUsdTokensConverter.sol";
 
 contract StonksFactory {
     address public immutable order;
@@ -32,13 +32,13 @@ contract StonksFactory {
         emit StonksDeployed(stonks, tokenFrom_, tokenTo_, priceChecker_, operator_, order, marginBasisPoints_);
     }
 
-    function deployPriceCheckerForStableSwap(
+    function deployChainLinkUsdTokensConverter(
         address feedRegistry_,
         address[] memory allowedTokensToSell_,
         address[] memory allowedStableTokensToBuy_
     ) public returns (address priceChecker) {
         priceChecker =
-            address(new PriceCheckerForStableSwap(feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_));
+            address(new ChainLinkUsdTokensConverter(feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_));
         emit PriceCheckerDeployed(
             priceChecker, feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_
         );
@@ -53,7 +53,7 @@ contract StonksFactory {
         uint16 marginBasisPoints_
     ) external returns (address) {
         address priceChecker =
-            deployPriceCheckerForStableSwap(feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_);
+            deployChainLinkUsdTokensConverter(feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_);
         return deployStonks(tokenFrom_, tokenTo_, priceChecker, address(0), marginBasisPoints_);
     }
 }

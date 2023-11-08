@@ -34,15 +34,15 @@ export async function deployStonks({
     let priceChecker: PriceChecker | undefined;
     if (priceCheckerParams) {
         const { priceFeedRegistry, allowedTokensToSell, allowedStableTokensToBuy } = priceCheckerParams;
-        const deployPriceCheckerTX = await stonksFactory.deployPriceCheckerForStableSwap(priceFeedRegistry, allowedTokensToSell, allowedStableTokensToBuy);
+        const deployPriceCheckerTX = await stonksFactory.deployChainLinkUsdTokensConverter(priceFeedRegistry, allowedTokensToSell, allowedStableTokensToBuy);
         const receipt = await deployPriceCheckerTX.wait();
 
         if (!receipt) throw new Error("No transaction receipt");
 
         const { address } = getPriceCheckerDeployment(receipt)
-        priceChecker = await ethers.getContractAt("PriceCheckerForStableSwap", address)
+        priceChecker = await ethers.getContractAt("ChainLinkUsdTokensConverter", address)
     } else if (priceCheckerAddress) {
-        priceChecker = await ethers.getContractAt("PriceCheckerForStableSwap", priceCheckerAddress)
+        priceChecker = await ethers.getContractAt("ChainLinkUsdTokensConverter", priceCheckerAddress)
     } else {
         throw new Error()
     }
