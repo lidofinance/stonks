@@ -32,7 +32,7 @@ interface IFeedRegistry {
 }
 
 /**
- * @title TokenConverter
+ * @title ChainLinkUsdTokensConverter
  * @dev This contract provides functionalities to retrieve expected token conversion rates
  * based on the Chainlink Price Feed. It allows users to get the expected output amount of one token
  * in terms of another token, considering a specific margin. The contract assumes a relationship between
@@ -134,13 +134,10 @@ contract ChainLinkUsdTokensConverter is ITokenConverter {
         uint256 decimalsOfSellToken = IERC20Metadata(_tokenFrom).decimals();
         uint256 decimalsOfBuyToken = IERC20Metadata(_tokenTo).decimals();
 
-        int256 grandDecimals = int256(decimalsOfSellToken + feedDecimals) -
-            int256(decimalsOfBuyToken);
-        
-        expectedOutputAmount = (
-            (_amount * currentPrice * (10 ** max(-grandDecimals, 0))) / 
-            (10 ** (max(grandDecimals, 0)))
-        );
+        expectedOutputAmount =
+            (_amount * currentPrice * 10 ** decimalsOfBuyToken) /
+            10 ** decimalsOfSellToken /
+            10 ** feedDecimals;
     }
 
     ///
