@@ -2,7 +2,7 @@ import { ethers, network } from "hardhat"
 import { Signer } from "ethers"
 import { expect } from "chai"
 import { deployStonks } from "../../scripts/deployments/stonks"
-import { PriceChecker, Stonks, Order } from "../../typechain-types"
+import { TokenConverter, Stonks, Order } from "../../typechain-types"
 import { mainnet } from "../../utils/contracts"
 import { getPlaceOrderData } from "../../utils/get-events"
 import { isClose } from "../../utils/assert"
@@ -11,21 +11,21 @@ import { fillUpBalance } from "../../utils/fill-up-balance"
 describe("Happy path", function () {
     let signer: Signer
     let subject: Stonks;
-    let subjectPriceChecker: PriceChecker
+    let subjectTokenConverter: TokenConverter
     let snapshotId: string
 
     this.beforeAll(async function () {
         snapshotId = await network.provider.send('evm_snapshot')
         signer = (await ethers.getSigners())[0]
 
-        const { stonks, priceChecker } = await deployStonks({
+        const { stonks, tokenConverter } = await deployStonks({
             stonksParams: {
                 tokenFrom: mainnet.STETH,
                 tokenTo: mainnet.DAI,
                 operator: await signer.getAddress(),
                 marginInBps: 100
             },
-            priceCheckerParams: {
+            tokenConverterParams: {
                 priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
                 allowedTokensToSell: [mainnet.STETH],
                 allowedStableTokensToBuy: [mainnet.DAI]
@@ -33,7 +33,7 @@ describe("Happy path", function () {
         })
 
         subject = stonks
-        subjectPriceChecker = priceChecker
+        subjectTokenConverter = tokenConverter
     });
 
     describe.only("order creation", async function () {

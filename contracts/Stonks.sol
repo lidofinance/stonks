@@ -12,7 +12,7 @@ contract Stonks is RecoverERC20 {
 
     uint256 private constant MAX_BASIS_POINTS = 10_000;
 
-    address public priceChecker;
+    address public tokenConverter;
 
     Order public immutable orderInstance;
 
@@ -25,7 +25,7 @@ contract Stonks is RecoverERC20 {
         address tokenFrom_,
         address tokenTo_,
         address operator_,
-        address priceChecker_,
+        address tokenConverter_,
         address order_,
         uint256 marginBasisPoints_
     ) {
@@ -36,7 +36,7 @@ contract Stonks is RecoverERC20 {
             "Stonks: tokenFrom_ and tokenTo_ cannot be the same"
         );
         require(
-            priceChecker_ != address(0),
+            tokenConverter_ != address(0),
             "Stonks: invalid price checker address"
         );
         require(operator_ != address(0), "Stonks: invalid operator address");
@@ -49,7 +49,7 @@ contract Stonks is RecoverERC20 {
         operator = operator_;
         tokenFrom = tokenFrom_;
         tokenTo = tokenTo_;
-        priceChecker = priceChecker_;
+        tokenConverter = tokenConverter_;
         orderInstance = Order(order_);
         marginBasisPoints = marginBasisPoints_;
     }
@@ -75,7 +75,7 @@ contract Stonks is RecoverERC20 {
         view
         returns (address, address, address, uint256)
     {
-        return (tokenFrom, tokenTo, priceChecker, marginBasisPoints);
+        return (tokenFrom, tokenTo, tokenConverter, marginBasisPoints);
     }
 
     function createOrderCopy() internal returns (address orderContract) {

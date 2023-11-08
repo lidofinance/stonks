@@ -35,7 +35,7 @@ export const getStonksDeployment = (receipt: TransactionReceipt): {
     address: string
     tokenFrom: string
     tokenTo: string
-    priceChecker: string
+    tokenConverter: string
     operator: string
     order: string
 } => {
@@ -47,13 +47,13 @@ export const getStonksDeployment = (receipt: TransactionReceipt): {
         address: data[0],
         tokenFrom: data[1],
         tokenTo: data[2],
-        priceChecker: data[3],
+        tokenConverter: data[3],
         operator: data[4],
         order: data[5],
     }
 }
 
-export const getPriceCheckerDeployment = (receipt: TransactionReceipt): {
+export const getTokenConverterDeployment = (receipt: TransactionReceipt): {
     address: string
     feedRegistryAddress: string
     allowedTokensToSell: string[]

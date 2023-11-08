@@ -3,7 +3,7 @@ pragma solidity ^0.8.13;
 
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
-import {IPriceChecker} from "./interfaces/IPriceChecker.sol";
+import {ITokenConverter} from "./interfaces/ITokenConverter.sol";
 
 interface IFeedRegistry {
     function getFeed(
@@ -32,7 +32,7 @@ interface IFeedRegistry {
 }
 
 /**
- * @title PriceChecker
+ * @title TokenConverter
  * @dev This contract provides functionalities to retrieve expected token conversion rates
  * based on the Chainlink Price Feed. It allows users to get the expected output amount of one token
  * in terms of another token, considering a specific margin. The contract assumes a relationship between
@@ -43,7 +43,7 @@ interface IFeedRegistry {
  * margin, and then calculates the expected amount of the output token based on the input amount of the
  * sellToken.
  */
-contract ChainLinkUsdTokensConverter is IPriceChecker {
+contract ChainLinkUsdTokensConverter is ITokenConverter {
     // -------------
     // CONSTANTS
     // -------------
@@ -76,14 +76,14 @@ contract ChainLinkUsdTokensConverter is IPriceChecker {
     ) {
         require(
             _feedRegistry != address(0),
-            "PriceChecker: invalid feed registry address"
+            "TokenConverter: invalid feed registry address"
         );
         feedRegistry = IFeedRegistry(_feedRegistry);
 
         for (uint256 i = 0; i < _allowedStableTokensToBuy.length; ++i) {
             require(
                 _allowedStableTokensToBuy[i] != address(0),
-                "PriceChecker: invalid address"
+                "TokenConverter: invalid address"
             );
 
             allowedStableTokensToBuy[_allowedStableTokensToBuy[i]] = true;
@@ -92,13 +92,13 @@ contract ChainLinkUsdTokensConverter is IPriceChecker {
         for (uint256 i = 0; i < _allowedTokensToSell.length; ++i) {
             require(
                 _allowedTokensToSell[i] != address(0),
-                "PriceChecker: invalid address"
+                "TokenConverter: invalid address"
             );
 
             require(
                 feedRegistry.getFeed(_allowedTokensToSell[i], USD) !=
                     address(0),
-                "PriceChecker: No price feed found"
+                "TokenConverter: No price feed found"
             );
 
             allowedTokensToSell[_allowedTokensToSell[i]] = true;
@@ -116,22 +116,22 @@ contract ChainLinkUsdTokensConverter is IPriceChecker {
     ) external view returns (uint256 expectedOutputAmountWithMargin) {
         require(
             _tokenFrom != _tokenTo,
-            "PriceChecker: Input and output tokens cannot be the same"
+            "TokenConverter: Input and output tokens cannot be the same"
         );
 
         require(
             allowedTokensToSell[_tokenFrom] == true,
-            "PriceChecker: Token is not allowed to sell"
+            "TokenConverter: Token is not allowed to sell"
         );
 
         require(
             allowedStableTokensToBuy[_tokenTo] == true,
-            "PriceChecker: Token is not allowed to buy"
+            "TokenConverter: Token is not allowed to buy"
         );
 
         require(
             _marginBP <= MAX_BASIS_POINTS,
-            "PriceChecker: Margin BP overflow"
+            "TokenConverter: Margin BP overflow"
         );
 
         (uint256 currentPrice, uint256 feedDecimals) = _fetchPrice(

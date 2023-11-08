@@ -7,7 +7,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 
 import {GPv2Order} from "./lib/GPv2Order.sol";
 import {RecoverERC20} from "./lib/RecoverERC20.sol";
-import {IPriceChecker} from "./interfaces/IPriceChecker.sol";
+import {ITokenConverter} from "./interfaces/ITokenConverter.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
 
 import {ICoWSwapSettlement} from "./interfaces/ICoWSwapSettlement.sol";
@@ -55,13 +55,13 @@ contract Order is IERC1271, RecoverERC20 {
         (
             IERC20 tokenFrom,
             IERC20 tokenTo,
-            address priceChecker,
+            address tokenConverter,
             uint256 marginBasisPoints
         ) = IStonks(stonks).getOrderParameters();
 
         validTo = uint32(block.timestamp + 60 minutes);
         sellAmount = tokenFrom.balanceOf(address(this));
-        buyAmount = IPriceChecker(priceChecker).getExpectedOut(
+        buyAmount = ITokenConverter(tokenConverter).getExpectedOut(
             sellAmount,
             address(tokenFrom),
             address(tokenTo),
@@ -98,11 +98,11 @@ contract Order is IERC1271, RecoverERC20 {
         (
             IERC20 tokenFrom,
             IERC20 tokenTo,
-            address priceChecker,
+            address tokenConverter,
             uint256 marginBasisPoints
         ) = IStonks(stonks).getOrderParameters();
 
-        uint256 currentMarketPrice = IPriceChecker(priceChecker).getExpectedOut(
+        uint256 currentMarketPrice = ITokenConverter(tokenConverter).getExpectedOut(
             IERC20(tokenFrom).balanceOf(address(this)),
             address(tokenFrom),
             address(tokenTo),

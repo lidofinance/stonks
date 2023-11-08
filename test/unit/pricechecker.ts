@@ -1,10 +1,10 @@
-import { PriceChecker } from "../../typechain-types";
+import { TokenConverter } from "../../typechain-types";
 import { ethers } from "hardhat";
 
 import { mainnet } from "../../utils/contracts";
 
 describe("Price checker", function () {
-    let subject: PriceChecker;
+    let subject: TokenConverter;
 
     this.beforeAll(async function () {
         const ContractFactory = await ethers.getContractFactory("ChainLinkUsdTokensConverter");

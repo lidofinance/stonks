@@ -3,14 +3,14 @@ import { Signer } from "ethers"
 import { expect } from "chai"
 import { isClose } from "../../utils/assert"
 import { deployStonks } from "../../scripts/deployments/stonks"
-import { PriceChecker, Stonks, } from "../../typechain-types"
+import { TokenConverter, Stonks, } from "../../typechain-types"
 import { mainnet } from "../../utils/contracts"
 import { fillUpERC20FromTreasury } from "../../utils/fill-up-balance"
 
 describe("Stonks", function () {
     let signer: Signer
     let subject: Stonks;
-    let subjectPriceChecker: PriceChecker
+    let subjectTokenConverter: TokenConverter
     let snapshotId: string
 
     const amount = ethers.parseEther("1")
@@ -19,14 +19,14 @@ describe("Stonks", function () {
         signer = (await ethers.getSigners())[0]
         snapshotId = await network.provider.send('evm_snapshot')
 
-        const { stonks, priceChecker } = await deployStonks({
+        const { stonks, tokenConverter } = await deployStonks({
             stonksParams: {
                 tokenFrom: mainnet.STETH,
                 tokenTo: mainnet.DAI,
                 operator: await signer.getAddress(),
                 marginInBps: 100
             },
-            priceCheckerParams: {
+            tokenConverterParams: {
                 priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
                 allowedTokensToSell: [mainnet.STETH],
                 allowedStableTokensToBuy: [mainnet.DAI],
@@ -34,14 +34,14 @@ describe("Stonks", function () {
         })
 
         subject = stonks
-        subjectPriceChecker = priceChecker
+        subjectTokenConverter = tokenConverter
     });
 
     describe("initialization", function () {
         it('should set correct constructor params', async () => {
             expect(await subject.tokenFrom()).to.equal(mainnet.STETH)
             expect(await subject.tokenTo()).to.equal(mainnet.DAI)
-            expect(await subject.priceChecker()).to.equal(await subjectPriceChecker.getAddress())
+            expect(await subject.tokenConverter()).to.equal(await subjectTokenConverter.getAddress())
         })
 
         it("should not initialize with zero address", async function () {
@@ -60,10 +60,10 @@ describe("Stonks", function () {
                 ContractFactory.deploy(mainnet.STETH, mainnet.DAI, ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress)
             ).to.be.revertedWith("Stonks: invalid price checker address")
             expect(
-                ContractFactory.deploy(mainnet.STETH, mainnet.DAI, subjectPriceChecker, ethers.ZeroAddress, ethers.ZeroAddress)
+                ContractFactory.deploy(mainnet.STETH, mainnet.DAI, subjectTokenConverter, ethers.ZeroAddress, ethers.ZeroAddress)
             ).to.be.revertedWith("Stonks: invalid operator address")
             expect(
-                ContractFactory.deploy(mainnet.STETH, mainnet.DAI, subjectPriceChecker, signer, ethers.ZeroAddress)
+                ContractFactory.deploy(mainnet.STETH, mainnet.DAI, subjectTokenConverter, signer, ethers.ZeroAddress)
             ).to.be.revertedWith("Stonks: invalid order address")
         })
     })
