@@ -134,12 +134,12 @@ contract ChainLinkUsdTokensConverter is ITokenConverter {
         uint256 decimalsOfSellToken = IERC20Metadata(_tokenFrom).decimals();
         uint256 decimalsOfBuyToken = IERC20Metadata(_tokenTo).decimals();
 
-        int256 grantDecimals = int256(decimalsOfSellToken + feedDecimals) -
+        int256 grandDecimals = int256(decimalsOfSellToken + feedDecimals) -
             int256(decimalsOfBuyToken);
         
         expectedOutputAmount = (
-            (_amount * currentPrice * (10 ** max(-grantDecimals, 0))) / 
-            (10 ** (max(grantDecimals, 0)))
+            (_amount * currentPrice * (10 ** max(-grandDecimals, 0))) / 
+            (10 ** (max(grandDecimals, 0)))
         );
     }
 
