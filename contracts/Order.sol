@@ -44,7 +44,7 @@ contract Order is IERC1271, AssetRecoverer {
         stonks = msg.sender;
         operator = operator_;
 
-        (IERC20 tokenFrom, IERC20 tokenTo, address tokenConverter, uint256 marginBasisPoints) =
+        (IERC20 tokenFrom, IERC20 tokenTo, address tokenConverter, uint256 marginBasisPoints,) =
             IStonks(stonks).getOrderParameters();
 
         validTo = uint32(block.timestamp + 60 minutes);
@@ -77,8 +77,13 @@ contract Order is IERC1271, AssetRecoverer {
         require(hash == orderHash, "Order: invalid order");
         require(block.timestamp <= validTo, "Order: invalid time");
 
-        (IERC20 tokenFrom, IERC20 tokenTo, address tokenConverter, uint256 marginBasisPoints) =
-            IStonks(stonks).getOrderParameters();
+        (
+            IERC20 tokenFrom,
+            IERC20 tokenTo,
+            address tokenConverter,
+            uint256 marginBasisPoints,
+            uint256 priceToleranceInBasisPoints
+        ) = IStonks(stonks).getOrderParameters();
 
         uint256 currentMarketPrice = ITokenConverter(tokenConverter).getExpectedOut(
             IERC20(tokenFrom).balanceOf(address(this)), address(tokenFrom), address(tokenTo)
@@ -87,30 +92,37 @@ contract Order is IERC1271, AssetRecoverer {
         uint256 currentMarketPriceWithMargin =
             (currentMarketPrice * (MAX_BASIS_POINTS - marginBasisPoints)) / MAX_BASIS_POINTS;
 
-        require(isTradePriceWithinTolerance(buyAmount, currentMarketPriceWithMargin), "Order: invalid price");
+        require(
+            isTradePriceWithinTolerance(buyAmount, currentMarketPriceWithMargin, priceToleranceInBasisPoints),
+            "Order: invalid price"
+        );
 
         return ERC1271_MAGIC_VALUE;
     }
 
     function cancel() external {
         require(validTo < block.timestamp, "Order: not expired");
-        (IERC20 tokenFrom,,,) = IStonks(stonks).getOrderParameters();
+        (IERC20 tokenFrom,,,,) = IStonks(stonks).getOrderParameters();
         tokenFrom.safeTransfer(stonks, tokenFrom.balanceOf(address(this)));
     }
 
     function recoverERC20(address token_) external onlyOperator {
-        (IERC20 tokenFrom,,,) = IStonks(stonks).getOrderParameters();
+        (IERC20 tokenFrom,,,,) = IStonks(stonks).getOrderParameters();
         require(token_ != address(tokenFrom), "Order: cannot recover tokenFrom");
         uint256 amount = IERC20(token_).balanceOf(address(this));
         IERC20(token_).safeTransfer(TREASURY, amount);
         emit ERC20Recovered(token_, TREASURY, amount);
     }
 
-    function isTradePriceWithinTolerance(uint256 a, uint256 b) public pure returns (bool) {
+    function isTradePriceWithinTolerance(uint256 a, uint256 b, uint256 priceToleranceInBasisPoints)
+        public
+        pure
+        returns (bool)
+    {
         uint256 scaleFactor = 1e18;
         uint256 scaledA = a * scaleFactor;
         uint256 scaledB = b * scaleFactor;
-        uint256 tolerance = ((scaledA > scaledB ? scaledA : PRICE_TOLERANCE_IN_PERCENT) * 5) / 100;
+        uint256 tolerance = ((scaledA > scaledB ? scaledA : scaledB) * priceToleranceInBasisPoints) / 100;
 
         if (scaledA > scaledB) {
             return scaledA - scaledB <= tolerance;

@@ -7,5 +7,5 @@ interface IStonks {
     function getOrderParameters()
         external
         view
-        returns (IERC20, IERC20, address, uint256);
+        returns (IERC20, IERC20, address, uint256, uint256);
 }

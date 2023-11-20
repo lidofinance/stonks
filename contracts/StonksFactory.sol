@@ -16,7 +16,14 @@ contract StonksFactory {
         address[] allowedStableTokensToBuy
     );
     event StonksDeployed(
-        address indexed stonksAddress, address tokenFrom, address tokenTo, address tokenConverter, address operator, address order, uint256 marginBasisPoints
+        address indexed stonksAddress,
+        address tokenFrom,
+        address tokenTo,
+        address tokenConverter,
+        address operator,
+        address order,
+        uint256 marginBasisPoints,
+        uint256 priceToleranceInBasisPoints
     );
 
     constructor() {
@@ -24,12 +31,27 @@ contract StonksFactory {
         emit OrderDeployed(order);
     }
 
-    function deployStonks(address tokenFrom_, address tokenTo_, address tokenConverter_, address operator_, uint256 marginBasisPoints_)
-        public
-        returns (address stonks)
-    {
-        stonks = address(new Stonks(tokenFrom_, tokenTo_, tokenConverter_, operator_, order, marginBasisPoints_));
-        emit StonksDeployed(stonks, tokenFrom_, tokenTo_, tokenConverter_, operator_, order, marginBasisPoints_);
+    function deployStonks(
+        address tokenFrom_,
+        address tokenTo_,
+        address tokenConverter_,
+        address operator_,
+        uint256 marginBasisPoints_,
+        uint256 priceToleranceInBasisPoints_
+    ) public returns (address stonks) {
+        stonks = address(
+            new Stonks(tokenFrom_, tokenTo_, tokenConverter_, operator_, order, marginBasisPoints_, priceToleranceInBasisPoints_)
+        );
+        emit StonksDeployed(
+            stonks,
+            tokenFrom_,
+            tokenTo_,
+            tokenConverter_,
+            operator_,
+            order,
+            marginBasisPoints_,
+            priceToleranceInBasisPoints_
+        );
     }
 
     function deployChainLinkUsdTokensConverter(
@@ -39,21 +61,6 @@ contract StonksFactory {
     ) public returns (address tokenConverter) {
         tokenConverter =
             address(new ChainLinkUsdTokensConverter(feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_));
-        emit TokenConverterDeployed(
-            tokenConverter, feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_
-        );
-    }
-
-    function deployFullSetup(
-        address tokenFrom_,
-        address tokenTo_,
-        address feedRegistry_,
-        address[] memory allowedTokensToSell_,
-        address[] memory allowedStableTokensToBuy_,
-        uint16 marginBasisPoints_
-    ) external returns (address) {
-        address tokenConverter =
-            deployChainLinkUsdTokensConverter(feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_);
-        return deployStonks(tokenFrom_, tokenTo_, tokenConverter, address(0), marginBasisPoints_);
+        emit TokenConverterDeployed(tokenConverter, feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_);
     }
 }

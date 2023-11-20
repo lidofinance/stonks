@@ -2,7 +2,7 @@ import { ethers, network } from "hardhat"
 import { Signer } from "ethers"
 import { expect } from "chai"
 import { deployStonks } from "../../scripts/deployments/stonks"
-import { TokenConverter, Stonks, Order } from "../../typechain-types"
+import { ChainLinkUsdTokensConverter, Stonks, Order } from "../../typechain-types"
 import { mainnet } from "../../utils/contracts"
 import { getPlaceOrderData } from "../../utils/get-events"
 import { isClose } from "../../utils/assert"
@@ -11,7 +11,7 @@ import { fillUpBalance } from "../../utils/fill-up-balance"
 describe("Happy path", function () {
     let signer: Signer
     let subject: Stonks;
-    let subjectTokenConverter: TokenConverter
+    let subjectTokenConverter: ChainLinkUsdTokensConverter
     let snapshotId: string
 
     this.beforeAll(async function () {
@@ -23,7 +23,8 @@ describe("Happy path", function () {
                 tokenFrom: mainnet.STETH,
                 tokenTo: mainnet.DAI,
                 operator: await signer.getAddress(),
-                marginInBps: 100
+                marginInBps: 100,
+                priceToleranceInBps: 100
             },
             tokenConverterParams: {
                 priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
@@ -36,7 +37,7 @@ describe("Happy path", function () {
         subjectTokenConverter = tokenConverter
     });
 
-    describe.only("order creation", async function () {
+    describe("order creation", async function () {
         const value = ethers.parseEther("1")
         let order: Order
 

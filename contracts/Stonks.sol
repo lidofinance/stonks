@@ -19,7 +19,8 @@ contract Stonks is AssetRecoverer {
     address public immutable tokenFrom;
     address public immutable tokenTo;
 
-    uint256 public immutable marginBasisPoints;
+    uint256 public immutable marginInBasisPoints;
+    uint256 public immutable priceToleranceInBasisPoints;
 
     constructor(
         address tokenFrom_,
@@ -27,7 +28,8 @@ contract Stonks is AssetRecoverer {
         address operator_,
         address tokenConverter_,
         address order_,
-        uint256 marginBasisPoints_
+        uint256 marginBasisPoints_,
+        uint256 priceToleranceInBasisPoints_
     ) {
         require(tokenFrom_ != address(0), "Stonks: invalid tokenFrom_ address");
         require(tokenTo_ != address(0), "Stonks: invalid tokenTo_ address");
@@ -42,7 +44,8 @@ contract Stonks is AssetRecoverer {
         tokenTo = tokenTo_;
         tokenConverter = tokenConverter_;
         orderInstance = Order(order_);
-        marginBasisPoints = marginBasisPoints_;
+        marginInBasisPoints = marginBasisPoints_;
+        priceToleranceInBasisPoints = priceToleranceInBasisPoints_;
     }
 
     function placeOrder() external {
@@ -55,8 +58,8 @@ contract Stonks is AssetRecoverer {
         orderCopy.initialize(operator);
     }
 
-    function getOrderParameters() external view returns (address, address, address, uint256) {
-        return (tokenFrom, tokenTo, tokenConverter, marginBasisPoints);
+    function getOrderParameters() external view returns (address, address, address, uint256, uint256) {
+        return (tokenFrom, tokenTo, tokenConverter, marginInBasisPoints, priceToleranceInBasisPoints);
     }
 
     function createOrderCopy() internal returns (address orderContract) {
