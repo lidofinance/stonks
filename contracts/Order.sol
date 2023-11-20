@@ -22,7 +22,6 @@ contract Order is IERC1271, AssetRecoverer {
     address public constant VAULT_RELAYER = 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110;
     // Max basis points for price margin
     uint256 private constant MAX_BASIS_POINTS = 10_000;
-    uint256 public constant PRICE_TOLERANCE_IN_PERCENT = 5;
 
     bytes32 public immutable domainSeparator;
 
