@@ -10,14 +10,10 @@ import {
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { mainnet } from '../../utils/contracts'
 import {
-  orderPartials,
-  domainSeparator,
   MAGIC_VALUE,
+  formOrderHashFromTxReceipt,
 } from '../../utils/gpv2-helpers'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
-import { getPlaceOrderData } from '../../utils/get-events'
-
-const MAX_BASIS_POINTS = BigInt(10000)
 
 describe('Order', async function () {
   let signer: Signer
@@ -82,50 +78,7 @@ describe('Order', async function () {
 
       if (!placeOrderTxReceipt) throw Error('placeOrderTxReceipt is null')
 
-      const blockNumber = placeOrderTxReceipt.blockNumber
-      const blockTimestamp = (await ethers.provider.getBlock(blockNumber))
-        ?.timestamp
-
-      if (!blockTimestamp) throw Error('blockTimestamp is null')
-      const validTo = blockTimestamp + 3600 // 1 hour
-      const { address: orderInstanceAddress } =
-        getPlaceOrderData(placeOrderTxReceipt)
-
-      const [tokenFrom, tokenTo, tokenConverterAddress, marginInBasisPoints] =
-        await stonks.getOrderParameters()
-      const tokenConverter = await ethers.getContractAt(
-        'ChainLinkTokenConverter',
-        tokenConverterAddress
-      )
-
-      const steth = await ethers.getContractAt('IERC20', mainnet.STETH)
-      subject = await ethers.getContractAt('Order', orderInstanceAddress)
-
-      const sellAmount = await steth.balanceOf(orderInstanceAddress)
-      const buyAmountWithoutMargin = await tokenConverter.getExpectedOut(
-        sellAmount,
-        tokenFrom,
-        tokenTo
-      )
-      const buyAmount =
-        (buyAmountWithoutMargin * (MAX_BASIS_POINTS - marginInBasisPoints)) /
-        MAX_BASIS_POINTS
-      const orderData = {
-        sellToken: tokenFrom,
-        buyToken: tokenTo,
-        receiver: mainnet.TREASURY,
-        sellAmount: sellAmount,
-        buyAmount: buyAmount,
-        validTo: validTo,
-        appData: orderPartials.appData,
-        feeAmount: 0,
-        kind: orderPartials.kind,
-        partiallyFillable: orderPartials.partiallyFillable,
-        sellTokenBalance: orderPartials.sellTokenBalance,
-        buyTokenBalance: orderPartials.buyTokenBalance,
-      }
-
-      orderHash = await hashHelper.hash(orderData, domainSeparator)
+      orderHash = await formOrderHashFromTxReceipt(placeOrderTxReceipt, stonks)
     })
 
     it('should return magic value if order hash is valid', async () => {
