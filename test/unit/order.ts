@@ -14,6 +14,7 @@ import {
   formOrderHashFromTxReceipt,
 } from '../../utils/gpv2-helpers'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
+import { getPlaceOrderData } from '../../utils/get-events'
 
 describe('Order', async function () {
   let signer: Signer
@@ -77,6 +78,11 @@ describe('Order', async function () {
       const placeOrderTxReceipt = await placeOrderTx.wait()
 
       if (!placeOrderTxReceipt) throw Error('placeOrderTxReceipt is null')
+
+      subject = await ethers.getContractAt(
+        'Order',
+        getPlaceOrderData(placeOrderTxReceipt).address
+      )
 
       orderHash = await formOrderHashFromTxReceipt(placeOrderTxReceipt, stonks)
     })
