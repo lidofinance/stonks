@@ -2,11 +2,12 @@ import { ethers } from 'hardhat'
 import { TransactionReceipt } from 'ethers'
 import { getPlaceOrderData } from './get-events'
 import { mainnet } from './contracts'
-import { GPv2Order } from '../typechain-types/contracts/Order'
-import { HashHelper, Stonks } from '../typechain-types'
+import { Stonks } from '../typechain-types'
 
 export const MAX_BASIS_POINTS = BigInt(10000)
 export const MAGIC_VALUE = '0x1626ba7e'
+export const domainSeparator =
+  '0xc078f884a2676e1345748b1feace7b0abee5d00ecadb6e574dcdd109a63e8943'
 export const orderPartials = {
   appData: ethers.keccak256(ethers.toUtf8Bytes('LIDO_DOES_STONKS')),
   kind: '0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775',
@@ -60,25 +61,9 @@ export const formOrderHashFromTxReceipt = async (
     buyTokenBalance: orderPartials.buyTokenBalance,
   }
 
-  return await hashHelper.hash(orderData)
-}
+  const HashHelperFactory = await ethers.getContractFactory('HashHelper')
+  const hashHelper = await HashHelperFactory.deploy()
 
-const hashHelper: {
-  domainSeparator: string
-  hashHelperContract?: HashHelper
-  hash: (orderData: GPv2Order.DataStruct) => Promise<string>
-} = {
-  domainSeparator:
-    '0xc078f884a2676e1345748b1feace7b0abee5d00ecadb6e574dcdd109a63e8943',
-  hashHelperContract: undefined,
-  hash: async function (orderData) {
-    if (!this.hashHelperContract) {
-      const HashHelperFactory = await ethers.getContractFactory('HashHelper')
-
-      this.hashHelperContract = await HashHelperFactory.deploy()
-      await this.hashHelperContract.waitForDeployment()
-    }
-
-    return this.hashHelperContract.hash(orderData, this.domainSeparator)
-  },
+  await hashHelper.waitForDeployment()
+  return await hashHelper.hash(orderData, domainSeparator)
 }

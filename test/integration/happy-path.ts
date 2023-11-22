@@ -1,20 +1,21 @@
 import { ethers, network } from 'hardhat'
-import { Signer } from 'ethers'
+import { Signer, TransactionReceipt } from 'ethers'
 import { expect } from 'chai'
 import { deployStonks } from '../../scripts/deployments/stonks'
-import {
-  ChainLinkTokenConverter,
-  Stonks,
-  Order,
-} from '../../typechain-types'
+import { ChainLinkTokenConverter, Stonks, Order } from '../../typechain-types'
 import { mainnet } from '../../utils/contracts'
 import { getPlaceOrderData } from '../../utils/get-events'
 import { isClose } from '../../utils/assert'
 import { fillUpBalance } from '../../utils/fill-up-balance'
+import {
+  MAGIC_VALUE,
+  formOrderHashFromTxReceipt,
+} from '../../utils/gpv2-helpers'
 
 describe('Happy path', function () {
   let signer: Signer
   let subject: Stonks
+  let orderReceipt: TransactionReceipt
   let subjectTokenConverter: ChainLinkTokenConverter
   let snapshotId: string
 
@@ -71,8 +72,8 @@ describe('Happy path', function () {
 
     it('should place order', async () => {
       const orderTx = await subject.placeOrder()
-      const orderReceipt = await orderTx.wait()
 
+      orderReceipt = (await orderTx.wait())!
       if (!orderReceipt) throw new Error('No order receipt')
 
       const { address } = getPlaceOrderData(orderReceipt)
@@ -85,7 +86,16 @@ describe('Happy path', function () {
         .be.true
     })
 
-    it('settlement should check hash', async () => {})
+    it('settlement should check hash', async () => {
+      const orderHash = await formOrderHashFromTxReceipt(orderReceipt, subject)
+
+      expect(await order.isValidSignature(orderHash, '0x')).to.equal(
+        MAGIC_VALUE
+      )
+      expect(order.isValidSignature('0x', '0x')).to.be.revertedWith(
+        'order: invalid hash'
+      )
+    })
 
     it('should not be possible to cancel order due to expiration time', () => {
       expect(order.cancel()).to.be.revertedWith('Order: order is expired')
