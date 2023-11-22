@@ -7,8 +7,6 @@ import { HashHelper, Stonks } from '../typechain-types'
 
 export const MAX_BASIS_POINTS = BigInt(10000)
 export const MAGIC_VALUE = '0x1626ba7e'
-export const domainSeparator =
-  '0xc078f884a2676e1345748b1feace7b0abee5d00ecadb6e574dcdd109a63e8943'
 export const orderPartials = {
   appData: ethers.keccak256(ethers.toUtf8Bytes('LIDO_DOES_STONKS')),
   kind: '0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775',
