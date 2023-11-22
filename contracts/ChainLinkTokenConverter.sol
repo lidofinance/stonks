@@ -43,7 +43,7 @@ interface IFeedRegistry {
  * margin, and then calculates the expected amount of the output token based on the input amount of the
  * sellToken.
  */
-contract ChainLinkUsdTokensConverter is ITokenConverter {
+contract ChainLinkTokenConverter is ITokenConverter {
     // -------------
     // CONSTANTS
     // -------------

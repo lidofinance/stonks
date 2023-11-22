@@ -17,29 +17,37 @@ contract Order is IERC1271, AssetRecoverer {
     using GPv2Order for *;
     using SafeERC20 for IERC20;
 
-    bytes32 public constant APP_DATA = keccak256("LIDO_DOES_STONKS");
-    address public constant SETTLEMENT = 0x9008D19f58AAbD9eD0D60971565AA8510560ab41;
-    address public constant VAULT_RELAYER = 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110;
+    bytes32 private constant APP_DATA = keccak256("LIDO_DOES_STONKS");
+    address private constant SETTLEMENT = 0x9008D19f58AAbD9eD0D60971565AA8510560ab41;
+    address private constant VAULT_RELAYER = 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110;
+
     // Max basis points for price margin
     uint256 private constant MAX_BASIS_POINTS = 10_000;
 
-    bytes32 public immutable domainSeparator;
+    bytes32 private immutable domainSeparator;
 
-    uint256 internal sellAmount;
-    uint256 internal buyAmount;
+    uint256 private sellAmount;
+    uint256 private buyAmount;
 
-    address public stonks;
+    address private stonks;
 
-    uint32 public validTo;
-    bytes32 public orderHash;
+    uint32 private validTo;
+    bytes32 private orderHash;
+    bool private initialized;
 
     event OrderCreated(address indexed order, bytes32 orderHash, GPv2Order.Data orderData);
 
+    error OrderAlreadyExecuted();
+
     constructor() {
         domainSeparator = ICoWSwapSettlement(SETTLEMENT).domainSeparator();
+        initialized = true;
     }
 
     function initialize(address operator_) external {
+        require(!initialized, "order: already initialized");
+
+        initialized = true;
         stonks = msg.sender;
         operator = operator_;
 
@@ -55,7 +63,7 @@ contract Order is IERC1271, AssetRecoverer {
         GPv2Order.Data memory order = GPv2Order.Data({
             sellToken: IERC20Metadata(address(tokenFrom)),
             buyToken: IERC20Metadata(address(tokenTo)),
-            receiver: TREASURY,
+            receiver: ARAGON_AGENT,
             sellAmount: sellAmount,
             buyAmount: buyAmountWithMargin,
             validTo: validTo,
@@ -73,8 +81,8 @@ contract Order is IERC1271, AssetRecoverer {
     }
 
     function isValidSignature(bytes32 hash, bytes calldata) external view returns (bytes4 magicValue) {
-        require(hash == orderHash, "Order: invalid order");
-        require(block.timestamp <= validTo, "Order: invalid time");
+        require(hash == orderHash, "order: invalid hash");
+        require(validTo >= block.timestamp, "order: invalid time");
 
         (
             IERC20 tokenFrom,
@@ -93,24 +101,24 @@ contract Order is IERC1271, AssetRecoverer {
 
         require(
             isTradePriceWithinTolerance(buyAmount, currentMarketPriceWithMargin, priceToleranceInBasisPoints),
-            "Order: invalid price"
+            "order: invalid price"
         );
 
         return ERC1271_MAGIC_VALUE;
     }
 
     function cancel() external {
-        require(validTo < block.timestamp, "Order: not expired");
+        require(validTo < block.timestamp, "order: not expired");
         (IERC20 tokenFrom,,,,) = IStonks(stonks).getOrderParameters();
         tokenFrom.safeTransfer(stonks, tokenFrom.balanceOf(address(this)));
     }
 
     function recoverERC20(address token_) external onlyOperator {
         (IERC20 tokenFrom,,,,) = IStonks(stonks).getOrderParameters();
-        require(token_ != address(tokenFrom), "Order: cannot recover tokenFrom");
+        require(token_ != address(tokenFrom), "order: cannot recover tokenFrom");
         uint256 amount = IERC20(token_).balanceOf(address(this));
-        IERC20(token_).safeTransfer(TREASURY, amount);
-        emit ERC20Recovered(token_, TREASURY, amount);
+        IERC20(token_).safeTransfer(ARAGON_AGENT, amount);
+        emit ERC20Recovered(token_, ARAGON_AGENT, amount);
     }
 
     function isTradePriceWithinTolerance(uint256 a, uint256 b, uint256 priceToleranceInBasisPoints)

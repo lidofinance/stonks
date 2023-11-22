@@ -14,7 +14,7 @@ contract Stonks is AssetRecoverer {
 
     address public tokenConverter;
 
-    Order public immutable orderInstance;
+    Order public immutable orderSample;
 
     address public immutable tokenFrom;
     address public immutable tokenTo;
@@ -27,23 +27,23 @@ contract Stonks is AssetRecoverer {
         address tokenTo_,
         address operator_,
         address tokenConverter_,
-        address order_,
+        address orderSample_,
         uint256 marginBasisPoints_,
         uint256 priceToleranceInBasisPoints_
     ) {
-        require(tokenFrom_ != address(0), "Stonks: invalid tokenFrom_ address");
-        require(tokenTo_ != address(0), "Stonks: invalid tokenTo_ address");
-        require(tokenFrom_ != tokenTo_, "Stonks: tokenFrom_ and tokenTo_ cannot be the same");
-        require(tokenConverter_ != address(0), "Stonks: invalid price checker address");
-        require(operator_ != address(0), "Stonks: invalid operator address");
-        require(order_ != address(0), "Stonks: invalid order address");
-        require(marginBasisPoints_ <= MAX_BASIS_POINTS, "Stonks: margin overflow");
+        require(tokenFrom_ != address(0), "stonks: invalid tokenFrom_ address");
+        require(tokenTo_ != address(0), "stonks: invalid tokenTo_ address");
+        require(tokenFrom_ != tokenTo_, "stonks: tokenFrom_ and tokenTo_ cannot be the same");
+        require(tokenConverter_ != address(0), "stonks: invalid price checker address");
+        require(operator_ != address(0), "stonks: invalid operator address");
+        require(orderSample_ != address(0), "stonks: invalid order address");
+        require(marginBasisPoints_ <= MAX_BASIS_POINTS, "stonks: margin overflow");
 
         operator = operator_;
         tokenFrom = tokenFrom_;
         tokenTo = tokenTo_;
         tokenConverter = tokenConverter_;
-        orderInstance = Order(order_);
+        orderSample = Order(orderSample_);
         marginInBasisPoints = marginBasisPoints_;
         priceToleranceInBasisPoints = priceToleranceInBasisPoints_;
     }
@@ -51,7 +51,8 @@ contract Stonks is AssetRecoverer {
     function placeOrder() external {
         uint256 balance = IERC20(tokenFrom).balanceOf(address(this));
 
-        require(balance > 0, "Stonks: insufficient balance");
+        // Contract needs to hold at least 10 wei to cover steth shares issue
+        require(balance > 10, "stonks: insufficient balance");
 
         Order orderCopy = Order(createOrderCopy());
         IERC20(tokenFrom).safeTransfer(address(orderCopy), balance);
@@ -63,7 +64,7 @@ contract Stonks is AssetRecoverer {
     }
 
     function createOrderCopy() internal returns (address orderContract) {
-        bytes20 addressBytes = bytes20(address(orderInstance));
+        bytes20 addressBytes = bytes20(address(orderSample));
         assembly {
             let clone_code := mload(0x40)
             mstore(clone_code, 0x3d602d80600a3d3981f3363d3d373d3d3d363d73000000000000000000000000)

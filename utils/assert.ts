@@ -1,7 +1,7 @@
-const delta = 5;
+const delta = 5
 
 export const isClose = function (actual: bigint, expected: bigint) {
-    const diff = Math.abs(Number(actual - expected));
+  const diff = Math.abs(Number(actual - expected))
 
-    return diff <= delta && diff >= 0
+  return diff <= delta && diff >= 0
 }

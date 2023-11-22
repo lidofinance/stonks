@@ -9,9 +9,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 abstract contract AssetRecoverer {
     using SafeERC20 for IERC20;
 
-    address public constant ARAGON_AGENT = 0x7Cd64b87251f793027590c34b206145c3aa362Ae;
-    address public constant TREASURY = 0x7Cd64b87251f793027590c34b206145c3aa362Ae;
-
+    address public constant ARAGON_AGENT = 0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c;
     address public operator;
 
     event EtherRecovered(address indexed _recipient, uint256 _amount);
@@ -30,16 +28,16 @@ abstract contract AssetRecoverer {
         external
         onlyOperator
     {
-        IERC20(_token).safeTransfer(TREASURY, _amount);
-        emit ERC20Recovered(_token, TREASURY, _amount);
+        IERC20(_token).safeTransfer(ARAGON_AGENT, _amount);
+        emit ERC20Recovered(_token, ARAGON_AGENT, _amount);
     }
 
     function recoverERC721(address _token, uint256 _tokenId)
         external
         onlyOperator
     {
-        IERC721(_token).safeTransferFrom(address(this), TREASURY, _tokenId);
-        emit ERC721Recovered(_token, _tokenId, TREASURY);
+        IERC721(_token).safeTransferFrom(address(this), ARAGON_AGENT, _tokenId);
+        emit ERC721Recovered(_token, _tokenId, ARAGON_AGENT);
     }
 
     function recoverERC1155(address _token, uint256 _tokenId)
@@ -47,8 +45,8 @@ abstract contract AssetRecoverer {
         onlyOperator
     {
         uint256 amount = IERC1155(_token).balanceOf(address(this), _tokenId);
-        IERC1155(_token).safeTransferFrom(address(this), TREASURY, _tokenId, amount, "");
-        emit ERC1155Recovered(_token, _tokenId, TREASURY, amount);
+        IERC1155(_token).safeTransferFrom(address(this), ARAGON_AGENT, _tokenId, amount, "");
+        emit ERC1155Recovered(_token, _tokenId, ARAGON_AGENT, amount);
     }
 
     modifier onlyOperator() {

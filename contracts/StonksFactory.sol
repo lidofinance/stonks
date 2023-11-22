@@ -3,7 +3,7 @@ pragma solidity ^0.8.13;
 
 import {Stonks} from "./Stonks.sol";
 import {Order} from "./Order.sol";
-import {ChainLinkUsdTokensConverter} from "./ChainLinkUsdTokensConverter.sol";
+import {ChainLinkTokenConverter} from "./ChainLinkTokenConverter.sol";
 
 contract StonksFactory {
     address public immutable order;
@@ -54,13 +54,13 @@ contract StonksFactory {
         );
     }
 
-    function deployChainLinkUsdTokensConverter(
+    function deployChainLinkTokenConverter(
         address feedRegistry_,
         address[] memory allowedTokensToSell_,
         address[] memory allowedStableTokensToBuy_
     ) public returns (address tokenConverter) {
         tokenConverter =
-            address(new ChainLinkUsdTokensConverter(feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_));
+            address(new ChainLinkTokenConverter(feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_));
         emit TokenConverterDeployed(tokenConverter, feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_);
     }
 }
