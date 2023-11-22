@@ -113,10 +113,9 @@ contract Order is IERC1271, AssetRecoverer {
         tokenFrom.safeTransfer(stonks, tokenFrom.balanceOf(address(this)));
     }
 
-    function recoverERC20(address token_) external onlyOperator {
+    function recoverERC20(address token_, uint256 amount) external override onlyOperator {
         (IERC20 tokenFrom,,,,) = IStonks(stonks).getOrderParameters();
         require(token_ != address(tokenFrom), "order: cannot recover tokenFrom");
-        uint256 amount = IERC20(token_).balanceOf(address(this));
         IERC20(token_).safeTransfer(ARAGON_AGENT, amount);
         emit ERC20Recovered(token_, ARAGON_AGENT, amount);
     }

@@ -17,15 +17,16 @@ abstract contract AssetRecoverer {
     event ERC721Recovered(address indexed _token, uint256 _tokenId, address indexed _recipient);
     event ERC1155Recovered(address indexed _token, uint256 _tokenId, address indexed _recipient, uint256 _amount);
 
-    function recoverEther(address _recipient) external onlyOperator {
+    function recoverEther() external onlyOperator {
         uint256 amount = address(this).balance;
-        (bool success,) = _recipient.call{value: amount}("");
+        (bool success,) = ARAGON_AGENT.call{value: amount}("");
         require(success);
-        emit EtherRecovered(_recipient, amount);
+        emit EtherRecovered(ARAGON_AGENT, amount);
     }
 
     function recoverERC20(address _token, uint256 _amount)
         external
+        virtual
         onlyOperator
     {
         IERC20(_token).safeTransfer(ARAGON_AGENT, _amount);
@@ -50,7 +51,7 @@ abstract contract AssetRecoverer {
     }
 
     modifier onlyOperator() {
-        require(msg.sender == operator || msg.sender == ARAGON_AGENT, "Stonks: not operator");
+        require(msg.sender == operator || msg.sender == ARAGON_AGENT, "asset recoverer: not operator");
         _;
     }
 }
