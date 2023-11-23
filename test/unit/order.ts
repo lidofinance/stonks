@@ -35,15 +35,21 @@ describe('Order', async function () {
 
     const { stonks: stonksInstance, tokenConverter: tokenConverterInstance } =
       await deployStonks({
+        factoryParams: {
+          agent: mainnet.TREASURY,
+          relayer: mainnet.VAULT_RELAYER,
+          settlement: mainnet.SETTLEMENT,
+          priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+        },
         stonksParams: {
           tokenFrom: mainnet.STETH,
           tokenTo: mainnet.DAI,
-          operator: await operator.getAddress(),
+          manager: await operator.getAddress(),
           marginInBps: 100,
+          orderDuration: 3600,
           priceToleranceInBps: 100,
         },
         tokenConverterParams: {
-          priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
           allowedTokensToSell: [mainnet.STETH],
           allowedStableTokensToBuy: [mainnet.DAI],
         },

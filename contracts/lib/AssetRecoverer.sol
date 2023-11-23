@@ -9,49 +9,54 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 abstract contract AssetRecoverer {
     using SafeERC20 for IERC20;
 
-    address public constant ARAGON_AGENT = 0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c;
-    address public operator;
+    address public immutable agent;
+    address public manager;
 
     event EtherRecovered(address indexed _recipient, uint256 _amount);
     event ERC20Recovered(address indexed _token, address indexed _recipient, uint256 _amount);
     event ERC721Recovered(address indexed _token, uint256 _tokenId, address indexed _recipient);
     event ERC1155Recovered(address indexed _token, uint256 _tokenId, address indexed _recipient, uint256 _amount);
 
-    function recoverEther() external onlyOperator {
+    constructor(address agent_) {
+        require(agent_ != address(0), 'asset recoverer: agent is zero address');
+        agent = agent_;
+    }
+
+    function recoverEther() external onlyAgentOrManager {
         uint256 amount = address(this).balance;
-        (bool success,) = ARAGON_AGENT.call{value: amount}("");
+        (bool success,) = agent.call{value: amount}("");
         require(success);
-        emit EtherRecovered(ARAGON_AGENT, amount);
+        emit EtherRecovered(agent, amount);
     }
 
     function recoverERC20(address _token, uint256 _amount)
-        external
+        public
         virtual
-        onlyOperator
+        onlyAgentOrManager
     {
-        IERC20(_token).safeTransfer(ARAGON_AGENT, _amount);
-        emit ERC20Recovered(_token, ARAGON_AGENT, _amount);
+        IERC20(_token).safeTransfer(agent, _amount);
+        emit ERC20Recovered(_token, agent, _amount);
     }
 
     function recoverERC721(address _token, uint256 _tokenId)
         external
-        onlyOperator
+        onlyAgentOrManager
     {
-        IERC721(_token).safeTransferFrom(address(this), ARAGON_AGENT, _tokenId);
-        emit ERC721Recovered(_token, _tokenId, ARAGON_AGENT);
+        IERC721(_token).safeTransferFrom(address(this), agent, _tokenId);
+        emit ERC721Recovered(_token, _tokenId, agent);
     }
 
     function recoverERC1155(address _token, uint256 _tokenId)
         external
-        onlyOperator
+        onlyAgentOrManager
     {
         uint256 amount = IERC1155(_token).balanceOf(address(this), _tokenId);
-        IERC1155(_token).safeTransferFrom(address(this), ARAGON_AGENT, _tokenId, amount, "");
-        emit ERC1155Recovered(_token, _tokenId, ARAGON_AGENT, amount);
+        IERC1155(_token).safeTransferFrom(address(this), agent, _tokenId, amount, "");
+        emit ERC1155Recovered(_token, _tokenId, agent, amount);
     }
 
-    modifier onlyOperator() {
-        require(msg.sender == operator || msg.sender == ARAGON_AGENT, "asset recoverer: not operator");
+    modifier onlyAgentOrManager() {
+        require(msg.sender == manager || msg.sender == agent, "asset recoverer: not operator");
         _;
     }
 }

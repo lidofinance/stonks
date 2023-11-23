@@ -20,15 +20,21 @@ describe('Stonks', function () {
     snapshotId = await network.provider.send('evm_snapshot')
 
     const { stonks, tokenConverter } = await deployStonks({
+      factoryParams: {
+        agent: mainnet.TREASURY,
+        relayer: mainnet.VAULT_RELAYER,
+        settlement: mainnet.SETTLEMENT,
+        priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+      },
       stonksParams: {
         tokenFrom: mainnet.STETH,
         tokenTo: mainnet.DAI,
-        operator: await signer.getAddress(),
+        manager: await signer.getAddress(),
         marginInBps: 100,
+        orderDuration: 3600,
         priceToleranceInBps: 100,
       },
       tokenConverterParams: {
-        priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
         allowedTokensToSell: [mainnet.STETH],
         allowedStableTokensToBuy: [mainnet.DAI],
       },
@@ -58,12 +64,16 @@ describe('Stonks', function () {
           ethers.ZeroAddress,
           ethers.ZeroAddress,
           ethers.ZeroAddress,
+          ethers.ZeroAddress,
+          ethers.ZeroAddress,
           ethers.ZeroAddress
         )
       ).to.be.revertedWith('Stonks: invalid tokenFrom_ address')
       expect(
         ContractFactory.deploy(
           mainnet.STETH,
+          ethers.ZeroAddress,
+          ethers.ZeroAddress,
           ethers.ZeroAddress,
           ethers.ZeroAddress,
           ethers.ZeroAddress,
@@ -80,6 +90,8 @@ describe('Stonks', function () {
           ethers.ZeroAddress,
           ethers.ZeroAddress,
           ethers.ZeroAddress,
+          ethers.ZeroAddress,
+          ethers.ZeroAddress,
           ethers.ZeroAddress
         )
       ).to.be.revertedWith('Stonks: tokenFrom_ and tokenTo_ cannot be the same')
@@ -87,6 +99,8 @@ describe('Stonks', function () {
         ContractFactory.deploy(
           mainnet.STETH,
           mainnet.DAI,
+          ethers.ZeroAddress,
+          ethers.ZeroAddress,
           ethers.ZeroAddress,
           ethers.ZeroAddress,
           ethers.ZeroAddress,
@@ -102,6 +116,8 @@ describe('Stonks', function () {
           ethers.ZeroAddress,
           ethers.ZeroAddress,
           ethers.ZeroAddress,
+          ethers.ZeroAddress,
+          ethers.ZeroAddress,
           ethers.ZeroAddress
         )
       ).to.be.revertedWith('Stonks: invalid operator address')
@@ -111,6 +127,8 @@ describe('Stonks', function () {
           mainnet.DAI,
           subjectTokenConverter,
           signer,
+          ethers.ZeroAddress,
+          ethers.ZeroAddress,
           ethers.ZeroAddress,
           ethers.ZeroAddress,
           ethers.ZeroAddress

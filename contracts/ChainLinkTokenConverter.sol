@@ -2,33 +2,17 @@
 pragma solidity ^0.8.13;
 
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-
 import {ITokenConverter} from "./interfaces/ITokenConverter.sol";
 
 interface IFeedRegistry {
-    function getFeed(
-        address base,
-        address quote
-    ) external view returns (address aggregator);
+    function getFeed(address base, address quote) external view returns (address aggregator);
 
-    function latestRoundData(
-        address base,
-        address quote
-    )
+    function latestRoundData(address base, address quote)
         external
         view
-        returns (
-            uint80 roundId,
-            int256 answer,
-            uint256 startedAt,
-            uint256 updatedAt,
-            uint80 answeredInRound
-        );
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
 
-    function decimals(
-        address base,
-        address quote
-    ) external view returns (uint256);
+    function decimals(address base, address quote) external view returns (uint256);
 }
 
 /**
@@ -72,31 +56,20 @@ contract ChainLinkTokenConverter is ITokenConverter {
         address[] memory _allowedTokensToSell,
         address[] memory _allowedStableTokensToBuy
     ) {
-        require(
-            _feedRegistry != address(0),
-            "TokenConverter: invalid feed registry address"
-        );
+        require(_feedRegistry != address(0), "TokenConverter: invalid feed registry address");
         feedRegistry = IFeedRegistry(_feedRegistry);
 
         for (uint256 i = 0; i < _allowedStableTokensToBuy.length; ++i) {
-            require(
-                _allowedStableTokensToBuy[i] != address(0),
-                "TokenConverter: invalid address"
-            );
+            require(_allowedStableTokensToBuy[i] != address(0), "TokenConverter: invalid address");
 
             allowedStableTokensToBuy[_allowedStableTokensToBuy[i]] = true;
         }
 
         for (uint256 i = 0; i < _allowedTokensToSell.length; ++i) {
-            require(
-                _allowedTokensToSell[i] != address(0),
-                "TokenConverter: invalid address"
-            );
+            require(_allowedTokensToSell[i] != address(0), "TokenConverter: invalid address");
 
             require(
-                feedRegistry.getFeed(_allowedTokensToSell[i], USD) !=
-                    address(0),
-                "TokenConverter: No price feed found"
+                feedRegistry.getFeed(_allowedTokensToSell[i], USD) != address(0), "TokenConverter: No price feed found"
             );
 
             allowedTokensToSell[_allowedTokensToSell[i]] = true;
@@ -106,51 +79,33 @@ contract ChainLinkTokenConverter is ITokenConverter {
     ///
     // @dev Returns the expected output amount after selling _tokenFrom to stable with margin
     ///
-    function getExpectedOut(
-        uint256 _amount,
-        address _tokenFrom,
-        address _tokenTo
-    ) external view returns (uint256 expectedOutputAmount) {
-        require(
-            _tokenFrom != _tokenTo,
-            "TokenConverter: Input and output tokens cannot be the same"
-        );
+    function getExpectedOut(uint256 _amount, address _tokenFrom, address _tokenTo)
+        external
+        view
+        returns (uint256 expectedOutputAmount)
+    {
+        require(_tokenFrom != _tokenTo, "TokenConverter: Input and output tokens cannot be the same");
 
-        require(
-            allowedTokensToSell[_tokenFrom] == true,
-            "TokenConverter: Token is not allowed to sell"
-        );
+        require(allowedTokensToSell[_tokenFrom] == true, "TokenConverter: Token is not allowed to sell");
 
-        require(
-            allowedStableTokensToBuy[_tokenTo] == true,
-            "TokenConverter: Token is not allowed to buy"
-        );
+        require(allowedStableTokensToBuy[_tokenTo] == true, "TokenConverter: Token is not allowed to buy");
 
-        (uint256 currentPrice, uint256 feedDecimals) = _fetchPrice(
-            _tokenFrom,
-            USD
-        );
+        (uint256 currentPrice, uint256 feedDecimals) = _fetchPrice(_tokenFrom, USD);
 
         uint256 decimalsOfSellToken = IERC20Metadata(_tokenFrom).decimals();
         uint256 decimalsOfBuyToken = IERC20Metadata(_tokenTo).decimals();
 
-        int256 grandDecimals = int256(decimalsOfSellToken + feedDecimals) -
-            int256(decimalsOfBuyToken);
-        
-        expectedOutputAmount = (
-            (_amount * currentPrice * (10 ** max(-grandDecimals, 0))) / 
-            (10 ** (max(grandDecimals, 0)))
-        );
+        int256 grandDecimals = int256(decimalsOfSellToken + feedDecimals) - int256(decimalsOfBuyToken);
+
+        expectedOutputAmount =
+            ((_amount * currentPrice * (10 ** max(-grandDecimals, 0))) / (10 ** (max(grandDecimals, 0))));
     }
 
     ///
     // @dev Internal function to get price from Chainlink Price Feed Registry.
     ///
-    function _fetchPrice(
-        address base,
-        address quote
-    ) internal view returns (uint256, uint256) {
-        (, int256 price, , , ) = feedRegistry.latestRoundData(base, quote);
+    function _fetchPrice(address base, address quote) internal view returns (uint256, uint256) {
+        (, int256 price,,,) = feedRegistry.latestRoundData(base, quote);
         require(price > 0, "Unexpected price feed answer");
 
         uint256 decimals = feedRegistry.decimals(base, quote);
@@ -159,6 +114,6 @@ contract ChainLinkTokenConverter is ITokenConverter {
     }
 
     function max(int256 a, int256 b) internal pure returns (uint256) {
-        return a >= b ? uint(a) : uint(b);
+        return a >= b ? uint256(a) : uint256(b);
     }
 }

@@ -27,10 +27,10 @@ export const formOrderHashFromTxReceipt = async (
     ?.timestamp
 
   if (!blockTimestamp) throw Error('blockTimestamp is null')
-  const validTo = blockTimestamp + 3600 // 1 hour
-  const { address: orderInstanceAddress } = getPlaceOrderData(receipt)
-  const [tokenFrom, tokenTo, tokenConverterAddress, marginInBasisPoints] =
+  const { address: orderInstanceAddress, order } = getPlaceOrderData(receipt)
+  const [tokenFrom, tokenTo, tokenConverterAddress, orderDuration, marginInBasisPoints] =
     await stonks.getOrderParameters()
+  const validTo = blockTimestamp + Number(orderDuration) // 1 hour
   const tokenConverter = await ethers.getContractAt(
     'ChainLinkTokenConverter',
     tokenConverterAddress

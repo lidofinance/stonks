@@ -8,16 +8,22 @@ import {
 import { ChainLinkTokenConverter, Stonks } from '../../typechain-types'
 
 export type DeployStonksParams = {
+  factoryParams: {
+    agent: string
+    relayer: string
+    settlement: string
+    priceFeedRegistry: string
+  }
   stonksParams: {
+    manager: string
     tokenFrom: string
     tokenTo: string
-    operator: string
+    orderDuration: number
     marginInBps: number
     priceToleranceInBps: number
     tokenConverterAddress?: string
   }
-  tokenConverterParams?: {
-    priceFeedRegistry: string
+  tokenConverterParams: {
     allowedTokensToSell: string[]
     allowedStableTokensToBuy: string[]
   }
@@ -28,25 +34,31 @@ type ReturnType = {
 }
 
 export async function deployStonks({
+  factoryParams: { agent, settlement, relayer, priceFeedRegistry },
   stonksParams: {
+    manager,
     tokenFrom,
     tokenTo,
     tokenConverterAddress,
-    operator,
+    orderDuration,
     marginInBps,
     priceToleranceInBps,
   },
   tokenConverterParams,
 }: DeployStonksParams): Promise<ReturnType> {
-  const { stonksFactory } = await deployStonksFactory()
+  const { stonksFactory } = await deployStonksFactory(
+    agent,
+    settlement,
+    relayer,
+    priceFeedRegistry
+  )
 
   let tokenConverter: ChainLinkTokenConverter | undefined
   if (tokenConverterParams) {
-    const { priceFeedRegistry, allowedTokensToSell, allowedStableTokensToBuy } =
+    const { allowedTokensToSell, allowedStableTokensToBuy } =
       tokenConverterParams
     const deployTokenConverterTX =
       await stonksFactory.deployChainLinkTokenConverter(
-        priceFeedRegistry,
         allowedTokensToSell,
         allowedStableTokensToBuy
       )
@@ -69,10 +81,11 @@ export async function deployStonks({
   }
 
   const deployStonksTx = await stonksFactory.deployStonks(
+    manager,
     tokenFrom,
     tokenTo,
-    operator,
     await tokenConverter.getAddress(),
+    orderDuration,
     marginInBps,
     priceToleranceInBps
   )

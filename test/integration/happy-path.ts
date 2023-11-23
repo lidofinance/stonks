@@ -24,15 +24,21 @@ describe('Happy path', function () {
     signer = (await ethers.getSigners())[0]
 
     const { stonks, tokenConverter } = await deployStonks({
+      factoryParams: {
+        agent: mainnet.TREASURY,
+        relayer: mainnet.VAULT_RELAYER,
+        settlement: mainnet.SETTLEMENT,
+        priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+      },
       stonksParams: {
         tokenFrom: mainnet.STETH,
         tokenTo: mainnet.DAI,
-        operator: await signer.getAddress(),
+        manager: await signer.getAddress(),
         marginInBps: 100,
+        orderDuration: 3600,
         priceToleranceInBps: 100,
       },
       tokenConverterParams: {
-        priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
         allowedTokensToSell: [mainnet.STETH],
         allowedStableTokensToBuy: [mainnet.DAI],
       },

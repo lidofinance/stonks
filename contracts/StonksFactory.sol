@@ -6,7 +6,11 @@ import {Order} from "./Order.sol";
 import {ChainLinkTokenConverter} from "./ChainLinkTokenConverter.sol";
 
 contract StonksFactory {
-    address public immutable order;
+    address public immutable agent;
+    address public immutable orderSample;
+    address public immutable settlement;
+    address public immutable relayer;
+    address public immutable feedRegistry;
 
     event OrderDeployed(address orderAddress);
     event TokenConverterDeployed(
@@ -17,50 +21,68 @@ contract StonksFactory {
     );
     event StonksDeployed(
         address indexed stonksAddress,
+        address agent,
+        address operator,
         address tokenFrom,
         address tokenTo,
         address tokenConverter,
-        address operator,
         address order,
+        uint256 orderDurationInSeconds,
         uint256 marginBasisPoints,
         uint256 priceToleranceInBasisPoints
     );
 
-    constructor() {
-        order = address(new Order());
-        emit OrderDeployed(order);
+    constructor(address agent_, address settlement_, address relayer_, address feedRegistry_) {
+        agent = agent_;
+        relayer = relayer_;
+        settlement = settlement_;
+        feedRegistry = feedRegistry_;
+        orderSample = address(new Order(agent_, settlement_, relayer_));
+        emit OrderDeployed(orderSample);
     }
 
     function deployStonks(
+        address manager_,
         address tokenFrom_,
         address tokenTo_,
         address tokenConverter_,
-        address operator_,
+        uint256 orderDurationInSeconds_,
         uint256 marginBasisPoints_,
         uint256 priceToleranceInBasisPoints_
     ) public returns (address stonks) {
         stonks = address(
-            new Stonks(tokenFrom_, tokenTo_, tokenConverter_, operator_, order, marginBasisPoints_, priceToleranceInBasisPoints_)
+            new Stonks(
+                agent,
+                manager_,
+                tokenFrom_, 
+                tokenTo_,
+                tokenConverter_,
+                orderSample,
+                orderDurationInSeconds_,
+                marginBasisPoints_,
+                priceToleranceInBasisPoints_
+            )
         );
         emit StonksDeployed(
             stonks,
+            agent,
+            manager_,
             tokenFrom_,
             tokenTo_,
             tokenConverter_,
-            operator_,
-            order,
+            orderSample,
+            orderDurationInSeconds_,
             marginBasisPoints_,
             priceToleranceInBasisPoints_
         );
     }
 
     function deployChainLinkTokenConverter(
-        address feedRegistry_,
         address[] memory allowedTokensToSell_,
         address[] memory allowedStableTokensToBuy_
     ) public returns (address tokenConverter) {
         tokenConverter =
-            address(new ChainLinkTokenConverter(feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_));
-        emit TokenConverterDeployed(tokenConverter, feedRegistry_, allowedTokensToSell_, allowedStableTokensToBuy_);
+            address(new ChainLinkTokenConverter(feedRegistry, allowedTokensToSell_, allowedStableTokensToBuy_));
+        emit TokenConverterDeployed(tokenConverter, feedRegistry, allowedTokensToSell_, allowedStableTokensToBuy_);
     }
 }
