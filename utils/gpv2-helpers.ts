@@ -28,27 +28,27 @@ export const formOrderHashFromTxReceipt = async (
 
   if (!blockTimestamp) throw Error('blockTimestamp is null')
   const { address: orderInstanceAddress, order } = getPlaceOrderData(receipt)
-  const [tokenFrom, tokenTo, tokenConverterAddress, orderDuration, marginInBasisPoints] =
+  const orderParameters =
     await stonks.getOrderParameters()
-  const validTo = blockTimestamp + Number(orderDuration) // 1 hour
+  const validTo = blockTimestamp + Number(orderParameters.orderDurationInSeconds) // 1 hour
   const tokenConverter = await ethers.getContractAt(
     'TokenAmountConverter',
-    tokenConverterAddress
+    orderParameters.tokenAmountConverter
   )
-  const token = await ethers.getContractAt('IERC20', tokenFrom)
+  const token = await ethers.getContractAt('IERC20', orderParameters.tokenFrom)
   const sellAmount = await token.balanceOf(orderInstanceAddress)
   const buyAmountWithoutMargin = await tokenConverter.getExpectedOut(
     sellAmount,
-    tokenFrom,
-    tokenTo
+    orderParameters.tokenFrom,
+    orderParameters.tokenTo
   )
   const buyAmount =
-    (buyAmountWithoutMargin * (MAX_BASIS_POINTS - marginInBasisPoints)) /
+    (buyAmountWithoutMargin * (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) /
     MAX_BASIS_POINTS
 
   const orderData = {
-    sellToken: tokenFrom,
-    buyToken: tokenTo,
+    sellToken: orderParameters.tokenFrom,
+    buyToken: orderParameters.tokenTo,
     receiver: mainnet.TREASURY,
     sellAmount: sellAmount,
     buyAmount: buyAmount,

@@ -17,8 +17,11 @@ abstract contract AssetRecoverer {
     event ERC721Recovered(address indexed _token, uint256 _tokenId, address indexed _recipient);
     event ERC1155Recovered(address indexed _token, uint256 _tokenId, address indexed _recipient, uint256 _amount);
 
+    error InvalidAgentAddress();
+    error NotAgentOrManager();
+
     constructor(address agent_) {
-        require(agent_ != address(0), 'asset recoverer: agent is zero address');
+        if (agent_ == address(0)) revert InvalidAgentAddress();
         agent = agent_;
     }
 
@@ -29,34 +32,24 @@ abstract contract AssetRecoverer {
         emit EtherRecovered(agent, amount);
     }
 
-    function recoverERC20(address _token, uint256 _amount)
-        public
-        virtual
-        onlyAgentOrManager
-    {
+    function recoverERC20(address _token, uint256 _amount) public virtual onlyAgentOrManager {
         IERC20(_token).safeTransfer(agent, _amount);
         emit ERC20Recovered(_token, agent, _amount);
     }
 
-    function recoverERC721(address _token, uint256 _tokenId)
-        external
-        onlyAgentOrManager
-    {
+    function recoverERC721(address _token, uint256 _tokenId) external onlyAgentOrManager {
         IERC721(_token).safeTransferFrom(address(this), agent, _tokenId);
         emit ERC721Recovered(_token, _tokenId, agent);
     }
 
-    function recoverERC1155(address _token, uint256 _tokenId)
-        external
-        onlyAgentOrManager
-    {
+    function recoverERC1155(address _token, uint256 _tokenId) external onlyAgentOrManager {
         uint256 amount = IERC1155(_token).balanceOf(address(this), _tokenId);
         IERC1155(_token).safeTransferFrom(address(this), agent, _tokenId, amount, "");
         emit ERC1155Recovered(_token, _tokenId, agent, amount);
     }
 
     modifier onlyAgentOrManager() {
-        require(msg.sender == manager || msg.sender == agent, "asset recoverer: not operator");
+        if (msg.sender != agent && msg.sender != manager) revert NotAgentOrManager();
         _;
     }
 }

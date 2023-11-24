@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.19;
 
 import {Stonks} from "./Stonks.sol";
 import {Order} from "./Order.sol";
@@ -12,7 +12,7 @@ contract StonksFactory {
     address public immutable relayer;
     address public immutable feedRegistry;
 
-    event OrderDeployed(address orderAddress);
+    event OrderSampleDeployed(address orderAddress);
     event TokenAmountConverterDeployed(
         address indexed tokenAmountConverterAddress,
         address feedRegistryAddress,
@@ -32,13 +32,24 @@ contract StonksFactory {
         uint256 priceToleranceInBasisPoints
     );
 
+    error InvalidAgentAddress();
+    error InvalidSettlementAddress();
+    error InvalidRelayerAddress();
+    error InvalidFeedRegistryAddress();
+
     constructor(address agent_, address settlement_, address relayer_, address feedRegistry_) {
+        if (agent_ == address(0)) revert InvalidAgentAddress();
+        if (settlement_ == address(0)) revert InvalidSettlementAddress();
+        if (relayer_ == address(0)) revert InvalidRelayerAddress();
+        if (feedRegistry_ == address(0)) revert InvalidFeedRegistryAddress();
+
         agent = agent_;
         relayer = relayer_;
         settlement = settlement_;
         feedRegistry = feedRegistry_;
         orderSample = address(new Order(agent_, settlement_, relayer_));
-        emit OrderDeployed(orderSample);
+        
+        emit OrderSampleDeployed(orderSample);
     }
 
     function deployStonks(

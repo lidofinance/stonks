@@ -89,7 +89,7 @@ describe('Order', async function () {
         await stonks.orderSample()
       )
       expect(subject.initialize(ethers.ZeroAddress)).to.be.revertedWith(
-        'order: already initialized'
+        'OrderAlreadyInitialized'
       )
     })
   })
@@ -102,17 +102,17 @@ describe('Order', async function () {
     })
     it('should revert if order hash is invalid', async () => {
       expect(subject.isValidSignature('0x', '0x')).to.be.revertedWith(
-        'order: invalid hash'
+        'InvalidOrderHash'
       )
     })
     it('should revert if order is expired', async () => {
       await network.provider.send('evm_increaseTime', [60 * 60 + 1])
 
       expect(subject.isValidSignature('0x', '0x')).to.be.revertedWith(
-        'order: invalid hash'
+        'InvalidOrderHash'
       )
       expect(subject.isValidSignature(orderHash, '0x')).to.be.revertedWith(
-        'order: invalid time'
+        'OrderExpired'
       )
     })
     it('should not revert if there was a price spike less than price tolerance allows', async () => {})
@@ -121,11 +121,13 @@ describe('Order', async function () {
 
   describe('order canceling', function () {
     it('should succesfully cancel the order', async () => {
+      const orderParams = await stonks.getOrderParameters()
+
       await network.provider.send('evm_increaseTime', [60 * 60 + 1])
 
       const token = await ethers.getContractAt(
         'IERC20',
-        await stonks.tokenFrom()
+        orderParams['tokenFrom']
       )
       const stonksBalanceBefore = await token.balanceOf(
         await stonks.getAddress()
@@ -150,7 +152,7 @@ describe('Order', async function () {
       expect(isClose(orderBalanceAfter, BigInt(0))).to.be.true
     })
     it('should revert if order is not expired', async () => {
-      expect(subject.cancel()).to.be.revertedWith('order: not expired')
+      expect(subject.cancel()).to.be.revertedWith('OrderNotExpired')
     })
   })
 
@@ -204,9 +206,10 @@ describe('Order', async function () {
     it('should succesfully recover ERC721', async () => {})
     it('should succesfully recover recoverERC1155', async () => {})
     it('should revert if recover a token from', async () => {
+      const orderParams = await stonks.getOrderParameters()
       expect(
-        subject.recoverERC20(await stonks.tokenFrom(), BigInt(1))
-      ).to.be.revertedWith('order: cannot recover tokenFrom')
+        subject.recoverERC20(orderParams['tokenFrom'], BigInt(1))
+      ).to.be.revertedWith('CannotRecoverTokenFrom')
     })
     it('should revert if it is called by stranger', async () => {
       const localSubject = await ethers.getContractAt(
@@ -216,7 +219,7 @@ describe('Order', async function () {
       )
 
       expect(localSubject.recoverEther()).to.be.revertedWith(
-        'asset recoverer: not operator'
+        'NotAgentOrManager'
       )
     })
     it('should succesfully recover by operator', async () => {

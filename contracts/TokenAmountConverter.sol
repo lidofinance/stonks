@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.19;
 
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {ITokenAmountConverter} from "./interfaces/ITokenAmountConverter.sol";
@@ -85,10 +85,9 @@ contract TokenAmountConverter is ITokenAmountConverter {
         returns (uint256 expectedOutputAmount)
     {
         require(_tokenFrom != _tokenTo, "TokenConverter: Input and output tokens cannot be the same");
-
         require(allowedTokensToSell[_tokenFrom] == true, "TokenConverter: Token is not allowed to sell");
-
         require(allowedStableTokensToBuy[_tokenTo] == true, "TokenConverter: Token is not allowed to buy");
+        require(_amount > 0, "TokenConverter: Amount must be greater than 0");
 
         (uint256 currentPrice, uint256 feedDecimals) = _fetchPrice(_tokenFrom, USD);
 

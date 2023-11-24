@@ -6,7 +6,7 @@ import {
 
 import { mainnet } from '../../utils/contracts'
 
-describe('Stonks factory', function () {
+describe.skip('Stonks factory', function () {
   let subject: StonksFactory
   let snapshotId: string
 

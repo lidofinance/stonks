@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.19;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -48,6 +48,13 @@ contract Order is IERC1271, AssetRecoverer {
 
     event OrderCreated(address indexed order, bytes32 orderHash, GPv2Order.Data orderData);
 
+    error OrderAlreadyInitialized();
+    error InvalidOrderHash();
+    error OrderNotExpired();
+    error OrderExpired();
+    error PriceConditionChanged();
+    error CannotRecoverTokenFrom();
+
     /// @param agent_ The agent's address with control over the contract.
     /// @param settlement_ The address of the settlement contract.
     /// @param relayer_ The address of the relayer handling orders.
@@ -71,30 +78,26 @@ contract Order is IERC1271, AssetRecoverer {
     /// @param manager_ The manager's address to be set for the contract.
     /// @dev This function calculates the buy amount considering trade margins, sets the order parameters, and approves the token for trading.
     function initialize(address manager_) external {
-        require(!initialized, "order: already initialized");
+        if (initialized) revert OrderAlreadyInitialized();
 
         initialized = true;
         stonks = msg.sender;
         manager = manager_;
 
-        (
-            IERC20 tokenFrom,
-            IERC20 tokenTo,
-            address conversionRateProvider,
-            uint256 orderDurationInSeconds,
-            uint256 tradeMarginInBasisPoints,
-        ) = IStonks(stonks).getOrderParameters();
+        IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
 
-        validTo = uint32(block.timestamp + orderDurationInSeconds);
-        sellAmount = tokenFrom.balanceOf(address(this));
+        validTo = uint32(block.timestamp + orderParameters.orderDurationInSeconds);
+        sellAmount = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
 
-        uint256 expectedPurchaseAmount =
-            ITokenAmountConverter(conversionRateProvider).getExpectedOut(sellAmount, address(tokenFrom), address(tokenTo));
-        buyAmount = (expectedPurchaseAmount * (MAX_BASIS_POINTS - tradeMarginInBasisPoints)) / MAX_BASIS_POINTS;
+        uint256 expectedPurchaseAmount = ITokenAmountConverter(orderParameters.tokenAmountConverter).getExpectedOut(
+            sellAmount, orderParameters.tokenFrom, orderParameters.tokenTo
+        );
+        buyAmount =
+            (expectedPurchaseAmount * (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) / MAX_BASIS_POINTS;
 
         GPv2Order.Data memory order = GPv2Order.Data({
-            sellToken: IERC20Metadata(address(tokenFrom)),
-            buyToken: IERC20Metadata(address(tokenTo)),
+            sellToken: IERC20Metadata(orderParameters.tokenFrom),
+            buyToken: IERC20Metadata(orderParameters.tokenTo),
             receiver: agent,
             sellAmount: sellAmount,
             buyAmount: buyAmount,
@@ -110,7 +113,7 @@ contract Order is IERC1271, AssetRecoverer {
 
         // Approval is set to the maximum value of uint256 as the contract is intended for single-use only.
         // This eliminates the need for subsequent approval calls, optimizing for gas efficiency in one-time transactions.
-        tokenFrom.approve(relayer, type(uint256).max);
+        IERC20(orderParameters.tokenFrom).approve(relayer, type(uint256).max);
 
         emit OrderCreated(address(this), orderHash, order);
     }
@@ -125,50 +128,46 @@ contract Order is IERC1271, AssetRecoverer {
      *      - Reverts if hash mismatch, order expiration, or excessive price deviation occurs.
      */
     function isValidSignature(bytes32 hash, bytes calldata) external view returns (bytes4 magicValue) {
-        require(hash == orderHash, "order: invalid hash");
-        require(validTo >= block.timestamp, "order: invalid time");
+        if (hash != orderHash) revert InvalidOrderHash();
+        if (validTo < block.timestamp) revert OrderExpired();
 
-        (
-            IERC20 tokenFrom,
-            IERC20 tokenTo,
-            address conversionRateProvider,
-            ,
-            uint256 tradeMarginInBasisPoints,
-            uint256 priceToleranceInBasisPoints
-        ) = IStonks(stonks).getOrderParameters();
+        IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
 
         /// The price tolerance mechanism is crucial for ensuring that the order remains valid only within a specific price range.
         /// This is a safeguard against market volatility and drastic price changes, which could otherwise lead to unfavorable trades.
         /// If the price deviates beyond the tolerance level, the order is invalidated to protect against executing a trade at an undesirable rate.
 
-        uint256 expectedPurchaseAmount = ITokenAmountConverter(conversionRateProvider).getExpectedOut(
-            IERC20(tokenFrom).balanceOf(address(this)), address(tokenFrom), address(tokenTo)
+        uint256 actualPurchaseAmount = ITokenAmountConverter(orderParameters.tokenAmountConverter).getExpectedOut(
+            sellAmount, orderParameters.tokenFrom, orderParameters.tokenTo
         );
-        uint256 expectedPurchaseAmountWithMargin =
-            (expectedPurchaseAmount * (MAX_BASIS_POINTS - tradeMarginInBasisPoints)) / MAX_BASIS_POINTS;
+        uint256 actualPurchaseAmountWithMargin =
+            (actualPurchaseAmount * (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) / MAX_BASIS_POINTS;
 
-        if (expectedPurchaseAmountWithMargin <= buyAmount) return ERC1271_MAGIC_VALUE;
+        if (actualPurchaseAmountWithMargin <= buyAmount) return ERC1271_MAGIC_VALUE;
 
-        uint256 differenceAmount = expectedPurchaseAmountWithMargin - buyAmount;
-        uint256 priceToleranceAmount = expectedPurchaseAmountWithMargin * priceToleranceInBasisPoints / MAX_BASIS_POINTS;
+        uint256 differenceAmount = actualPurchaseAmountWithMargin - buyAmount;
+        uint256 priceToleranceAmount =
+            actualPurchaseAmountWithMargin * orderParameters.priceToleranceInBasisPoints / MAX_BASIS_POINTS;
 
-        require(differenceAmount <= priceToleranceAmount, "order: invalid price");
+        if (differenceAmount > priceToleranceAmount) revert PriceConditionChanged();
 
         return ERC1271_MAGIC_VALUE;
     }
 
     /// @notice Retrieves the details of the placed order.
     function getPlacedOrder() external view returns (bytes32, address, address, uint256, uint256, uint32) {
-        (IERC20 tokenFrom, IERC20 tokenTo,,,,) = IStonks(stonks).getOrderParameters();
-        return (orderHash, address(tokenFrom), address(tokenTo), sellAmount, buyAmount, validTo);
+        IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
+        return (orderHash, orderParameters.tokenFrom, orderParameters.tokenTo, sellAmount, buyAmount, validTo);
     }
 
     /// @notice Allows for the cancellation of the order and returns the tokens if the order has expired.
     /// @dev Can only be called if the order's validity period has passed.
     function cancel() external {
-        require(validTo < block.timestamp, "order: not expired");
-        (IERC20 tokenFrom,,,,,) = IStonks(stonks).getOrderParameters();
-        tokenFrom.safeTransfer(stonks, tokenFrom.balanceOf(address(this)));
+        if (validTo > block.timestamp) revert OrderNotExpired();
+        IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
+        IERC20(orderParameters.tokenFrom).safeTransfer(
+            stonks, IERC20(orderParameters.tokenFrom).balanceOf(address(this))
+        );
     }
 
     /// @notice Facilitates the recovery of ERC20 tokens from the contract, except for the token involved in the order.
@@ -176,8 +175,8 @@ contract Order is IERC1271, AssetRecoverer {
     /// @param amount The amount of the token to recover.
     /// @dev Can only be called by the agent or manager of the contract. This is a safety feature to prevent accidental token loss.
     function recoverERC20(address token_, uint256 amount) public override onlyAgentOrManager {
-        (IERC20 tokenFrom,,,,,) = IStonks(stonks).getOrderParameters();
-        require(token_ != address(tokenFrom), "order: cannot recover tokenFrom");
+        IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
+        if (token_ == orderParameters.tokenFrom) revert CannotRecoverTokenFrom();
         AssetRecoverer.recoverERC20(token_, amount);
     }
 }

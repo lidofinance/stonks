@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.19;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
-import {AssetRecoverer} from "./lib/AssetRecoverer.sol";
 import {Order} from "./Order.sol";
+import {AssetRecoverer} from "./lib/AssetRecoverer.sol";
+import {IStonks} from "./interfaces/IStonks.sol";
+import {ITokenAmountConverter} from "./interfaces/ITokenAmountConverter.sol";
 
 /**
  * @title Stonks Trading Management Contract
@@ -19,19 +22,26 @@ import {Order} from "./Order.sol";
  *
  * @notice Orchestrates the setup and execution of trades on CoWswap, utilizing Order contracts for each transaction.
  */
-contract Stonks is AssetRecoverer {
+contract Stonks is IStonks, AssetRecoverer {
     using SafeERC20 for IERC20;
 
-    uint256 private constant MAX_BASIS_POINTS = 10_000;
+    uint8 private constant MIN_POSSIBLE_BALANCE = 10;
+    uint16 private constant MAX_BASIS_POINTS = 10_000;
 
     address public immutable orderSample;
-    address public immutable tokenConverter;
-    address public immutable tokenFrom;
-    address public immutable tokenTo;
+    OrderParameters public orderParameters;
 
-    uint256 public immutable marginInBasisPoints;
-    uint256 public immutable priceToleranceInBasisPoints;
-    uint256 public immutable orderDurationInSeconds;
+    error InvalidManagerAddress();
+    error InvalidTokenFromAddress();
+    error InvalidTokenToAddress();
+    error TokensCannotBeSame();
+    error InvalidTokenAmountConverterAddress();
+    error InvalidOrderAddress();
+    error InvalidOrderDuration();
+    error MarginOverflow();
+    error PriceToleranceOverflow();
+    error MinimumPossibleBalanceNotMet();
+    error InvalidAmount();
 
     /**
      * @notice Initializes the Stonks contract with key trading parameters.
@@ -42,66 +52,77 @@ contract Stonks is AssetRecoverer {
         address manager_,
         address tokenFrom_,
         address tokenTo_,
-        address tokenConverter_,
+        address tokenAmountConverter_,
         address orderSample_,
         uint256 orderDurationInSeconds_,
         uint256 marginInBasisPoints_,
         uint256 priceToleranceInBasisPoints_
     ) AssetRecoverer(agent_) {
-        require(manager_ != address(0), "stonks: invalid manager address");
-        require(tokenFrom_ != address(0), "stonks: invalid tokenFrom_ address");
-        require(tokenTo_ != address(0), "stonks: invalid tokenTo_ address");
-        require(tokenFrom_ != tokenTo_, "stonks: tokenFrom_ and tokenTo_ cannot be the same");
-        require(tokenConverter_ != address(0), "stonks: invalid price checker address");
-        require(orderSample_ != address(0), "stonks: invalid order address");
-        require(orderDurationInSeconds_ > 0, "stonks: invalid order duration");
-        require(marginInBasisPoints_ <= MAX_BASIS_POINTS, "stonks: margin overflow");
-        require(priceToleranceInBasisPoints_ <= MAX_BASIS_POINTS, "stonks: price tolerance overflow");
+        if (manager_ == address(0)) revert InvalidManagerAddress();
+        if (tokenFrom_ == address(0)) revert InvalidTokenFromAddress();
+        if (tokenTo_ == address(0)) revert InvalidTokenToAddress();
+        if (tokenFrom_ == tokenTo_) revert TokensCannotBeSame();
+        if (tokenAmountConverter_ == address(0)) revert InvalidTokenAmountConverterAddress();
+        if (orderSample_ == address(0)) revert InvalidOrderAddress();
+        if (orderDurationInSeconds_ == 0) revert InvalidOrderDuration();
+        if (marginInBasisPoints_ > MAX_BASIS_POINTS) revert MarginOverflow();
+        if (priceToleranceInBasisPoints_ > MAX_BASIS_POINTS) revert PriceToleranceOverflow();
 
         manager = manager_;
-        tokenFrom = tokenFrom_;
-        tokenTo = tokenTo_;
-        tokenConverter = tokenConverter_;
         orderSample = orderSample_;
-        orderDurationInSeconds = orderDurationInSeconds_;
-        marginInBasisPoints = marginInBasisPoints_;
-        priceToleranceInBasisPoints = priceToleranceInBasisPoints_;
+
+        orderParameters = OrderParameters({
+            tokenFrom: tokenFrom_,
+            tokenTo: tokenTo_,
+            tokenAmountConverter: tokenAmountConverter_,
+            orderDurationInSeconds: uint64(orderDurationInSeconds_),
+            marginInBasisPoints: uint16(marginInBasisPoints_),
+            priceToleranceInBasisPoints: uint16(priceToleranceInBasisPoints_)
+        });
     }
 
     /**
-    * @notice Initiates a new trading order by creating an Order contract clone with the current token balance.
-    * @dev Transfers the tokenFrom balance to the new Order instance and initializes it with the Stonks' manager settings for execution.
-    */
+     * @notice Initiates a new trading order by creating an Order contract clone with the current token balance.
+     * @dev Transfers the tokenFrom balance to the new Order instance and initializes it with the Stonks' manager settings for execution.
+     */
     function placeOrder() external {
-        uint256 balance = IERC20(tokenFrom).balanceOf(address(this));
+        uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
 
         // Contract needs to hold at least 10 wei to cover steth shares issue
-        require(balance > 10, "stonks: insufficient balance");
+        if (balance <= MIN_POSSIBLE_BALANCE) revert MinimumPossibleBalanceNotMet();
 
-        Order orderCopy = Order(createOrderCopy());
-        IERC20(tokenFrom).safeTransfer(address(orderCopy), balance);
+        Order orderCopy = Order(Clones.clone(orderSample));
+        IERC20(orderParameters.tokenFrom).safeTransfer(address(orderCopy), balance);
         orderCopy.initialize(manager);
     }
 
     /**
-    * @notice Returns trading parameters from Stonks for use in the Order contract.
-    * @dev Facilitates gas efficiency by allowing Order to access existing parameters in Stonks without redundant storage.
-    * @return Tuple of tokenFrom, tokenTo, tokenConverter, orderDuration, margin, and price tolerance values.
-    */
-    function getOrderParameters() external view returns (address, address, address, uint256, uint256, uint256) {
-        return (
-            tokenFrom, tokenTo, tokenConverter, orderDurationInSeconds, marginInBasisPoints, priceToleranceInBasisPoints
+     * @notice Estimates output amount for a given trade input amount.
+     * @param amount Input token amount for trade.
+     * @dev Uses token amount converter for output estimation.
+     */
+    function estimateTradeOutput(uint256 amount) public view returns (uint256) {
+        if (amount == 0) revert InvalidAmount();
+        return ITokenAmountConverter(orderParameters.tokenAmountConverter).getExpectedOut(
+            amount, orderParameters.tokenFrom, orderParameters.tokenTo
         );
     }
 
-    function createOrderCopy() internal returns (address orderContract) {
-        bytes20 addressBytes = bytes20(orderSample);
-        assembly {
-            let clone_code := mload(0x40)
-            mstore(clone_code, 0x3d602d80600a3d3981f3363d3d373d3d3d363d73000000000000000000000000)
-            mstore(add(clone_code, 0x14), addressBytes)
-            mstore(add(clone_code, 0x28), 0x5af43d82803e903d91602b57fd5bf30000000000000000000000000000000000)
-            orderContract := create(0, clone_code, 0x37)
-        }
+    /**
+     * @notice Estimates trade output based on current input token balance.
+     * @dev Uses current balance for output estimation via `getExpectedTradeResult`.
+     */
+    function estimateOutputFromCurrentBalance() external view returns (uint256) {
+        uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
+        return estimateTradeOutput(balance);
+    }
+
+    /**
+     * @notice Returns trading parameters from Stonks for use in the Order contract.
+     * @dev Facilitates gas efficiency by allowing Order to access existing parameters in Stonks without redundant storage.
+     * @return Tuple of tokenFrom, tokenTo, tokenConverter, orderDuration, margin, and price tolerance values.
+     */
+    function getOrderParameters() external view returns (OrderParameters memory) {
+        return orderParameters;
     }
 }
