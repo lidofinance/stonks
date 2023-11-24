@@ -6,8 +6,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 import {GPv2Order} from "./lib/GPv2Order.sol";
-import {ITokenConverter} from "./interfaces/ITokenConverter.sol";
 import {AssetRecoverer} from "./lib/AssetRecoverer.sol";
+import {ITokenAmountConverter} from "./interfaces/ITokenAmountConverter.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
 
 import {ICoWSwapSettlement} from "./interfaces/ICoWSwapSettlement.sol";
@@ -89,7 +89,7 @@ contract Order is IERC1271, AssetRecoverer {
         sellAmount = tokenFrom.balanceOf(address(this));
 
         uint256 expectedPurchaseAmount =
-            ITokenConverter(conversionRateProvider).getExpectedOut(sellAmount, address(tokenFrom), address(tokenTo));
+            ITokenAmountConverter(conversionRateProvider).getExpectedOut(sellAmount, address(tokenFrom), address(tokenTo));
         buyAmount = (expectedPurchaseAmount * (MAX_BASIS_POINTS - tradeMarginInBasisPoints)) / MAX_BASIS_POINTS;
 
         GPv2Order.Data memory order = GPv2Order.Data({
@@ -141,7 +141,7 @@ contract Order is IERC1271, AssetRecoverer {
         /// This is a safeguard against market volatility and drastic price changes, which could otherwise lead to unfavorable trades.
         /// If the price deviates beyond the tolerance level, the order is invalidated to protect against executing a trade at an undesirable rate.
 
-        uint256 expectedPurchaseAmount = ITokenConverter(conversionRateProvider).getExpectedOut(
+        uint256 expectedPurchaseAmount = ITokenAmountConverter(conversionRateProvider).getExpectedOut(
             IERC20(tokenFrom).balanceOf(address(this)), address(tokenFrom), address(tokenTo)
         );
         uint256 expectedPurchaseAmountWithMargin =

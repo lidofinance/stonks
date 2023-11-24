@@ -2,7 +2,7 @@ import { ethers, network } from 'hardhat'
 import { Signer, TransactionReceipt } from 'ethers'
 import { expect } from 'chai'
 import { deployStonks } from '../../scripts/deployments/stonks'
-import { ChainLinkTokenConverter, Stonks, Order } from '../../typechain-types'
+import { TokenAmountConverter, Stonks, Order } from '../../typechain-types'
 import { mainnet } from '../../utils/contracts'
 import { getPlaceOrderData } from '../../utils/get-events'
 import { isClose } from '../../utils/assert'
@@ -16,7 +16,7 @@ describe('Happy path', function () {
   let signer: Signer
   let subject: Stonks
   let orderReceipt: TransactionReceipt
-  let subjectTokenConverter: ChainLinkTokenConverter
+  let subjectTokenConverter: TokenAmountConverter
   let snapshotId: string
 
   this.beforeAll(async function () {

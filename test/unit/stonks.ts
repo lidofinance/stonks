@@ -3,14 +3,14 @@ import { Signer } from 'ethers'
 import { expect } from 'chai'
 import { isClose } from '../../utils/assert'
 import { deployStonks } from '../../scripts/deployments/stonks'
-import { ChainLinkTokenConverter, Stonks } from '../../typechain-types'
+import { TokenAmountConverter, Stonks } from '../../typechain-types'
 import { mainnet } from '../../utils/contracts'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
 
 describe('Stonks', function () {
   let signer: Signer
   let subject: Stonks
-  let subjectTokenConverter: ChainLinkTokenConverter
+  let subjectTokenConverter: TokenAmountConverter
   let snapshotId: string
 
   const amount = ethers.parseEther('1')

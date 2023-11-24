@@ -5,7 +5,7 @@ import {
   getStonksDeployment,
   getTokenConverterDeployment,
 } from '../../utils/get-events'
-import { ChainLinkTokenConverter, Stonks } from '../../typechain-types'
+import { TokenAmountConverter, Stonks } from '../../typechain-types'
 
 export type DeployStonksParams = {
   factoryParams: {
@@ -30,7 +30,7 @@ export type DeployStonksParams = {
 }
 type ReturnType = {
   stonks: Stonks
-  tokenConverter: ChainLinkTokenConverter
+  tokenConverter: TokenAmountConverter
 }
 
 export async function deployStonks({
@@ -53,12 +53,12 @@ export async function deployStonks({
     priceFeedRegistry
   )
 
-  let tokenConverter: ChainLinkTokenConverter | undefined
+  let tokenConverter: TokenAmountConverter | undefined
   if (tokenConverterParams) {
     const { allowedTokensToSell, allowedStableTokensToBuy } =
       tokenConverterParams
     const deployTokenConverterTX =
-      await stonksFactory.deployChainLinkTokenConverter(
+      await stonksFactory.deployTokenAmountConverter(
         allowedTokensToSell,
         allowedStableTokensToBuy
       )
@@ -68,12 +68,12 @@ export async function deployStonks({
 
     const { address } = getTokenConverterDeployment(receipt)
     tokenConverter = await ethers.getContractAt(
-      'ChainLinkTokenConverter',
+      'TokenAmountConverter',
       address
     )
   } else if (tokenConverterAddress) {
     tokenConverter = await ethers.getContractAt(
-      'ChainLinkTokenConverter',
+      'TokenAmountConverter',
       tokenConverterAddress
     )
   } else {

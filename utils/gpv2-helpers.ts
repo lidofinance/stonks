@@ -32,7 +32,7 @@ export const formOrderHashFromTxReceipt = async (
     await stonks.getOrderParameters()
   const validTo = blockTimestamp + Number(orderDuration) // 1 hour
   const tokenConverter = await ethers.getContractAt(
-    'ChainLinkTokenConverter',
+    'TokenAmountConverter',
     tokenConverterAddress
   )
   const token = await ethers.getContractAt('IERC20', tokenFrom)

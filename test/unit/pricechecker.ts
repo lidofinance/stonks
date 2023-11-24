@@ -8,7 +8,7 @@ describe('Tokens converter', function () {
 
   this.beforeAll(async function () {
     const ContractFactory = await ethers.getContractFactory(
-      'ChainLinkTokenConverter'
+      'TokenAmountConverter'
     )
     subject = await ContractFactory.deploy(
       mainnet.CHAINLINK_PRICE_FEED_REGISTRY,

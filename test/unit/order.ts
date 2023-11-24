@@ -5,7 +5,7 @@ import {
   Order,
   Stonks,
   HashHelper,
-  ChainLinkTokenConverter,
+  TokenAmountConverter,
 } from '../../typechain-types'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { mainnet } from '../../utils/contracts'
@@ -24,7 +24,7 @@ describe('Order', async function () {
   let operator: Signer
   let stonks: Stonks
   let hashHelper: HashHelper
-  let tokenConverter: ChainLinkTokenConverter
+  let tokenConverter: TokenAmountConverter
   let snapshotId: string
   let subject: Order
   let orderHash: string

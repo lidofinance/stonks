@@ -2,7 +2,7 @@
 pragma solidity ^0.8.13;
 
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {ITokenConverter} from "./interfaces/ITokenConverter.sol";
+import {ITokenAmountConverter} from "./interfaces/ITokenAmountConverter.sol";
 
 interface IFeedRegistry {
     function getFeed(address base, address quote) external view returns (address aggregator);
@@ -27,7 +27,7 @@ interface IFeedRegistry {
  * margin, and then calculates the expected amount of the output token based on the input amount of the
  * sellToken.
  */
-contract ChainLinkTokenConverter is ITokenConverter {
+contract TokenAmountConverter is ITokenAmountConverter {
     // -------------
     // CONSTANTS
     // -------------
