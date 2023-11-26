@@ -2,7 +2,7 @@
 
 ![Stonks](https://raw.githubusercontent.com/lidofinance/stonks/main/assets/stonks.jpg)
 
-## What is a Stonks?
+## What is Stonks?
 
 Stonks is a sophisticated solution designed for token exchanges, leveraging the offchain CoWSwap platform. This system enables a specialized Token Management Committee within the DAO framework to safely conduct token swaps without ever taking custody of the tokens on their balance.
 
