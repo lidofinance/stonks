@@ -1,11 +1,12 @@
 import { ethers } from 'hardhat'
 
 import { deployStonksFactory } from './stonks-factory'
+import { deployAmountConverterFactory } from './amount-converter-factory'
 import {
   getStonksDeployment,
   getTokenConverterDeployment,
 } from '../../utils/get-events'
-import { TokenAmountConverter, Stonks } from '../../typechain-types'
+import { AmountConverter, Stonks } from '../../typechain-types'
 
 export type DeployStonksParams = {
   factoryParams: {
@@ -21,16 +22,17 @@ export type DeployStonksParams = {
     orderDuration: number
     marginInBps: number
     priceToleranceInBps: number
-    tokenConverterAddress?: string
+    amountConverterAddress?: string
   }
-  tokenConverterParams: {
+  amountConverterParams: {
+    conversionTarget: string
     allowedTokensToSell: string[]
     allowedStableTokensToBuy: string[]
   }
 }
 type ReturnType = {
   stonks: Stonks
-  tokenConverter: TokenAmountConverter
+  amountConverter: AmountConverter
 }
 
 export async function deployStonks({
@@ -39,26 +41,28 @@ export async function deployStonks({
     manager,
     tokenFrom,
     tokenTo,
-    tokenConverterAddress,
+    amountConverterAddress,
     orderDuration,
     marginInBps,
     priceToleranceInBps,
   },
-  tokenConverterParams,
+  amountConverterParams,
 }: DeployStonksParams): Promise<ReturnType> {
   const { stonksFactory } = await deployStonksFactory(
     agent,
     settlement,
-    relayer,
-    priceFeedRegistry
+    relayer
   )
 
-  let tokenConverter: TokenAmountConverter | undefined
-  if (tokenConverterParams) {
-    const { allowedTokensToSell, allowedStableTokensToBuy } =
-      tokenConverterParams
+  let amountConverter: AmountConverter | undefined
+  if (amountConverterParams) {
+    const { amountConverterFactory } =
+      await deployAmountConverterFactory(priceFeedRegistry)
+    const { allowedTokensToSell, allowedStableTokensToBuy, conversionTarget } =
+      amountConverterParams
     const deployTokenConverterTX =
-      await stonksFactory.deployTokenAmountConverter(
+      await amountConverterFactory.deployAmountConverter(
+        conversionTarget,
         allowedTokensToSell,
         allowedStableTokensToBuy
       )
@@ -67,14 +71,11 @@ export async function deployStonks({
     if (!receipt) throw new Error('No transaction receipt')
 
     const { address } = getTokenConverterDeployment(receipt)
-    tokenConverter = await ethers.getContractAt(
-      'TokenAmountConverter',
-      address
-    )
-  } else if (tokenConverterAddress) {
-    tokenConverter = await ethers.getContractAt(
-      'TokenAmountConverter',
-      tokenConverterAddress
+    amountConverter = await ethers.getContractAt('AmountConverter', address)
+  } else if (amountConverterAddress) {
+    amountConverter = await ethers.getContractAt(
+      'AmountConverter',
+      amountConverterAddress
     )
   } else {
     throw new Error()
@@ -84,7 +85,7 @@ export async function deployStonks({
     manager,
     tokenFrom,
     tokenTo,
-    await tokenConverter.getAddress(),
+    await amountConverter.getAddress(),
     orderDuration,
     marginInBps,
     priceToleranceInBps
@@ -96,5 +97,5 @@ export async function deployStonks({
   const { address } = getStonksDeployment(receipt)
   const stonks = await ethers.getContractAt('Stonks', address)
 
-  return { stonks, tokenConverter }
+  return { stonks, amountConverter }
 }

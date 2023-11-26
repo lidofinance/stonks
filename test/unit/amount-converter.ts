@@ -1,17 +1,18 @@
-import { ITokenConverter } from '../../typechain-types'
 import { ethers } from 'hardhat'
 
+import { IAmountConverter } from '../../typechain-types'
 import { mainnet } from '../../utils/contracts'
 
-describe('Tokens converter', function () {
-  let subject: ITokenConverter
+describe('Amount converter', function () {
+  let subject: IAmountConverter
 
   this.beforeAll(async function () {
     const ContractFactory = await ethers.getContractFactory(
-      'TokenAmountConverter'
+      'AmountConverter'
     )
     subject = await ContractFactory.deploy(
       mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+      "0x0000000000000000000000000000000000000348", // USD
       [mainnet.STETH, mainnet.DAI, mainnet.USDC, mainnet.USDT],
       [mainnet.DAI, mainnet.USDC, mainnet.USDT]
     )

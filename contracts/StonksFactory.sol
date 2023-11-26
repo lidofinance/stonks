@@ -3,29 +3,21 @@ pragma solidity 0.8.19;
 
 import {Stonks} from "./Stonks.sol";
 import {Order} from "./Order.sol";
-import {TokenAmountConverter} from "./TokenAmountConverter.sol";
 
 contract StonksFactory {
     address public immutable agent;
     address public immutable orderSample;
     address public immutable settlement;
     address public immutable relayer;
-    address public immutable feedRegistry;
 
     event OrderSampleDeployed(address orderAddress);
-    event TokenAmountConverterDeployed(
-        address indexed tokenAmountConverterAddress,
-        address feedRegistryAddress,
-        address[] allowedTokensToSell,
-        address[] allowedStableTokensToBuy
-    );
     event StonksDeployed(
         address indexed stonksAddress,
         address agent,
         address operator,
         address tokenFrom,
         address tokenTo,
-        address tokenAmountConverter,
+        address amountConverter,
         address order,
         uint256 orderDurationInSeconds,
         uint256 marginBasisPoints,
@@ -35,20 +27,17 @@ contract StonksFactory {
     error InvalidAgentAddress();
     error InvalidSettlementAddress();
     error InvalidRelayerAddress();
-    error InvalidFeedRegistryAddress();
 
-    constructor(address agent_, address settlement_, address relayer_, address feedRegistry_) {
+    constructor(address agent_, address settlement_, address relayer_) {
         if (agent_ == address(0)) revert InvalidAgentAddress();
         if (settlement_ == address(0)) revert InvalidSettlementAddress();
         if (relayer_ == address(0)) revert InvalidRelayerAddress();
-        if (feedRegistry_ == address(0)) revert InvalidFeedRegistryAddress();
 
         agent = agent_;
         relayer = relayer_;
         settlement = settlement_;
-        feedRegistry = feedRegistry_;
         orderSample = address(new Order(agent_, settlement_, relayer_));
-        
+
         emit OrderSampleDeployed(orderSample);
     }
 
@@ -56,7 +45,7 @@ contract StonksFactory {
         address manager_,
         address tokenFrom_,
         address tokenTo_,
-        address tokenAmountConverter_,
+        address amountConverter_,
         uint256 orderDurationInSeconds_,
         uint256 marginBasisPoints_,
         uint256 priceToleranceInBasisPoints_
@@ -67,7 +56,7 @@ contract StonksFactory {
                 manager_,
                 tokenFrom_, 
                 tokenTo_,
-                tokenAmountConverter_,
+                amountConverter_,
                 orderSample,
                 orderDurationInSeconds_,
                 marginBasisPoints_,
@@ -80,22 +69,11 @@ contract StonksFactory {
             manager_,
             tokenFrom_,
             tokenTo_,
-            tokenAmountConverter_,
+            amountConverter_,
             orderSample,
             orderDurationInSeconds_,
             marginBasisPoints_,
             priceToleranceInBasisPoints_
-        );
-    }
-
-    function deployTokenAmountConverter(
-        address[] memory allowedTokensToSell_,
-        address[] memory allowedStableTokensToBuy_
-    ) public returns (address tokenAmountConverter) {
-        tokenAmountConverter =
-            address(new TokenAmountConverter(feedRegistry, allowedTokensToSell_, allowedStableTokensToBuy_));
-        emit TokenAmountConverterDeployed(
-            tokenAmountConverter, feedRegistry, allowedTokensToSell_, allowedStableTokensToBuy_
         );
     }
 }

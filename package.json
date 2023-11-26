@@ -3,6 +3,7 @@
   "devDependencies": {
     "@nomicfoundation/hardhat-network-helpers": "^1.0.9",
     "@nomicfoundation/hardhat-toolbox": "^3.0.0",
+    "dotenv-cli": "^7.3.0",
     "hardhat": "^2.17.2",
     "prettier": "3.1.0",
     "typescript": "^5.2.2"
@@ -12,6 +13,8 @@
     "dotenv": "^16.3.1"
   },
   "scripts": {
-    "test": "hardhat test --network localhost"
+    "test": "hardhat test --network localhost",
+    "node": "dotenv -- npm run node-hardhat",
+    "node-hardhat": "hardhat node --fork $RPC_URL"
   }
 }

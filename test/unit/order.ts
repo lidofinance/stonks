@@ -5,7 +5,7 @@ import {
   Order,
   Stonks,
   HashHelper,
-  TokenAmountConverter,
+  AmountConverter,
 } from '../../typechain-types'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { mainnet } from '../../utils/contracts'
@@ -24,7 +24,7 @@ describe('Order', async function () {
   let operator: Signer
   let stonks: Stonks
   let hashHelper: HashHelper
-  let tokenConverter: TokenAmountConverter
+  let tokenConverter: AmountConverter
   let snapshotId: string
   let subject: Order
   let orderHash: string
@@ -33,7 +33,7 @@ describe('Order', async function () {
     snapshotId = await network.provider.send('evm_snapshot')
     operator = (await ethers.getSigners())[0]
 
-    const { stonks: stonksInstance, tokenConverter: tokenConverterInstance } =
+    const { stonks: stonksInstance, amountConverter: tokenConverterInstance } =
       await deployStonks({
         factoryParams: {
           agent: mainnet.TREASURY,
@@ -49,7 +49,8 @@ describe('Order', async function () {
           orderDuration: 3600,
           priceToleranceInBps: 100,
         },
-        tokenConverterParams: {
+        amountConverterParams: {
+          conversionTarget: "0x0000000000000000000000000000000000000348", // USD
           allowedTokensToSell: [mainnet.STETH],
           allowedStableTokensToBuy: [mainnet.DAI],
         },

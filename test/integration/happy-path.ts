@@ -2,7 +2,7 @@ import { ethers, network } from 'hardhat'
 import { Signer, TransactionReceipt } from 'ethers'
 import { expect } from 'chai'
 import { deployStonks } from '../../scripts/deployments/stonks'
-import { TokenAmountConverter, Stonks, Order } from '../../typechain-types'
+import { AmountConverter, Stonks, Order } from '../../typechain-types'
 import { mainnet } from '../../utils/contracts'
 import { getPlaceOrderData } from '../../utils/get-events'
 import { isClose } from '../../utils/assert'
@@ -16,14 +16,14 @@ describe('Happy path', function () {
   let signer: Signer
   let subject: Stonks
   let orderReceipt: TransactionReceipt
-  let subjectTokenConverter: TokenAmountConverter
+  let subjectTokenConverter: AmountConverter
   let snapshotId: string
 
   this.beforeAll(async function () {
     snapshotId = await network.provider.send('evm_snapshot')
     signer = (await ethers.getSigners())[0]
 
-    const { stonks, tokenConverter } = await deployStonks({
+    const { stonks, amountConverter: tokenConverter } = await deployStonks({
       factoryParams: {
         agent: mainnet.TREASURY,
         relayer: mainnet.VAULT_RELAYER,
@@ -38,7 +38,8 @@ describe('Happy path', function () {
         orderDuration: 3600,
         priceToleranceInBps: 100,
       },
-      tokenConverterParams: {
+      amountConverterParams: {
+        conversionTarget: "0x0000000000000000000000000000000000000348", // USD
         allowedTokensToSell: [mainnet.STETH],
         allowedStableTokensToBuy: [mainnet.DAI],
       },

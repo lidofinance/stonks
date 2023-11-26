@@ -8,7 +8,7 @@ import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {Order} from "./Order.sol";
 import {AssetRecoverer} from "./lib/AssetRecoverer.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
-import {ITokenAmountConverter} from "./interfaces/ITokenAmountConverter.sol";
+import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
 
 /**
  * @title Stonks Trading Management Contract
@@ -103,7 +103,7 @@ contract Stonks is IStonks, AssetRecoverer {
      */
     function estimateTradeOutput(uint256 amount) public view returns (uint256) {
         if (amount == 0) revert InvalidAmount();
-        return ITokenAmountConverter(orderParameters.tokenAmountConverter).getExpectedOut(
+        return IAmountConverter(orderParameters.tokenAmountConverter).getExpectedOut(
             amount, orderParameters.tokenFrom, orderParameters.tokenTo
         );
     }

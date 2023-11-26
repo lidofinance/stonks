@@ -3,14 +3,14 @@ import { Signer } from 'ethers'
 import { expect } from 'chai'
 import { isClose } from '../../utils/assert'
 import { deployStonks } from '../../scripts/deployments/stonks'
-import { TokenAmountConverter, Stonks } from '../../typechain-types'
+import { AmountConverter, Stonks } from '../../typechain-types'
 import { mainnet } from '../../utils/contracts'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
 
 describe('Stonks', function () {
   let signer: Signer
   let subject: Stonks
-  let subjectTokenConverter: TokenAmountConverter
+  let subjectTokenConverter: AmountConverter
   let snapshotId: string
 
   const amount = ethers.parseEther('1')
@@ -19,7 +19,7 @@ describe('Stonks', function () {
     signer = (await ethers.getSigners())[0]
     snapshotId = await network.provider.send('evm_snapshot')
 
-    const { stonks, tokenConverter } = await deployStonks({
+    const { stonks, amountConverter: tokenConverter } = await deployStonks({
       factoryParams: {
         agent: mainnet.TREASURY,
         relayer: mainnet.VAULT_RELAYER,
@@ -34,7 +34,8 @@ describe('Stonks', function () {
         orderDuration: 3600,
         priceToleranceInBps: 100,
       },
-      tokenConverterParams: {
+      amountConverterParams: {
+        conversionTarget: "0x0000000000000000000000000000000000000348", // USD
         allowedTokensToSell: [mainnet.STETH],
         allowedStableTokensToBuy: [mainnet.DAI],
       },

@@ -1,6 +1,6 @@
 import { ethers, network } from 'hardhat'
 import {
-  TokenAmountConverter,
+  AmountConverter,
   StonksFactory,
 } from '../../typechain-types'
 
@@ -20,7 +20,7 @@ describe.skip('Stonks factory', function () {
   })
 
   describe('Deploing price checker', async function () {
-    let tokenConverter: TokenAmountConverter
+    let tokenConverter: AmountConverter
 
     it('Should deploy price checker with correct params', async () => {
       const deployTx = await subject.deployChainLinkTokenConverter(

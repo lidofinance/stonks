@@ -1,5 +1,5 @@
 import { TransactionReceipt } from 'ethers'
-import { StonksFactory__factory, Order__factory } from '../typechain-types'
+import { StonksFactory__factory, AmountConverterFactory__factory, Order__factory } from '../typechain-types'
 import { Order } from './types'
 
 export const getPlaceOrderData = (
@@ -69,7 +69,7 @@ export const getTokenConverterDeployment = (
   allowedTokensToSell: string[]
   allowedStableTokensToBuy: string[]
 } => {
-  const stonksFactoryInterface = StonksFactory__factory.createInterface()
+  const stonksFactoryInterface = AmountConverterFactory__factory.createInterface()
   const deployEvent = stonksFactoryInterface.parseLog(
     (receipt as any).logs[receipt.logs.length - 1]
   )

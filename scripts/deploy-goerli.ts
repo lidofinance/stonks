@@ -9,7 +9,7 @@ export const goerliDeploy = async () => {
       tokenFrom: goerli.WETH, // WETH
       tokenTo: goerli.UNI, // UNI
       operator: await deployer.getAddress(),
-      tokenConverterAddress: '0x26eef32497909Bb27E9B40091246c0aA39d1A7dB', //
+      amountConverterAddress: '0x26eef32497909Bb27E9B40091246c0aA39d1A7dB', //
     },
   }
 
