@@ -28,7 +28,7 @@ interface IFeedRegistry {
  * sellToken.
  */
 contract AmountConverter is IAmountConverter {
-    // Fiat currencies follow https://en.wikipedia.org/wiki/ISO_4217
+    // Conversion targets: https://github.com/smartcontractkit/chainlink/blob/develop/contracts/src/v0.8/Denominations.sol
     address public immutable conversionTarget;
 
     IFeedRegistry public immutable feedRegistry;
@@ -44,7 +44,7 @@ contract AmountConverter is IAmountConverter {
     error UnexpectedPriceFeedAnswer();
 
     /// @param feedRegistry_ Chainlink Price Feed Registry
-    /// @param conversionTarget_ Target currency we expect to be equal allowed tokens to buy
+    /// @param conversionTarget_ Target currency we expect to be equal to allowed tokens to buy
     /// @param allowedTokensToSell_ List of addresses which allowed to use as sell tokens
     /// @param allowedTokensToBuy_ List of addresses of stable tokens
     constructor(
