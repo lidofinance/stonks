@@ -3,7 +3,7 @@ import { ethers } from 'hardhat'
 import { IAmountConverter } from '../../typechain-types'
 import { mainnet } from '../../utils/contracts'
 
-describe('Amount converter', function () {
+describe('AmountConverter', function () {
   let subject: IAmountConverter
 
   this.beforeAll(async function () {

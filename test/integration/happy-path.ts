@@ -49,7 +49,7 @@ describe('Happy path', function () {
     subjectTokenConverter = tokenConverter
   })
 
-  describe('order creation', async function () {
+  describe('order creation:', async function () {
     const value = ethers.parseEther('1')
     let order: Order
 

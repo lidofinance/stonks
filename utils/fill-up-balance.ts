@@ -34,6 +34,6 @@ export const fillUpERC20FromTreasury = async ({
 export const fillUpBalance = async (to: string, value: string | bigint) => {
   await network.provider.request({
     method: 'hardhat_setBalance',
-    params: [to, ethers.toBeHex(value)],
+    params: [to, "0x" + BigInt(value).toString(16)],
   })
 }

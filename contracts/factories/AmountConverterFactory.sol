@@ -9,8 +9,9 @@ contract AmountConverterFactory {
     error InvalidFeedRegistryAddress();
 
     event AmountConverterDeployed(
-        address indexed tokenAmountConverterAddress,
+        address indexed amountConverterAddress,
         address feedRegistryAddress,
+        address conversionTarget,
         address[] allowedTokensToSell,
         address[] allowedStableTokensToBuy
     );
@@ -29,7 +30,7 @@ contract AmountConverterFactory {
             new AmountConverter(feedRegistry, conversionTarget_, allowedTokensToSell_, allowedStableTokensToBuy_)
         );
         emit AmountConverterDeployed(
-            tokenAmountConverter, feedRegistry, allowedTokensToSell_, allowedStableTokensToBuy_
+            tokenAmountConverter, feedRegistry, conversionTarget_, allowedTokensToSell_, allowedStableTokensToBuy_
         );
     }
 }

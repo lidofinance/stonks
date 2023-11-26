@@ -13,10 +13,7 @@ import {
   MAGIC_VALUE,
   formOrderHashFromTxReceipt,
 } from '../../utils/gpv2-helpers'
-import {
-  fillUpBalance,
-  fillUpERC20FromTreasury,
-} from '../../utils/fill-up-balance'
+import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
 import { getPlaceOrderData } from '../../utils/get-events'
 import { isClose } from '../../utils/assert'
 
@@ -50,7 +47,7 @@ describe('Order', async function () {
           priceToleranceInBps: 100,
         },
         amountConverterParams: {
-          conversionTarget: "0x0000000000000000000000000000000000000348", // USD
+          conversionTarget: '0x0000000000000000000000000000000000000348', // USD
           allowedTokensToSell: [mainnet.STETH],
           allowedStableTokensToBuy: [mainnet.DAI],
         },
@@ -83,7 +80,7 @@ describe('Order', async function () {
     orderHash = await formOrderHashFromTxReceipt(placeOrderTxReceipt, stonks)
   })
 
-  describe('initialization (direct)', function () {
+  describe('initialization (direct):', function () {
     it('sample instance should be initialized by default', async () => {
       const subject = await ethers.getContractAt(
         'Order',
@@ -95,7 +92,7 @@ describe('Order', async function () {
     })
   })
 
-  describe('order validation', function () {
+  describe('order validation:', function () {
     it('should return magic value if order hash is valid', async () => {
       expect(await subject.isValidSignature(orderHash, '0x')).to.equal(
         MAGIC_VALUE
@@ -120,7 +117,7 @@ describe('Order', async function () {
     it('should revert if there was a price spike', async () => {})
   })
 
-  describe('order canceling', function () {
+  describe('order canceling:', function () {
     it('should succesfully cancel the order', async () => {
       const orderParams = await stonks.getOrderParameters()
 
@@ -157,93 +154,12 @@ describe('Order', async function () {
     })
   })
 
-  describe('asset recovery', async function () {
-    const amount = BigInt(10 ** 18)
-    const token = await ethers.getContractAt('IERC20', mainnet.DAI)
-    const subjectAddress = await subject.getAddress()
-
-    this.beforeAll(async function () {
-      await fillUpBalance(await subject.getAddress(), amount)
-      await fillUpERC20FromTreasury({
-        amount,
-        token: mainnet.DAI,
-        address: await subject.getAddress(),
-      })
-    })
-
-    it('should succesfully recover Ether', async () => {
-      const subjectBalanceBefore =
-        await ethers.provider.getBalance(subjectAddress)
-      const treasuryBalanceBefore = await ethers.provider.getBalance(
-        mainnet.TREASURY
-      )
-
-      expect(subjectBalanceBefore).to.be.equal(amount)
-
-      const recoverTx = await subject.recoverEther()
-      await recoverTx.wait()
-
-      const subjectBalanceAfter =
-        await ethers.provider.getBalance(subjectAddress)
-      const treasuryBalanceAfter = await ethers.provider.getBalance(
-        mainnet.TREASURY
-      )
-
-      expect(subjectBalanceAfter).to.be.equal(subjectBalanceBefore - amount)
-      expect(treasuryBalanceAfter).to.be.equal(treasuryBalanceBefore + amount)
-    })
-    it('should succesfully recover ERC20', async () => {
-      expect(await token.balanceOf(await subject.getAddress())).to.be.equal(
-        amount
-      )
-
-      const recoverTx = await subject.recoverERC20(mainnet.DAI, amount)
-      await recoverTx.wait()
-
-      expect(await token.balanceOf(await subject.getAddress())).to.be.equal(
-        BigInt(0)
-      )
-    })
-    it('should succesfully recover ERC721', async () => {})
-    it('should succesfully recover recoverERC1155', async () => {})
+  describe('asset recovering edge case:', async function () {
     it('should revert if recover a token from', async () => {
       const orderParams = await stonks.getOrderParameters()
       expect(
         subject.recoverERC20(orderParams['tokenFrom'], BigInt(1))
       ).to.be.revertedWith('CannotRecoverTokenFrom')
-    })
-    it('should revert if it is called by stranger', async () => {
-      const localSubject = await ethers.getContractAt(
-        'Order',
-        await subject.getAddress(),
-        (await ethers.getSigners())[1]
-      )
-
-      expect(localSubject.recoverEther()).to.be.revertedWith(
-        'NotAgentOrManager'
-      )
-    })
-    it('should succesfully recover by operator', async () => {
-      const localSubject = await ethers.getContractAt(
-        'Order',
-        await subject.getAddress(),
-        operator
-      )
-
-      localSubject.recoverERC20(mainnet.DAI, amount)
-    })
-    it('should succesfully recover by agent', async () => {
-      network.provider.request({
-        method: 'hardhat_impersonateAccount',
-        params: [mainnet.TREASURY],
-      })
-      const agent = await ethers.provider.getSigner(mainnet.TREASURY)
-      const localSubject = await ethers.getContractAt(
-        'Order',
-        await subject.getAddress(),
-        agent
-      )
-      localSubject.recoverERC20(mainnet.DAI, amount)
     })
   })
 

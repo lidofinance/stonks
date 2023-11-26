@@ -45,7 +45,7 @@ describe('Stonks', function () {
     subjectTokenConverter = tokenConverter
   })
 
-  describe('initialization', function () {
+  describe('initialization:', function () {
     it('should set correct constructor params', async () => {})
 
     it.skip('should not initialize with zero address', async function () {
@@ -132,7 +132,7 @@ describe('Stonks', function () {
     })
   })
 
-  describe('order placement', function () {
+  describe('order placement:', function () {
     it('should not place order when balance is zero', async function () {
       expect(subject.placeOrder()).to.be.rejectedWith(
         'Stonks: insufficient balance'
