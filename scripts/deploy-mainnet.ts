@@ -1,9 +1,10 @@
 import { ethers } from 'hardhat'
+import { mainnet } from '../utils/contracts'
 
 async function main() {
   const stonksFactory = await (
     await ethers.getContractFactory('StonksFactory')
-  ).deploy()
+  ).deploy(mainnet.TREASURY, mainnet.SETTLEMENT, mainnet.VAULT_RELAYER)
 
   await stonksFactory.waitForDeployment()
 
