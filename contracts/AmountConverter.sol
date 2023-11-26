@@ -74,7 +74,7 @@ contract AmountConverter is IAmountConverter {
     }
 
     ///
-    // @dev Returns the expected output amount after selling _tokenFrom to stable with margin
+    // @dev Returns the expected output amount after selling _tokenFrom to conversionTarget with margin
     ///
     function getExpectedOut(uint256 amount_, address sellToken_, address buyToken_)
         external
