@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
 
-import {Stonks} from "./Stonks.sol";
-import {Order} from "./Order.sol";
+import {Stonks} from "../Stonks.sol";
+import {Order} from "../Order.sol";
 
 contract StonksFactory {
     address public immutable agent;

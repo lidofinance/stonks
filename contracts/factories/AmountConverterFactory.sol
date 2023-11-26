@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
 
-import {AmountConverter} from "./AmountConverter.sol";
+import {AmountConverter} from "../AmountConverter.sol";
 
 contract AmountConverterFactory {
     address public immutable feedRegistry;
