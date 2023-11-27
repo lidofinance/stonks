@@ -89,7 +89,7 @@ contract Stonks is IStonks, AssetRecoverer {
      * @notice Initiates a new trading order by creating an Order contract clone with the current token balance.
      * @dev Transfers the tokenFrom balance to the new Order instance and initializes it with the Stonks' manager settings for execution.
      */
-    function placeOrder() external returns (address) {
+    function placeOrder() external onlyAgentOrManager returns (address) {
         uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
 
         // Contract needs to hold at least 10 wei to cover steth shares issue
