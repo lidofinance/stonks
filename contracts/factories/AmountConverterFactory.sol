@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
 
@@ -6,7 +7,7 @@ import {AmountConverter} from "../AmountConverter.sol";
 contract AmountConverterFactory {
     address public immutable feedRegistry;
 
-    error InvalidFeedRegistryAddress();
+    error ZeroAddress();
 
     event AmountConverterDeployed(
         address indexed amountConverterAddress,
@@ -17,7 +18,7 @@ contract AmountConverterFactory {
     );
 
     constructor(address feedRegistry_) {
-        if (feedRegistry_ == address(0)) revert InvalidFeedRegistryAddress();
+        if (feedRegistry_ == address(0)) revert ZeroAddress();
         feedRegistry = feedRegistry_;
     }
 

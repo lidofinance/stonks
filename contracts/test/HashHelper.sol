@@ -1,5 +1,6 @@
+// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.19;
 
 import {GPv2Order} from "../lib/GPv2Order.sol";
 

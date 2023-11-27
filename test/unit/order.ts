@@ -117,7 +117,7 @@ describe('Order', async function () {
     it('should revert if there was a price spike', async () => {})
   })
 
-  describe('order canceling:', function () {
+  describe('recovering token from:', function () {
     it('should succesfully cancel the order', async () => {
       const orderParams = await stonks.getOrderParameters()
 
@@ -134,7 +134,7 @@ describe('Order', async function () {
         await subject.getAddress()
       )
 
-      const cancelTx = await subject.cancel()
+      const cancelTx = await subject.recoverTokenFrom()
       await cancelTx.wait()
 
       const stonksBalanceAfter = await token.balanceOf(
@@ -150,7 +150,7 @@ describe('Order', async function () {
       expect(isClose(orderBalanceAfter, BigInt(0))).to.be.true
     })
     it('should revert if order is not expired', async () => {
-      expect(subject.cancel()).to.be.revertedWith('OrderNotExpired')
+      expect(subject.recoverTokenFrom()).to.be.revertedWith('OrderNotExpired')
     })
   })
 

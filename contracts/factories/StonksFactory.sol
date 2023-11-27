@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
 
@@ -24,14 +25,12 @@ contract StonksFactory {
         uint256 priceToleranceInBasisPoints
     );
 
-    error InvalidAgentAddress();
-    error InvalidSettlementAddress();
-    error InvalidRelayerAddress();
+    error ZeroAddress();
 
     constructor(address agent_, address settlement_, address relayer_) {
-        if (agent_ == address(0)) revert InvalidAgentAddress();
-        if (settlement_ == address(0)) revert InvalidSettlementAddress();
-        if (relayer_ == address(0)) revert InvalidRelayerAddress();
+        if (agent_ == address(0)) revert ZeroAddress();
+        if (settlement_ == address(0)) revert ZeroAddress();
+        if (relayer_ == address(0)) revert ZeroAddress();
 
         agent = agent_;
         relayer = relayer_;

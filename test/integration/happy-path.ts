@@ -105,14 +105,14 @@ describe('Happy path', function () {
     })
 
     it('should not be possible to cancel order due to expiration time', () => {
-      expect(order.cancel()).to.be.revertedWith('Order: order is expired')
+      expect(order.recoverTokenFrom()).to.be.revertedWith('Order: order is expired')
     })
 
     it('should be possible to cancel order after expiration time', async () => {
       const localSnapshotId = await network.provider.send('evm_snapshot')
 
       await network.provider.send('evm_increaseTime', [60 * 60 * 24 * 7])
-      await order.cancel()
+      await order.recoverTokenFrom()
 
       const steth = await ethers.getContractAt('IERC20', mainnet.STETH)
       expect(

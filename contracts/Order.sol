@@ -1,46 +1,46 @@
+// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
 import {GPv2Order} from "./lib/GPv2Order.sol";
-import {AssetRecoverer} from "./lib/AssetRecoverer.sol";
-import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
+import {AssetRecoverer} from "./AssetRecoverer.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
 
 import {ICoWSwapSettlement} from "./interfaces/ICoWSwapSettlement.sol";
-import {ERC1271_MAGIC_VALUE, IERC1271} from "./interfaces/IERC1271.sol";
 
 /**
- * @title CoWswap Trading Order Contract
- * @dev Handles the execution of individual trading orders for the Stonks contract on CoWswap.
+ * @title CoW Swap Trading Order Contract
+ * @dev Handles the execution of individual trading orders for the Stonks contract on CoW Swap.
  *
  * Features:
  *  - Retrieves trade parameters from Stonks contract, ensuring alignment with the overall trading strategy.
  *  - Manages price-related calculations, including conversion rates and margins, to determine trade amounts.
- *  - Single-use design: Each contract instance is intended for one-time use, providing fresh settings for each trade.
+ *  - Single-use design: Each contract proxy is intended for one-time use, providing fresh settings for each trade.
  *  - Complies with ERC1271 for secure order validation.
  *  - Includes asset recovery capabilities for enhanced safety.
  *
- * @notice Serves as an execution module for CoWswap trades, operating under parameters set by the Stonks contract.
+ * @notice Serves as an execution module for CoW Swap trades, operating under parameters set by the Stonks contract.
  */
 contract Order is IERC1271, AssetRecoverer {
-    using GPv2Order for *;
+    using GPv2Order for GPv2Order.Data;
     using SafeERC20 for IERC20;
 
+    bytes4 constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
     uint256 private constant MAX_BASIS_POINTS = 10_000;
     bytes32 private constant APP_DATA = keccak256("LIDO_DOES_STONKS");
 
-    bytes32 private immutable domainSeparator;
-    address private immutable settlement;
-    address private immutable relayer;
+    address public immutable settlement;
+    address public immutable relayer;
+
+    address public stonks;
 
     uint256 private sellAmount;
     uint256 private buyAmount;
-
-    address private stonks;
 
     uint32 private validTo;
     bytes32 private orderHash;
@@ -58,18 +58,17 @@ contract Order is IERC1271, AssetRecoverer {
     /// @param agent_ The agent's address with control over the contract.
     /// @param settlement_ The address of the settlement contract.
     /// @param relayer_ The address of the relayer handling orders.
-    /// @dev This constructor sets up necessary parameters and state variables to enable the contract's interaction with the CoWswap protocol.
+    /// @dev This constructor sets up necessary parameters and state variables to enable the contract's interaction with the CoW Swap protocol.
     /// @dev It also marks the contract as initialized to prevent unauthorized re-initialization.
     constructor(address agent_, address settlement_, address relayer_) AssetRecoverer(agent_) {
         // Immutable variables are set at contract deployment and remain unchangeable thereafter.
-        // This ensures that even when creating new instances via a minimal proxy,
+        // This ensures that even when creating new proxies via a minimal proxy,
         // these variables retain their initial values assigned at the time of the original contract deployment.
         settlement = settlement_;
         relayer = relayer_;
-        domainSeparator = ICoWSwapSettlement(settlement).domainSeparator();
 
         // This variable is stored in the contract's storage and will be overwritten
-        // when a new instance is created via a minimal proxy. Currently, it is set to true
+        // when a new proxy is created via a minimal proxy. Currently, it is set to true
         // to prevent any initialization of a transaction on 'sample' by unauthorized entities.
         initialized = true;
     }
@@ -88,12 +87,7 @@ contract Order is IERC1271, AssetRecoverer {
 
         validTo = uint32(block.timestamp + orderParameters.orderDurationInSeconds);
         sellAmount = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
-
-        uint256 expectedPurchaseAmount = IAmountConverter(orderParameters.tokenAmountConverter).getExpectedOut(
-            sellAmount, orderParameters.tokenFrom, orderParameters.tokenTo
-        );
-        buyAmount =
-            (expectedPurchaseAmount * (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) / MAX_BASIS_POINTS;
+        buyAmount = IStonks(stonks).estimateTradeOutput(sellAmount);
 
         GPv2Order.Data memory order = GPv2Order.Data({
             sellToken: IERC20Metadata(orderParameters.tokenFrom),
@@ -109,6 +103,7 @@ contract Order is IERC1271, AssetRecoverer {
             sellTokenBalance: GPv2Order.BALANCE_ERC20,
             buyTokenBalance: GPv2Order.BALANCE_ERC20
         });
+        bytes32 domainSeparator = ICoWSwapSettlement(settlement).domainSeparator();
         orderHash = order.hash(domainSeparator);
 
         // Approval is set to the maximum value of uint256 as the contract is intended for single-use only.
@@ -137,32 +132,29 @@ contract Order is IERC1271, AssetRecoverer {
         /// This is a safeguard against market volatility and drastic price changes, which could otherwise lead to unfavorable trades.
         /// If the price deviates beyond the tolerance level, the order is invalidated to protect against executing a trade at an undesirable rate.
 
-        uint256 actualPurchaseAmount = IAmountConverter(orderParameters.tokenAmountConverter).getExpectedOut(
-            sellAmount, orderParameters.tokenFrom, orderParameters.tokenTo
-        );
-        uint256 actualPurchaseAmountWithMargin =
-            (actualPurchaseAmount * (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) / MAX_BASIS_POINTS;
+        uint256 currentCalculatedPurchaseAmount =
+            IStonks(stonks).estimateTradeOutput(sellAmount);
 
-        if (actualPurchaseAmountWithMargin <= buyAmount) return ERC1271_MAGIC_VALUE;
+        if (currentCalculatedPurchaseAmount <= buyAmount) return ERC1271_MAGIC_VALUE;
 
-        uint256 differenceAmount = actualPurchaseAmountWithMargin - buyAmount;
-        uint256 priceToleranceAmount =
-            actualPurchaseAmountWithMargin * orderParameters.priceToleranceInBasisPoints / MAX_BASIS_POINTS;
+        uint256 differenceAmount = currentCalculatedPurchaseAmount - buyAmount;
+        uint256 maxToleratedAmountDeviation =
+            currentCalculatedPurchaseAmount * orderParameters.priceToleranceInBasisPoints / MAX_BASIS_POINTS;
 
-        if (differenceAmount > priceToleranceAmount) revert PriceConditionChanged();
+        if (differenceAmount > maxToleratedAmountDeviation) revert PriceConditionChanged();
 
         return ERC1271_MAGIC_VALUE;
     }
 
     /// @notice Retrieves the details of the placed order.
-    function getPlacedOrder() external view returns (bytes32, address, address, uint256, uint256, uint32) {
+    function getOrderDetails() external view returns (bytes32, address, address, uint256, uint256, uint32) {
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
         return (orderHash, orderParameters.tokenFrom, orderParameters.tokenTo, sellAmount, buyAmount, validTo);
     }
 
     /// @notice Allows for the cancellation of the order and returns the tokens if the order has expired.
     /// @dev Can only be called if the order's validity period has passed.
-    function cancel() external {
+    function recoverTokenFrom() external {
         if (validTo > block.timestamp) revert OrderNotExpired();
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
         IERC20(orderParameters.tokenFrom).safeTransfer(

@@ -1,17 +1,16 @@
+// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+pragma solidity 0.8.19;
 
 interface IStonks {
     struct OrderParameters {
         address tokenFrom;
         address tokenTo;
-        address tokenAmountConverter;
-        uint64 orderDurationInSeconds;
-        uint16 marginInBasisPoints;
-        uint16 priceToleranceInBasisPoints;
+        uint256 orderDurationInSeconds;
+        uint256 marginInBasisPoints;
+        uint256 priceToleranceInBasisPoints;
     }
 
     function getOrderParameters() external view returns (OrderParameters memory);
+    function estimateTradeOutput(uint256 amount) external view returns (uint256);
 }

@@ -7,12 +7,10 @@ describe('AmountConverter', function () {
   let subject: IAmountConverter
 
   this.beforeAll(async function () {
-    const ContractFactory = await ethers.getContractFactory(
-      'AmountConverter'
-    )
+    const ContractFactory = await ethers.getContractFactory('AmountConverter')
     subject = await ContractFactory.deploy(
       mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
-      "0x0000000000000000000000000000000000000348", // USD
+      '0x0000000000000000000000000000000000000348', // USD
       [mainnet.STETH, mainnet.DAI, mainnet.USDC, mainnet.USDT],
       [mainnet.DAI, mainnet.USDC, mainnet.USDT]
     )
@@ -24,27 +22,27 @@ describe('AmountConverter', function () {
     it('Should have the right price in the straigt direction', async function () {
       const stethToSell = ethers.parseEther('1')
       const price = await subject.getExpectedOut(
-        stethToSell,
         mainnet.STETH,
-        mainnet.DAI
+        mainnet.DAI,
+        stethToSell
       )
       console.log(price.toString())
     })
     it('Should have the right price in the straigt direction', async function () {
       const stethToSell = 1000000
       const price = await subject.getExpectedOut(
-        stethToSell,
         mainnet.USDC,
-        mainnet.DAI
+        mainnet.DAI,
+        stethToSell
       )
       console.log(price.toString())
     })
     it('Should have the right price in the straigt direction', async function () {
       const stethToSell = ethers.parseEther('1')
       const price = await subject.getExpectedOut(
-        stethToSell,
         mainnet.DAI,
-        mainnet.USDC
+        mainnet.USDC,
+        stethToSell
       )
       console.log(price.toString())
     })

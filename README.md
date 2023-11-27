@@ -4,15 +4,15 @@
 
 ## What is Stonks?
 
-Stonks is a sophisticated solution designed for token exchanges, leveraging the offchain CoWSwap platform. This system enables a specialized Token Management Committee within the DAO framework to safely conduct token swaps without ever taking custody of the tokens on their balance.
+Stonks is a sophisticated solution designed for token exchanges, leveraging the offchain CoW Swap platform. This system enables a specialized Token Management Committee within the DAO framework to safely conduct token swaps without ever taking custody of the tokens on their balance.
 
 ## How does it work?
 
 Stonks leverages a combination of advanced blockchain protocols and smart contract mechanisms to facilitate secure and efficient token swaps:
 
-#### Utilizing CoWSwap's Offchain Orderbook
-- Front-Running Mitigation: CoWSwap's offchain orderbook prevents front-running, a common issue in on-chain environments, by hiding order details until execution.
-- Efficient Price Discovery: Batch auctions in CoWSwap match overlapping orders, ensuring fair pricing.
+#### Utilizing CoW Swap's Offchain Orderbook
+- Front-Running Mitigation: CoW Swap's offchain orderbook prevents front-running, a common issue in on-chain environments, by hiding order details until execution.
+- Efficient Price Discovery: Batch auctions in CoW Swap match overlapping orders, ensuring fair pricing.
 #### Chainlink for Accurate Pricing
 - Real-Time Market Prices: Stonks uses Chainlink to obtain real-time, reliable market prices, ensuring swaps are executed at rates reflecting current market conditions.
 #### Onchain Order Creation

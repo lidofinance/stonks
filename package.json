@@ -13,7 +13,7 @@
     "dotenv": "^16.3.1"
   },
   "scripts": {
-    "test": "REPORT_GAS=true hardhat test --network localhost",
+    "test": "hardhat test --network localhost",
     "node": "dotenv -- npm run node-hardhat",
     "node-hardhat": "hardhat node --fork $RPC_URL"
   }

@@ -1,7 +1,8 @@
+// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.19;
 
-import {AssetRecoverer} from "../lib/AssetRecoverer.sol";
+import {AssetRecoverer} from "../AssetRecoverer.sol";
 
 contract AssetRecovererTest is AssetRecoverer {
     constructor(address agent_, address manager_) AssetRecoverer(agent_) {

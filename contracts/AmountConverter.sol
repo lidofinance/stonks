@@ -1,19 +1,10 @@
+// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
 
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
-
-interface IFeedRegistry {
-    function getFeed(address base, address quote) external view returns (address aggregator);
-
-    function latestRoundData(address base, address quote)
-        external
-        view
-        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
-
-    function decimals(address base, address quote) external view returns (uint256);
-}
+import {IFeedRegistry} from "./interfaces/IFeedRegistry.sol";
 
 /**
  * @title AmountConverter
@@ -34,69 +25,78 @@ contract AmountConverter is IAmountConverter {
     IFeedRegistry public immutable feedRegistry;
 
     mapping(address => bool) public allowedTokensToSell;
-    mapping(address => bool) public allowedStableTokensToBuy;
+    mapping(address => bool) public allowedTokensToBuy;
 
-    error InvalidAddress();
-    error InvalidAmount();
-    error NoPriceFeedFound();
-    error TokenNotAllowed();
-    error InvalidTokenPair();
+    error ZeroAddress();
+    error ZeroAmount();
+    error NoPriceFeedFound(address tokenFrom, address tokenTo);
+    error SellTokenNotAllowed(address tokenFrom);
+    error BuyTokenNotAllowed(address tokenTo);
+    error SameTokensConversion();
     error UnexpectedPriceFeedAnswer();
 
     /// @param feedRegistry_ Chainlink Price Feed Registry
     /// @param conversionTarget_ Target currency we expect to be equal to allowed tokens to buy
     /// @param allowedTokensToSell_ List of addresses which allowed to use as sell tokens
-    /// @param allowedTokensToBuy_ List of addresses of stable tokens
+    /// @param allowedTokensToBuy_ List of addresses of tokens that we expect to be equal to conversionTarget
     constructor(
         address feedRegistry_,
         address conversionTarget_,
         address[] memory allowedTokensToSell_,
         address[] memory allowedTokensToBuy_
     ) {
-        if (feedRegistry_ == address(0)) revert InvalidAddress();
-        if (conversionTarget_ == address(0)) revert InvalidAddress();
+        if (feedRegistry_ == address(0)) revert ZeroAddress();
+        if (conversionTarget_ == address(0)) revert ZeroAddress();
 
         feedRegistry = IFeedRegistry(feedRegistry_);
         conversionTarget = conversionTarget_;
 
         for (uint256 i = 0; i < allowedTokensToBuy_.length; ++i) {
-            if (allowedTokensToBuy_[i] == address(0)) revert InvalidAddress();
-            allowedStableTokensToBuy[allowedTokensToBuy_[i]] = true;
+            if (allowedTokensToBuy_[i] == address(0)) revert ZeroAddress();
+            allowedTokensToBuy[allowedTokensToBuy_[i]] = true;
         }
 
         for (uint256 i = 0; i < allowedTokensToSell_.length; ++i) {
-            if (allowedTokensToSell_[i] == address(0)) revert InvalidAddress();
-            if (feedRegistry.getFeed(allowedTokensToSell_[i], conversionTarget) == address(0)) {
-                revert NoPriceFeedFound();
-            }
+            if (allowedTokensToSell_[i] == address(0)) revert ZeroAddress();
+            feedRegistry.getFeed(allowedTokensToSell_[i], conversionTarget);
             allowedTokensToSell[allowedTokensToSell_[i]] = true;
         }
     }
 
-    ///
-    // @dev Returns the expected output amount after selling _tokenFrom to conversionTarget with margin
-    ///
-    function getExpectedOut(uint256 amount_, address sellToken_, address buyToken_)
+    /**
+     * @notice Calculates the expected amount of `tokenTo_` that one would receive for a given amount of `tokenFrom_`.
+     * @dev This function computes the expected output amount of `tokenTo_` when selling `tokenFrom_`.
+     *      It uses the Chainlink Price Feed to get the current price of `tokenFrom_` in terms of the `conversionTarget`
+     *      (usually USD). The function then adjusts this price based on the token decimals and returns the expected
+     *      amount of `tokenTo_` one would receive for the specified `amountFrom_` of `tokenFrom_`.
+     *      This function assumes that `tokenTo_` is equivalent in value to the `conversionTarget`.
+     *
+     * @param tokenFrom_ The address of the token being sold.
+     * @param tokenTo_ The address of the token being bought, expected to be equivalent to the `conversionTarget`.
+     * @param amountFrom_ The amount of `tokenFrom_` that is being sold.
+     * @return expectedOutputAmount The expected amount of `tokenTo_` that will be received.
+     */
+    function getExpectedOut(address tokenFrom_, address tokenTo_, uint256 amountFrom_)
         external
         view
         returns (uint256 expectedOutputAmount)
     {
-        if (sellToken_ == buyToken_) revert InvalidTokenPair();
-        if (allowedTokensToSell[sellToken_] == false) revert TokenNotAllowed();
-        if (allowedStableTokensToBuy[buyToken_] == false) revert TokenNotAllowed();
-        if (amount_ == 0) revert InvalidAmount();
+        if (tokenFrom_ == tokenTo_) revert SameTokensConversion();
+        if (allowedTokensToSell[tokenFrom_] == false) revert SellTokenNotAllowed(tokenFrom_);
+        if (allowedTokensToBuy[tokenTo_] == false) revert BuyTokenNotAllowed(tokenTo_);
+        if (amountFrom_ == 0) revert ZeroAmount();
 
-        (uint256 currentPrice, uint256 feedDecimals) = _fetchPrice(sellToken_, conversionTarget);
+        (uint256 currentPrice, uint256 feedDecimals) = _fetchPrice(tokenFrom_, conversionTarget);
 
-        uint256 decimalsOfSellToken = IERC20Metadata(sellToken_).decimals();
-        uint256 decimalsOfBuyToken = IERC20Metadata(buyToken_).decimals();
+        uint256 decimalsOfSellToken = IERC20Metadata(tokenFrom_).decimals();
+        uint256 decimalsOfBuyToken = IERC20Metadata(tokenTo_).decimals();
 
         int256 effectiveDecimalDifference = int256(decimalsOfSellToken + feedDecimals) - int256(decimalsOfBuyToken);
 
         if (effectiveDecimalDifference >= 0) {
-            expectedOutputAmount = (amount_ * currentPrice) / 10 ** uint256(effectiveDecimalDifference);
+            expectedOutputAmount = (amountFrom_ * currentPrice) / 10 ** uint256(effectiveDecimalDifference);
         } else {
-            expectedOutputAmount = (amount_ * currentPrice) * 10 ** uint256(-effectiveDecimalDifference);
+            expectedOutputAmount = (amountFrom_ * currentPrice) * 10 ** uint256(-effectiveDecimalDifference);
         }
     }
 

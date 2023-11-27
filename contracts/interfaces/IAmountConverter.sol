@@ -1,9 +1,7 @@
+// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.19;
 
 interface IAmountConverter {
-    function getExpectedOut(uint256 amount, address tokenFrom, address tokenTo)
-        external
-        view
-        returns (uint256);
+    function getExpectedOut(address sellToken, address buyToken, uint256 amount) external view returns (uint256);
 }

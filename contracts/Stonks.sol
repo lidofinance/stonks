@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
 
@@ -6,13 +7,13 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 import {Order} from "./Order.sol";
-import {AssetRecoverer} from "./lib/AssetRecoverer.sol";
+import {AssetRecoverer} from "./AssetRecoverer.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
 import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
 
 /**
  * @title Stonks Trading Management Contract
- * @dev Centralizes the management of CoWswap trading orders, interfacing with the Order contract.
+ * @dev Centralizes the management of CoW Swap trading orders, interfacing with the Order contract.
  *
  * Features:
  *  - Stores key trading parameters like token pairs and margins in immutable variables.
@@ -20,26 +21,28 @@ import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
  *  - Provides asset recovery functionality for additional security.
  *  - Maintains a consistent trading strategy through centralized parameter management.
  *
- * @notice Orchestrates the setup and execution of trades on CoWswap, utilizing Order contracts for each transaction.
+ * @notice Orchestrates the setup and execution of trades on CoW Swap, utilizing Order contracts for each transaction.
  */
 contract Stonks is IStonks, AssetRecoverer {
     using SafeERC20 for IERC20;
 
-    uint8 private constant MIN_POSSIBLE_BALANCE = 10;
     uint16 private constant MAX_BASIS_POINTS = 10_000;
+    uint16 private constant BASIS_POINTS_PARAMETERS_LIMIT = 1_000;
 
+    uint8 private constant MIN_POSSIBLE_BALANCE = 10;
+    uint8 private constant MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60;
+    uint256 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60 * 60 * 7;
+
+    address public immutable amountConverter;
     address public immutable orderSample;
+
     OrderParameters public orderParameters;
 
-    error InvalidManagerAddress();
-    error InvalidTokenFromAddress();
-    error InvalidTokenToAddress();
+    error ZeroAddress();
     error TokensCannotBeSame();
-    error InvalidTokenAmountConverterAddress();
-    error InvalidOrderAddress();
     error InvalidOrderDuration();
-    error MarginOverflow();
-    error PriceToleranceOverflow();
+    error MarginOverflowsAllowedLimit();
+    error PriceToleranceOverflowsAllowedLimit();
     error MinimumPossibleBalanceNotMet();
     error InvalidAmount();
 
@@ -52,29 +55,30 @@ contract Stonks is IStonks, AssetRecoverer {
         address manager_,
         address tokenFrom_,
         address tokenTo_,
-        address tokenAmountConverter_,
+        address amountConverter_,
         address orderSample_,
         uint256 orderDurationInSeconds_,
         uint256 marginInBasisPoints_,
         uint256 priceToleranceInBasisPoints_
     ) AssetRecoverer(agent_) {
-        if (manager_ == address(0)) revert InvalidManagerAddress();
-        if (tokenFrom_ == address(0)) revert InvalidTokenFromAddress();
-        if (tokenTo_ == address(0)) revert InvalidTokenToAddress();
+        if (manager_ == address(0)) revert ZeroAddress();
+        if (tokenFrom_ == address(0)) revert ZeroAddress();
+        if (tokenTo_ == address(0)) revert ZeroAddress();
         if (tokenFrom_ == tokenTo_) revert TokensCannotBeSame();
-        if (tokenAmountConverter_ == address(0)) revert InvalidTokenAmountConverterAddress();
-        if (orderSample_ == address(0)) revert InvalidOrderAddress();
-        if (orderDurationInSeconds_ == 0) revert InvalidOrderDuration();
-        if (marginInBasisPoints_ > MAX_BASIS_POINTS) revert MarginOverflow();
-        if (priceToleranceInBasisPoints_ > MAX_BASIS_POINTS) revert PriceToleranceOverflow();
+        if (amountConverter_ == address(0)) revert ZeroAddress();
+        if (orderSample_ == address(0)) revert ZeroAddress();
+        if (orderDurationInSeconds_ <= MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS) revert InvalidOrderDuration();
+        if (orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS) revert InvalidOrderDuration();
+        if (marginInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) revert MarginOverflowsAllowedLimit();
+        if (priceToleranceInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) revert PriceToleranceOverflowsAllowedLimit();
 
         manager = manager_;
         orderSample = orderSample_;
+        amountConverter = amountConverter_;
 
         orderParameters = OrderParameters({
             tokenFrom: tokenFrom_,
             tokenTo: tokenTo_,
-            tokenAmountConverter: tokenAmountConverter_,
             orderDurationInSeconds: uint64(orderDurationInSeconds_),
             marginInBasisPoints: uint16(marginInBasisPoints_),
             priceToleranceInBasisPoints: uint16(priceToleranceInBasisPoints_)
@@ -85,7 +89,7 @@ contract Stonks is IStonks, AssetRecoverer {
      * @notice Initiates a new trading order by creating an Order contract clone with the current token balance.
      * @dev Transfers the tokenFrom balance to the new Order instance and initializes it with the Stonks' manager settings for execution.
      */
-    function placeOrder() external {
+    function placeOrder() external returns (address) {
         uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
 
         // Contract needs to hold at least 10 wei to cover steth shares issue
@@ -94,6 +98,8 @@ contract Stonks is IStonks, AssetRecoverer {
         Order orderCopy = Order(Clones.clone(orderSample));
         IERC20(orderParameters.tokenFrom).safeTransfer(address(orderCopy), balance);
         orderCopy.initialize(manager);
+
+        return address(orderCopy);
     }
 
     /**
@@ -103,9 +109,9 @@ contract Stonks is IStonks, AssetRecoverer {
      */
     function estimateTradeOutput(uint256 amount) public view returns (uint256) {
         if (amount == 0) revert InvalidAmount();
-        return IAmountConverter(orderParameters.tokenAmountConverter).getExpectedOut(
-            amount, orderParameters.tokenFrom, orderParameters.tokenTo
-        );
+        uint256 expectedPurchaseAmount =
+            IAmountConverter(amountConverter).getExpectedOut(orderParameters.tokenFrom, orderParameters.tokenTo, amount);
+        return (expectedPurchaseAmount * (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) / MAX_BASIS_POINTS;
     }
 
     /**

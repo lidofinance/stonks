@@ -28,22 +28,23 @@ export const formOrderHashFromTxReceipt = async (
 
   if (!blockTimestamp) throw Error('blockTimestamp is null')
   const { address: orderInstanceAddress, order } = getPlaceOrderData(receipt)
-  const orderParameters =
-    await stonks.getOrderParameters()
-  const validTo = blockTimestamp + Number(orderParameters.orderDurationInSeconds) // 1 hour
+  const orderParameters = await stonks.getOrderParameters()
+  const validTo =
+    blockTimestamp + Number(orderParameters.orderDurationInSeconds) // 1 hour
   const tokenConverter = await ethers.getContractAt(
     'AmountConverter',
-    orderParameters.tokenAmountConverter
+    await stonks.amountConverter()
   )
   const token = await ethers.getContractAt('IERC20', orderParameters.tokenFrom)
   const sellAmount = await token.balanceOf(orderInstanceAddress)
   const buyAmountWithoutMargin = await tokenConverter.getExpectedOut(
-    sellAmount,
     orderParameters.tokenFrom,
-    orderParameters.tokenTo
+    orderParameters.tokenTo,
+    sellAmount
   )
   const buyAmount =
-    (buyAmountWithoutMargin * (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) /
+    (buyAmountWithoutMargin *
+      (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) /
     MAX_BASIS_POINTS
 
   const orderData = {
