@@ -31,7 +31,7 @@ contract Stonks is IStonks, AssetRecoverer {
 
     uint8 private constant MIN_POSSIBLE_BALANCE = 10;
     uint8 private constant MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60;
-    uint256 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60 * 60 * 7;
+    uint16 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60 * 60 * 7;
 
     address public immutable amountConverter;
     address public immutable orderSample;
