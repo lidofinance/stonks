@@ -97,6 +97,8 @@ contract Order is IERC1271, AssetRecoverer {
             buyAmount: buyAmount,
             validTo: validTo,
             appData: APP_DATA,
+            // Fee amount is set to 0 for creating limit order
+            // https://docs.cow.fi/tutorials/submit-limit-orders-via-api/general-overview
             feeAmount: 0,
             kind: GPv2Order.KIND_SELL,
             partiallyFillable: false,
