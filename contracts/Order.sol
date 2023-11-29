@@ -141,7 +141,7 @@ contract Order is IERC1271, AssetRecoverer {
 
         uint256 differenceAmount = currentCalculatedPurchaseAmount - buyAmount;
         uint256 maxToleratedAmountDeviation =
-            currentCalculatedPurchaseAmount * orderParameters.priceToleranceInBasisPoints / MAX_BASIS_POINTS;
+            buyAmount * orderParameters.priceToleranceInBasisPoints / MAX_BASIS_POINTS;
 
         if (differenceAmount > maxToleratedAmountDeviation) revert PriceConditionChanged();
 
