@@ -45,90 +45,172 @@ describe('Stonks', function () {
     subjectTokenConverter = tokenConverter
   })
 
+  const notZeroAddress = '0x0000000000000000000000000000000000000999'
+
   describe('initialization:', function () {
     it('should set correct constructor params', async () => {})
 
-    it.skip('should not initialize with zero address', async function () {
+    it('should not initialize with zero address', async function () {
       const ContractFactory = await ethers.getContractFactory('Stonks')
+      const AssetRecovererFactory = await ethers.getContractFactory('AssetRecovererTest')
+      const managerAddress = await signer.getAddress()
 
-      expect(
+      await expect(
         ContractFactory.deploy(
           ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress
+          managerAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1000
         )
-      ).to.be.revertedWith('Stonks: invalid tokenFrom_ address')
-      expect(
+      ).to.be.revertedWithCustomError(AssetRecovererFactory, 'InvalidAgentAddress')
+      await expect(
         ContractFactory.deploy(
+          mainnet.TREASURY,
+          ethers.ZeroAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1000
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      await expect(
+        ContractFactory.deploy(
+          mainnet.TREASURY,
+          managerAddress,
+          ethers.ZeroAddress,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1000
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      await expect(
+        ContractFactory.deploy(
+          mainnet.TREASURY,
+          managerAddress,
           mainnet.STETH,
           ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1000
         )
-      ).to.be.revertedWith('Stonks: invalid tokenTo_ address')
-      expect(
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      await expect(
         ContractFactory.deploy(
+          mainnet.TREASURY,
+          managerAddress,
           mainnet.STETH,
           mainnet.STETH,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1000
         )
-      ).to.be.revertedWith('Stonks: tokenFrom_ and tokenTo_ cannot be the same')
-      expect(
+      ).to.be.revertedWithCustomError(ContractFactory, 'TokensCannotBeSame')
+      await expect(
         ContractFactory.deploy(
+          mainnet.TREASURY,
+          managerAddress,
           mainnet.STETH,
           mainnet.DAI,
           ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress
+          notZeroAddress,
+          61,
+          1000,
+          1000
         )
-      ).to.be.revertedWith('Stonks: invalid price checker address')
-      expect(
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      await expect(
         ContractFactory.deploy(
+          mainnet.TREASURY,
+          managerAddress,
           mainnet.STETH,
           mainnet.DAI,
           subjectTokenConverter,
           ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress
+          61,
+          1000,
+          1000
         )
-      ).to.be.revertedWith('Stonks: invalid operator address')
-      expect(
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      await expect(
         ContractFactory.deploy(
+          mainnet.TREASURY,
+          managerAddress,
           mainnet.STETH,
           mainnet.DAI,
           subjectTokenConverter,
-          signer,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress,
-          ethers.ZeroAddress
+          notZeroAddress,
+          60,
+          1000,
+          1000
         )
-      ).to.be.revertedWith('Stonks: invalid order address')
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
+      await expect(
+        ContractFactory.deploy(
+          mainnet.TREASURY,
+          managerAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          (60 * 60 * 7) + 1,
+          1000,
+          1000
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
+      await expect(
+        ContractFactory.deploy(
+          mainnet.TREASURY,
+          managerAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1001,
+          1000
+    )
+      ).to.be.revertedWithCustomError(ContractFactory, 'MarginOverflowsAllowedLimit')
+      await expect(
+        ContractFactory.deploy(
+          mainnet.TREASURY,
+          managerAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1001
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'PriceToleranceOverflowsAllowedLimit')
+      await expect(
+        ContractFactory.deploy(
+          mainnet.TREASURY,
+          managerAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1000
+        )
+      ).to.be.not.reverted
     })
   })
 
