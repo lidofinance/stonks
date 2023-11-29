@@ -25,7 +25,7 @@ describe('Happy path', function () {
 
     const { stonks, amountConverter: tokenConverter } = await deployStonks({
       factoryParams: {
-        agent: mainnet.TREASURY,
+        agent: mainnet.AGENT,
         relayer: mainnet.VAULT_RELAYER,
         settlement: mainnet.SETTLEMENT,
         priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
@@ -54,15 +54,15 @@ describe('Happy path', function () {
     let order: Order
 
     this.beforeAll(async () => {
-      fillUpBalance(mainnet.TREASURY, value)
+      fillUpBalance(mainnet.AGENT, value)
     })
 
     it('should fill up stonks contract', async () => {
       await network.provider.request({
         method: 'hardhat_impersonateAccount',
-        params: [mainnet.TREASURY],
+        params: [mainnet.AGENT],
       })
-      const treasurySigner = await ethers.provider.getSigner(mainnet.TREASURY)
+      const treasurySigner = await ethers.provider.getSigner(mainnet.AGENT)
       const stethTreasury = await ethers.getContractAt(
         'IERC20',
         mainnet.STETH,

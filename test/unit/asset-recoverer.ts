@@ -19,7 +19,7 @@ describe('Asset recoverer', async function () {
     const ContractFactory =
       await ethers.getContractFactory('AssetRecovererTest')
     const assetRecoverer = await ContractFactory.deploy(
-      mainnet.TREASURY,
+      mainnet.AGENT,
       manager
     )
 
@@ -34,7 +34,7 @@ describe('Asset recoverer', async function () {
 
   describe('initialization:', async function () {
     it('Should have right manager and agent addresses', async function () {
-      expect(await subject.agent()).to.equal(mainnet.TREASURY)
+      expect(await subject.agent()).to.equal(mainnet.AGENT)
       expect(await subject.manager()).to.equal(await manager.getAddress())
     })
   })
@@ -60,7 +60,7 @@ describe('Asset recoverer', async function () {
       const subjectBalanceBefore =
         await ethers.provider.getBalance(subjectAddress)
       const treasuryBalanceBefore = await ethers.provider.getBalance(
-        mainnet.TREASURY
+        mainnet.AGENT
       )
 
       expect(subjectBalanceBefore).to.be.equal(amount)
@@ -71,7 +71,7 @@ describe('Asset recoverer', async function () {
       const subjectBalanceAfter =
         await ethers.provider.getBalance(subjectAddress)
       const treasuryBalanceAfter = await ethers.provider.getBalance(
-        mainnet.TREASURY
+        mainnet.AGENT
       )
 
       expect(subjectBalanceAfter).to.be.equal(subjectBalanceBefore - amount)
@@ -114,9 +114,9 @@ describe('Asset recoverer', async function () {
     it('should succesfully recover by agent', async () => {
       network.provider.request({
         method: 'hardhat_impersonateAccount',
-        params: [mainnet.TREASURY],
+        params: [mainnet.AGENT],
       })
-      const agent = await ethers.provider.getSigner(mainnet.TREASURY)
+      const agent = await ethers.provider.getSigner(mainnet.AGENT)
       const localSubject = await ethers.getContractAt(
         'Order',
         await subject.getAddress(),

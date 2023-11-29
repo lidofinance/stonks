@@ -14,13 +14,13 @@ export const fillUpERC20FromTreasury = async ({
 }: FillUpParams) => {
   if (!token) throw new Error('Token address is not provided')
 
-  await fillUpBalance(mainnet.TREASURY, ethers.parseEther('1'))
+  await fillUpBalance(mainnet.AGENT, ethers.parseEther('1'))
   await network.provider.request({
     method: 'hardhat_impersonateAccount',
-    params: [mainnet.TREASURY],
+    params: [mainnet.AGENT],
   })
 
-  const treasurySigner = await ethers.provider.getSigner(mainnet.TREASURY)
+  const treasurySigner = await ethers.provider.getSigner(mainnet.AGENT)
   const erc20Treasury = await ethers.getContractAt(
     'IERC20',
     token,

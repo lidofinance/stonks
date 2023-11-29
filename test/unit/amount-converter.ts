@@ -19,7 +19,7 @@ describe('AmountConverter', function () {
   })
 
   describe('Price check', async function () {
-    it('Should have the right price in the straigt direction', async function () {
+    it('should have the right price in the straigt direction', async function () {
       const stethToSell = ethers.parseEther('1')
       const price = await subject.getExpectedOut(
         mainnet.STETH,
@@ -28,7 +28,7 @@ describe('AmountConverter', function () {
       )
       console.log(price.toString())
     })
-    it('Should have the right price in the straigt direction', async function () {
+    it('should have the right price in the straigt direction', async function () {
       const stethToSell = 1000000
       const price = await subject.getExpectedOut(
         mainnet.USDC,
@@ -37,7 +37,7 @@ describe('AmountConverter', function () {
       )
       console.log(price.toString())
     })
-    it('Should have the right price in the straigt direction', async function () {
+    it('should have the right price in the straigt direction', async function () {
       const stethToSell = ethers.parseEther('1')
       const price = await subject.getExpectedOut(
         mainnet.DAI,

@@ -13,7 +13,7 @@ describe('StonksFactory', function () {
     const ContractFactory = await ethers.getContractFactory('StonksFactory')
 
     subject = await ContractFactory.deploy(
-      mainnet.TREASURY,
+      mainnet.AGENT,
       mainnet.SETTLEMENT,
       mainnet.VAULT_RELAYER
     )
@@ -24,7 +24,7 @@ describe('StonksFactory', function () {
 
   describe('initialization:', async function () {
     it('should have right treasury address', async function () {
-      expect(await subject.agent()).to.equal(mainnet.TREASURY)
+      expect(await subject.agent()).to.equal(mainnet.AGENT)
     })
     it('should have right settlement address', async function () {
       expect(await subject.settlement()).to.equal(mainnet.SETTLEMENT)
@@ -62,7 +62,7 @@ describe('StonksFactory', function () {
         .to.emit(subject, 'StonksDeployed')
         .withArgs(
           anyValue,
-          mainnet.TREASURY,
+          mainnet.AGENT,
           manager,
           tokenFrom,
           tokenTo,

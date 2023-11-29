@@ -21,7 +21,7 @@ describe('Stonks', function () {
 
     const { stonks, amountConverter: tokenConverter } = await deployStonks({
       factoryParams: {
-        agent: mainnet.TREASURY,
+        agent: mainnet.AGENT,
         relayer: mainnet.VAULT_RELAYER,
         settlement: mainnet.SETTLEMENT,
         priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,

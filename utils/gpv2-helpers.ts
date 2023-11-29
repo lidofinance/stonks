@@ -50,7 +50,7 @@ export const formOrderHashFromTxReceipt = async (
   const orderData = {
     sellToken: orderParameters.tokenFrom,
     buyToken: orderParameters.tokenTo,
-    receiver: mainnet.TREASURY,
+    receiver: mainnet.AGENT,
     sellAmount: sellAmount,
     buyAmount: buyAmount,
     validTo: validTo,

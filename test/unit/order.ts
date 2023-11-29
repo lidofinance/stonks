@@ -6,6 +6,8 @@ import {
   Stonks,
   HashHelper,
   AmountConverter,
+  AmountConverterTest,
+  Order__factory,
 } from '../../typechain-types'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { mainnet } from '../../utils/contracts'
@@ -17,11 +19,13 @@ import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
 import { getPlaceOrderData } from '../../utils/get-events'
 import { isClose } from '../../utils/assert'
 
+const PRICE_TOLERANCE_IN_BP = 1000
+
 describe('Order', async function () {
   let operator: Signer
   let stonks: Stonks
   let hashHelper: HashHelper
-  let tokenConverter: AmountConverter
+  let amountConverter: AmountConverter
   let snapshotId: string
   let subject: Order
   let orderHash: string
@@ -30,10 +34,21 @@ describe('Order', async function () {
     snapshotId = await network.provider.send('evm_snapshot')
     operator = (await ethers.getSigners())[0]
 
-    const { stonks: stonksInstance, amountConverter: tokenConverterInstance } =
+    const amountConverterTestFactory = await ethers.getContractFactory(
+      'AmountConverterTest'
+    )
+    const amountConverterTest = await amountConverterTestFactory.deploy(
+      mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+      mainnet.CHAINLINK_USD_QUOTE,
+      [mainnet.STETH],
+      [mainnet.DAI]
+    )
+    await amountConverterTest.waitForDeployment()
+
+    const { stonks: stonksInstance, amountConverter: amountConverterInstance } =
       await deployStonks({
         factoryParams: {
-          agent: mainnet.TREASURY,
+          agent: mainnet.AGENT,
           relayer: mainnet.VAULT_RELAYER,
           settlement: mainnet.SETTLEMENT,
           priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
@@ -42,12 +57,13 @@ describe('Order', async function () {
           tokenFrom: mainnet.STETH,
           tokenTo: mainnet.DAI,
           manager: await operator.getAddress(),
-          marginInBps: 100,
+          marginInBps: 500,
           orderDuration: 3600,
-          priceToleranceInBps: 100,
+          priceToleranceInBps: PRICE_TOLERANCE_IN_BP,
+          amountConverterAddress: await amountConverterTest.getAddress(),
         },
         amountConverterParams: {
-          conversionTarget: '0x0000000000000000000000000000000000000348', // USD
+          conversionTarget: mainnet.CHAINLINK_USD_QUOTE, // USD
           allowedTokensToSell: [mainnet.STETH],
           allowedStableTokensToBuy: [mainnet.DAI],
         },
@@ -58,7 +74,7 @@ describe('Order', async function () {
     await hashHelper.waitForDeployment()
 
     stonks = stonksInstance
-    tokenConverter = tokenConverterInstance
+    amountConverter = amountConverterInstance
 
     await fillUpERC20FromTreasury({
       token: mainnet.STETH,
@@ -86,39 +102,62 @@ describe('Order', async function () {
         'Order',
         await stonks.orderSample()
       )
-      expect(subject.initialize(ethers.ZeroAddress)).to.be.revertedWith(
-        'OrderAlreadyInitialized'
-      )
+      await expect(
+        subject.initialize(ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(subject, 'OrderAlreadyInitialized')
     })
   })
 
-  describe('order validation:', function () {
+  describe('initialization (from Stonks):', function () {})
+
+  describe('isValidSignature:', function () {
+    let localSnapshotId: string
+
+    this.beforeEach(async function () {
+      localSnapshotId = await network.provider.send('evm_snapshot')
+    })
+
     it('should return magic value if order hash is valid', async () => {
       expect(await subject.isValidSignature(orderHash, '0x')).to.equal(
         MAGIC_VALUE
       )
     })
     it('should revert if order hash is invalid', async () => {
-      expect(subject.isValidSignature('0x', '0x')).to.be.revertedWith(
-        'InvalidOrderHash'
-      )
+      await expect(
+        subject.isValidSignature(ethers.ZeroHash, '0x')
+      ).to.be.revertedWithCustomError(subject, 'InvalidOrderHash')
     })
     it('should revert if order is expired', async () => {
       await network.provider.send('evm_increaseTime', [60 * 60 + 1])
+      await network.provider.send('evm_mine')
 
-      expect(subject.isValidSignature('0x', '0x')).to.be.revertedWith(
-        'InvalidOrderHash'
-      )
-      expect(subject.isValidSignature(orderHash, '0x')).to.be.revertedWith(
-        'OrderExpired'
-      )
+      await expect(
+        subject.isValidSignature(orderHash, '0x')
+      ).to.be.revertedWithCustomError(subject, 'OrderExpired')
     })
-    it('should not revert if there was a price spike less than price tolerance allows', async () => {})
+    it('should not revert if there was a price spike less than price tolerance allows', async () => {
+      const amountConverterTest = await ethers.getContractAt(
+        'AmountConverterTest',
+        await amountConverter.getAddress()
+      )
+
+      // await amountConverterTest.multiplyAnswer(10000 + PRICE_TOLERANCE_IN_BP + 112)
+      const result = await subject.isValidSignature(orderHash, '0x')
+    })
     it('should revert if there was a price spike', async () => {})
+
+    this.afterEach(async function () {
+      await network.provider.send('evm_revert', [localSnapshotId])
+    })
   })
 
-  describe('recovering token from:', function () {
-    it('should succesfully cancel the order', async () => {
+  describe('recoverTokenFrom:', function () {
+    let localSnapshotId: string
+
+    this.beforeEach(async function () {
+      localSnapshotId = await network.provider.send('evm_snapshot')
+    })
+    it('should succesfully recover token from', async () => {
       const orderParams = await stonks.getOrderParameters()
 
       await network.provider.send('evm_increaseTime', [60 * 60 + 1])
@@ -150,16 +189,34 @@ describe('Order', async function () {
       expect(isClose(orderBalanceAfter, BigInt(0))).to.be.true
     })
     it('should revert if order is not expired', async () => {
-      expect(subject.recoverTokenFrom()).to.be.revertedWith('OrderNotExpired')
+      await expect(subject.recoverTokenFrom()).to.be.revertedWithCustomError(
+        subject,
+        'OrderNotExpired'
+      )
+    })
+    this.afterEach(async function () {
+      await network.provider.send('evm_revert', [localSnapshotId])
     })
   })
 
-  describe('asset recovering edge case:', async function () {
+  describe('recoverERC20:', async function () {
     it('should revert if recover a token from', async () => {
       const orderParams = await stonks.getOrderParameters()
-      expect(
+      await expect(
         subject.recoverERC20(orderParams['tokenFrom'], BigInt(1))
-      ).to.be.revertedWith('CannotRecoverTokenFrom')
+      ).revertedWithCustomError(subject, 'CannotRecoverTokenFrom')
+    })
+    it('should successfully recover a token', async () => {
+      const amount = ethers.parseEther('1')
+      const token = await ethers.getContractAt('IERC20', mainnet.DAI)
+      await fillUpERC20FromTreasury({
+        token: mainnet.DAI,
+        amount: ethers.parseEther('1'),
+        address: await subject.getAddress(),
+      })
+      await expect(subject.recoverERC20(mainnet.DAI, amount))
+        .to.emit(subject, 'ERC20Recovered')
+        .withArgs(mainnet.DAI, mainnet.AGENT, amount)
     })
   })
 

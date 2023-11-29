@@ -55,7 +55,12 @@ export async function deployStonks({
   )
 
   let amountConverter: AmountConverter | undefined
-  if (amountConverterParams) {
+  if (amountConverterAddress) {
+    amountConverter = await ethers.getContractAt(
+      'AmountConverter',
+      amountConverterAddress
+    )
+  } else if (amountConverterParams) {
     const { amountConverterFactory } =
       await deployAmountConverterFactory(priceFeedRegistry)
     const { allowedTokensToSell, allowedStableTokensToBuy, conversionTarget } =
@@ -72,11 +77,6 @@ export async function deployStonks({
 
     const { address } = getTokenConverterDeployment(receipt)
     amountConverter = await ethers.getContractAt('AmountConverter', address)
-  } else if (amountConverterAddress) {
-    amountConverter = await ethers.getContractAt(
-      'AmountConverter',
-      amountConverterAddress
-    )
   } else {
     throw new Error()
   }

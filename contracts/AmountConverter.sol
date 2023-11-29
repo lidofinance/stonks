@@ -5,6 +5,7 @@ pragma solidity 0.8.19;
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
 import {IFeedRegistry} from "./interfaces/IFeedRegistry.sol";
+import "hardhat/console.sol";
 
 /**
  * @title AmountConverter
