@@ -1,23 +1,31 @@
+import { ethers } from 'hardhat'
 import { TransactionReceipt } from 'ethers'
-import { StonksFactory__factory, AmountConverterFactory__factory, Order__factory } from '../typechain-types'
-import { Order } from './types'
+import {
+  StonksFactory__factory,
+  AmountConverterFactory__factory,
+  Order__factory,
+} from '../typechain-types'
+import { PlaceOrderDataEvent } from './types'
 
-export const getPlaceOrderData = (
+
+
+export const getPlaceOrderData = async (
   receipt: TransactionReceipt
-): {
-  address: string
-  hash: string
-  order: Order
-} => {
+): Promise<PlaceOrderDataEvent> => {
   const orderInterface = Order__factory.createInterface()
   const orderEvent = orderInterface.parseLog(
     (receipt as any).logs[receipt.logs.length - 1]
   )
+  const blockNumber = receipt.blockNumber
+  const blockTimestamp = (await ethers.provider.getBlock(blockNumber))
+    ?.timestamp
+  if (!blockTimestamp) throw Error('blockTimestamp is undefined')
   const data: any = orderEvent?.args
 
   return {
     address: data[0],
     hash: data[1],
+    timestamp: blockTimestamp,
     order: {
       sellToken: data[2][0],
       buyToken: data[2][1],
@@ -69,7 +77,8 @@ export const getTokenConverterDeployment = (
   allowedTokensToSell: string[]
   allowedStableTokensToBuy: string[]
 } => {
-  const stonksFactoryInterface = AmountConverterFactory__factory.createInterface()
+  const stonksFactoryInterface =
+    AmountConverterFactory__factory.createInterface()
   const deployEvent = stonksFactoryInterface.parseLog(
     (receipt as any).logs[receipt.logs.length - 1]
   )

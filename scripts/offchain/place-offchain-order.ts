@@ -10,7 +10,7 @@ async function main() {
 
   if (!txReceipt) throw Error('No tx receipt found')
 
-  const orderData = getPlaceOrderData(txReceipt)
+  const orderData = await getPlaceOrderData(txReceipt)
   const orderUid = await postCowOrder(orderData.order, orderData.address)
 
   console.log(orderUid)

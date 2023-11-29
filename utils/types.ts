@@ -12,3 +12,10 @@ export type Order = {
   sellTokenBalance: string
   buyTokenBalance: string
 }
+
+export type PlaceOrderDataEvent = {
+  address: string
+  hash: string
+  timestamp: number
+  order: Order
+}

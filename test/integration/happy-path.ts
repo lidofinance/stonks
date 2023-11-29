@@ -83,7 +83,7 @@ describe('Happy path', function () {
       orderReceipt = (await orderTx.wait())!
       if (!orderReceipt) throw new Error('No order receipt')
 
-      const { address } = getPlaceOrderData(orderReceipt)
+      const { address } = await getPlaceOrderData(orderReceipt)
 
       const steth = await ethers.getContractAt('IERC20', mainnet.STETH)
       order = await ethers.getContractAt('Order', address)

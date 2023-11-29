@@ -27,7 +27,7 @@ export const formOrderHashFromTxReceipt = async (
     ?.timestamp
 
   if (!blockTimestamp) throw Error('blockTimestamp is null')
-  const { address: orderInstanceAddress, order } = getPlaceOrderData(receipt)
+  const { address: orderInstanceAddress, order } = await getPlaceOrderData(receipt)
   const orderParameters = await stonks.getOrderParameters()
   const validTo =
     blockTimestamp + Number(orderParameters.orderDurationInSeconds) // 1 hour

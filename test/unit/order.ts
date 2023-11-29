@@ -6,8 +6,6 @@ import {
   Stonks,
   HashHelper,
   AmountConverter,
-  AmountConverterTest,
-  Order__factory,
 } from '../../typechain-types'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { mainnet } from '../../utils/contracts'
@@ -18,6 +16,7 @@ import {
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
 import { getPlaceOrderData } from '../../utils/get-events'
 import { isClose } from '../../utils/assert'
+import { PlaceOrderDataEvent } from '../../utils/types'
 
 const PRICE_TOLERANCE_IN_BP = 1000
 
@@ -29,6 +28,7 @@ describe('Order', async function () {
   let snapshotId: string
   let subject: Order
   let orderHash: string
+  let orderData: PlaceOrderDataEvent
 
   this.beforeAll(async function () {
     snapshotId = await network.provider.send('evm_snapshot')
@@ -87,11 +87,10 @@ describe('Order', async function () {
 
     if (!placeOrderTxReceipt) throw Error('placeOrderTxReceipt is null')
 
-    subject = await ethers.getContractAt(
-      'Order',
-      getPlaceOrderData(placeOrderTxReceipt).address,
-      operator
-    )
+    const decodedOrderTx = await getPlaceOrderData(placeOrderTxReceipt)
+
+    orderData = decodedOrderTx
+    subject = await ethers.getContractAt('Order', orderData.address, operator)
 
     orderHash = await formOrderHashFromTxReceipt(placeOrderTxReceipt, stonks)
   })
@@ -108,7 +107,42 @@ describe('Order', async function () {
     })
   })
 
-  describe('initialization (from Stonks):', function () {})
+  describe('initialization (from Stonks):', function () {
+    it('should have correct order parameters', async () => {
+      const orderParams = await stonks.getOrderParameters()
+      const token = await ethers.getContractAt(
+        'IERC20',
+        orderParams['tokenFrom']
+      )
+
+      expect(await subject.stonks()).to.equal(await stonks.getAddress())
+      expect(orderData.order.sellToken).to.equal(orderParams['tokenFrom'])
+      expect(orderData.order.buyToken).to.equal(orderParams['tokenTo'])
+      expect(orderData.order.sellAmount).to.equal(
+        await token.balanceOf(subject)
+      )
+      expect(orderData.order.buyAmount).to.equal(
+        await stonks.estimateTradeOutput(orderData.order.sellAmount)
+      )
+      expect(orderData.order.receiver).to.be.equal(mainnet.AGENT)
+      expect(BigInt(orderData.order.feeAmount)).to.be.equal(BigInt(0))
+      expect(BigInt(orderData.order.validTo)).to.be.equal(
+        BigInt(orderData.timestamp) + orderParams.orderDurationInSeconds
+      )
+    })
+    it('should return correct params from getOrderDetails', async () => {
+      const orderParams = await stonks.getOrderParameters()
+      const [orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo] =
+        await subject.getOrderDetails()
+
+      expect(orderHash).to.equal(orderData.hash)
+      expect(tokenFrom).to.equal(orderParams['tokenFrom'])
+      expect(tokenTo).to.equal(orderParams['tokenTo'])
+      expect(sellAmount).to.equal(orderData.order.sellAmount)
+      expect(buyAmount).to.equal(orderData.order.buyAmount)
+      expect(validTo).to.equal(BigInt(orderData.timestamp) + BigInt(orderParams.orderDurationInSeconds))
+    })
+  })
 
   describe('isValidSignature:', function () {
     let localSnapshotId: string
@@ -141,10 +175,24 @@ describe('Order', async function () {
         await amountConverter.getAddress()
       )
 
-      // await amountConverterTest.multiplyAnswer(10000 + PRICE_TOLERANCE_IN_BP + 112)
-      const result = await subject.isValidSignature(orderHash, '0x')
+      await amountConverterTest.multiplyAnswer(10000 + PRICE_TOLERANCE_IN_BP)
+      expect(await subject.isValidSignature(orderHash, '0x')).to.equal(
+        MAGIC_VALUE
+      )
     })
-    it('should revert if there was a price spike', async () => {})
+    it('should revert if there was a price spike', async () => {
+      const amountConverterTest = await ethers.getContractAt(
+        'AmountConverterTest',
+        await amountConverter.getAddress()
+      )
+
+      await amountConverterTest.multiplyAnswer(
+        10000 + PRICE_TOLERANCE_IN_BP + 1
+      )
+      await expect(
+        subject.isValidSignature(orderHash, '0x')
+      ).to.be.revertedWithCustomError(subject, 'PriceConditionChanged')
+    })
 
     this.afterEach(async function () {
       await network.provider.send('evm_revert', [localSnapshotId])
@@ -206,17 +254,42 @@ describe('Order', async function () {
         subject.recoverERC20(orderParams['tokenFrom'], BigInt(1))
       ).revertedWithCustomError(subject, 'CannotRecoverTokenFrom')
     })
+    it('should revert if called by stranger', async () => {
+      const amount = ethers.parseEther('1')
+      await fillUpERC20FromTreasury({
+        token: mainnet.DAI,
+        amount: amount,
+        address: await subject.getAddress(),
+      })
+      const localSubject = await ethers.getContractAt(
+        'Order',
+        await subject.getAddress(),
+        (await ethers.getSigners())[4]
+      )
+      await expect(
+        localSubject.recoverERC20(mainnet.DAI, BigInt(1))
+      ).revertedWithCustomError(subject, 'NotAgentOrManager')
+    })
     it('should successfully recover a token', async () => {
       const amount = ethers.parseEther('1')
       const token = await ethers.getContractAt('IERC20', mainnet.DAI)
+      const subjectAddress = await subject.getAddress()
+
       await fillUpERC20FromTreasury({
         token: mainnet.DAI,
-        amount: ethers.parseEther('1'),
-        address: await subject.getAddress(),
+        amount: amount,
+        address: subjectAddress,
       })
+
+      const balanceBefore = await token.balanceOf(subjectAddress)
+
       await expect(subject.recoverERC20(mainnet.DAI, amount))
         .to.emit(subject, 'ERC20Recovered')
         .withArgs(mainnet.DAI, mainnet.AGENT, amount)
+
+      const balanceAfter = await token.balanceOf(subjectAddress)
+
+      expect(balanceBefore - amount).to.equal(balanceAfter)
     })
   })
 
