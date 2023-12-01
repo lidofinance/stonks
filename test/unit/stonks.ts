@@ -3,9 +3,10 @@ import { Signer } from 'ethers'
 import { expect } from 'chai'
 import { isClose } from '../../utils/assert'
 import { deployStonks } from '../../scripts/deployments/stonks'
-import { AmountConverter, Stonks } from '../../typechain-types'
+import {AmountConverter, AssetRecovererTest__factory, Stonks, Stonks__factory} from '../../typechain-types'
 import { mainnet } from '../../utils/contracts'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
+import {string} from "hardhat/internal/core/params/argumentTypes";
 
 describe('Stonks', function () {
   let signer: Signer
@@ -15,9 +16,18 @@ describe('Stonks', function () {
 
   const amount = ethers.parseEther('1')
 
+  let ContractFactory: Stonks__factory
+  let AssetRecovererFactory: AssetRecovererTest__factory
+  let managerAddress : string
+
+
   this.beforeAll(async function () {
     signer = (await ethers.getSigners())[0]
     snapshotId = await network.provider.send('evm_snapshot')
+
+    ContractFactory = await ethers.getContractFactory('Stonks')
+    AssetRecovererFactory = await ethers.getContractFactory('AssetRecovererTest')
+    managerAddress = await signer.getAddress()
 
     const { stonks, amountConverter: tokenConverter } = await deployStonks({
       factoryParams: {
@@ -43,161 +53,14 @@ describe('Stonks', function () {
 
     subject = stonks
     subjectTokenConverter = tokenConverter
+
+
   })
 
   const notZeroAddress = '0x0000000000000000000000000000000000000999'
 
   describe('initialization:', function () {
-    it('should set correct constructor params', async () => {})
-
-    it('should not initialize with zero address', async function () {
-      const ContractFactory = await ethers.getContractFactory('Stonks')
-      const AssetRecovererFactory = await ethers.getContractFactory('AssetRecovererTest')
-      const managerAddress = await signer.getAddress()
-
-      await expect(
-        ContractFactory.deploy(
-          ethers.ZeroAddress,
-          managerAddress,
-          mainnet.STETH,
-          mainnet.DAI,
-          subjectTokenConverter,
-          notZeroAddress,
-          61,
-          1000,
-          1000
-        )
-      ).to.be.revertedWithCustomError(AssetRecovererFactory, 'InvalidAgentAddress')
-      await expect(
-        ContractFactory.deploy(
-          mainnet.AGENT,
-          ethers.ZeroAddress,
-          mainnet.STETH,
-          mainnet.DAI,
-          subjectTokenConverter,
-          notZeroAddress,
-          61,
-          1000,
-          1000
-        )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
-      await expect(
-        ContractFactory.deploy(
-          mainnet.AGENT,
-          managerAddress,
-          ethers.ZeroAddress,
-          mainnet.DAI,
-          subjectTokenConverter,
-          notZeroAddress,
-          61,
-          1000,
-          1000
-        )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
-      await expect(
-        ContractFactory.deploy(
-          mainnet.AGENT,
-          managerAddress,
-          mainnet.STETH,
-          ethers.ZeroAddress,
-          subjectTokenConverter,
-          notZeroAddress,
-          61,
-          1000,
-          1000
-        )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
-      await expect(
-        ContractFactory.deploy(
-          mainnet.AGENT,
-          managerAddress,
-          mainnet.STETH,
-          mainnet.STETH,
-          subjectTokenConverter,
-          notZeroAddress,
-          61,
-          1000,
-          1000
-        )
-      ).to.be.revertedWithCustomError(ContractFactory, 'TokensCannotBeSame')
-      await expect(
-        ContractFactory.deploy(
-          mainnet.AGENT,
-          managerAddress,
-          mainnet.STETH,
-          mainnet.DAI,
-          ethers.ZeroAddress,
-          notZeroAddress,
-          61,
-          1000,
-          1000
-        )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
-      await expect(
-        ContractFactory.deploy(
-          mainnet.AGENT,
-          managerAddress,
-          mainnet.STETH,
-          mainnet.DAI,
-          subjectTokenConverter,
-          ethers.ZeroAddress,
-          61,
-          1000,
-          1000
-        )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
-      await expect(
-        ContractFactory.deploy(
-          mainnet.AGENT,
-          managerAddress,
-          mainnet.STETH,
-          mainnet.DAI,
-          subjectTokenConverter,
-          notZeroAddress,
-          60,
-          1000,
-          1000
-        )
-      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
-      await expect(
-        ContractFactory.deploy(
-          mainnet.AGENT,
-          managerAddress,
-          mainnet.STETH,
-          mainnet.DAI,
-          subjectTokenConverter,
-          notZeroAddress,
-          (60 * 60 * 7) + 1,
-          1000,
-          1000
-        )
-      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
-      await expect(
-        ContractFactory.deploy(
-          mainnet.AGENT,
-          managerAddress,
-          mainnet.STETH,
-          mainnet.DAI,
-          subjectTokenConverter,
-          notZeroAddress,
-          61,
-          1001,
-          1000
-        )
-      ).to.be.revertedWithCustomError(ContractFactory, 'MarginOverflowsAllowedLimit')
-      await expect(
-        ContractFactory.deploy(
-          mainnet.AGENT,
-          managerAddress,
-          mainnet.STETH,
-          mainnet.DAI,
-          subjectTokenConverter,
-          notZeroAddress,
-          61,
-          1000,
-          1001
-        )
-      ).to.be.revertedWithCustomError(ContractFactory, 'PriceToleranceOverflowsAllowedLimit')
+    it('should set correct constructor params', async () => {
       await expect(
         ContractFactory.deploy(
           mainnet.AGENT,
@@ -211,6 +74,172 @@ describe('Stonks', function () {
           1000
         )
       ).to.be.not.reverted
+    })
+
+    it('should not initialize with agent zero address', async function () {
+      await expect(
+        ContractFactory.deploy(
+          ethers.ZeroAddress,
+          managerAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1000
+        )
+      ).to.be.revertedWithCustomError(AssetRecovererFactory, 'InvalidAgentAddress')
+    })
+    it('should not initialize with manager zero address', async function () {
+      await expect(
+        ContractFactory.deploy(
+          mainnet.AGENT,
+          ethers.ZeroAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1000
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+    })
+    it('should not initialize with tokenFrom zero address', async function () {
+      await expect(
+        ContractFactory.deploy(
+          mainnet.AGENT,
+          managerAddress,
+          ethers.ZeroAddress,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1000
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+    })
+    it('should not initialize with tokenTo zero address', async function () {
+      await expect(
+        ContractFactory.deploy(
+          mainnet.AGENT,
+          managerAddress,
+          mainnet.STETH,
+          ethers.ZeroAddress,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1000
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+    })
+    it('should not initialize with same tokens address', async function () {
+      await expect(
+        ContractFactory.deploy(
+          mainnet.AGENT,
+          managerAddress,
+          mainnet.STETH,
+          mainnet.STETH,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1000
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'TokensCannotBeSame')
+    })
+    it('should not initialize with amountConverter zero address', async function () {
+      await expect(
+        ContractFactory.deploy(
+          mainnet.AGENT,
+          managerAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          ethers.ZeroAddress,
+          notZeroAddress,
+          61,
+          1000,
+          1000
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+    })
+    it('should not initialize with orderSample zero address', async function () {
+      await expect(
+        ContractFactory.deploy(
+          mainnet.AGENT,
+          managerAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          ethers.ZeroAddress,
+          61,
+          1000,
+          1000
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+    })
+    it('should not initialize with orderDurationInSeconds less or equal 60', async function () {
+      await expect(
+        ContractFactory.deploy(
+          mainnet.AGENT,
+          managerAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          60,
+          1000,
+          1000
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
+    })
+    it('should not initialize with orderDurationInSeconds more 60 * 60 * 7', async function () {
+      await expect(
+        ContractFactory.deploy(
+          mainnet.AGENT,
+          managerAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          (60 * 60 * 7) + 1,
+          1000,
+          1000
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
+    })
+    it('should not initialize with marginInBasisPoints_ less or equal 1000', async function () {
+      await expect(
+        ContractFactory.deploy(
+          mainnet.AGENT,
+          managerAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1001,
+          1000
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'MarginOverflowsAllowedLimit')
+    })
+    it('should not initialize with priceToleranceInBasisPoints_ less or equal 1000', async function () {
+      await expect(
+        ContractFactory.deploy(
+          mainnet.AGENT,
+          managerAddress,
+          mainnet.STETH,
+          mainnet.DAI,
+          subjectTokenConverter,
+          notZeroAddress,
+          61,
+          1000,
+          1001
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'PriceToleranceOverflowsAllowedLimit')
     })
   })
 

@@ -1,16 +1,16 @@
 import { ethers, network } from 'hardhat'
 import { expect } from 'chai'
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
-import { StonksFactory } from '../../typechain-types'
+import { StonksFactory, StonksFactory__factory } from '../../typechain-types'
 
 import { mainnet } from '../../utils/contracts'
 
 describe('StonksFactory', function () {
   let subject: StonksFactory
   let snapshotId: string
-
+  let ContractFactory: StonksFactory__factory
   this.beforeAll(async function () {
-    const ContractFactory = await ethers.getContractFactory('StonksFactory')
+    ContractFactory = await ethers.getContractFactory('StonksFactory')
 
     subject = await ContractFactory.deploy(
       mainnet.AGENT,
@@ -34,6 +34,27 @@ describe('StonksFactory', function () {
     })
     it('should have an order sample deployed', async function () {
       expect(await subject.orderSample()).to.not.equal(ethers.ZeroAddress)
+    })
+    it('should not initialize with agent zero address', async function () {
+      await expect(ContractFactory.deploy(
+        ethers.ZeroAddress,
+        mainnet.SETTLEMENT,
+        mainnet.VAULT_RELAYER
+      )).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+    })
+    it('should not initialize with settlement zero address', async function () {
+      await expect(ContractFactory.deploy(
+        mainnet.AGENT,
+        ethers.ZeroAddress,
+        mainnet.VAULT_RELAYER
+      )).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+    })
+    it('should not initialize with relayer zero address', async function () {
+      await expect(ContractFactory.deploy(
+        mainnet.AGENT,
+        mainnet.SETTLEMENT,
+        ethers.ZeroAddress
+      )).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
     })
   })
   describe('stonks deployment:', async function () {
