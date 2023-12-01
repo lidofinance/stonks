@@ -70,7 +70,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(AssetRecovererFactory, 'InvalidAgentAddress')
       await expect(
         ContractFactory.deploy(
-          mainnet.TREASURY,
+          mainnet.AGENT,
           ethers.ZeroAddress,
           mainnet.STETH,
           mainnet.DAI,
@@ -83,7 +83,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
       await expect(
         ContractFactory.deploy(
-          mainnet.TREASURY,
+          mainnet.AGENT,
           managerAddress,
           ethers.ZeroAddress,
           mainnet.DAI,
@@ -96,7 +96,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
       await expect(
         ContractFactory.deploy(
-          mainnet.TREASURY,
+          mainnet.AGENT,
           managerAddress,
           mainnet.STETH,
           ethers.ZeroAddress,
@@ -109,7 +109,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
       await expect(
         ContractFactory.deploy(
-          mainnet.TREASURY,
+          mainnet.AGENT,
           managerAddress,
           mainnet.STETH,
           mainnet.STETH,
@@ -122,7 +122,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(ContractFactory, 'TokensCannotBeSame')
       await expect(
         ContractFactory.deploy(
-          mainnet.TREASURY,
+          mainnet.AGENT,
           managerAddress,
           mainnet.STETH,
           mainnet.DAI,
@@ -135,7 +135,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
       await expect(
         ContractFactory.deploy(
-          mainnet.TREASURY,
+          mainnet.AGENT,
           managerAddress,
           mainnet.STETH,
           mainnet.DAI,
@@ -148,7 +148,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
       await expect(
         ContractFactory.deploy(
-          mainnet.TREASURY,
+          mainnet.AGENT,
           managerAddress,
           mainnet.STETH,
           mainnet.DAI,
@@ -161,7 +161,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
       await expect(
         ContractFactory.deploy(
-          mainnet.TREASURY,
+          mainnet.AGENT,
           managerAddress,
           mainnet.STETH,
           mainnet.DAI,
@@ -174,7 +174,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
       await expect(
         ContractFactory.deploy(
-          mainnet.TREASURY,
+          mainnet.AGENT,
           managerAddress,
           mainnet.STETH,
           mainnet.DAI,
@@ -183,11 +183,11 @@ describe('Stonks', function () {
           61,
           1001,
           1000
-    )
+        )
       ).to.be.revertedWithCustomError(ContractFactory, 'MarginOverflowsAllowedLimit')
       await expect(
         ContractFactory.deploy(
-          mainnet.TREASURY,
+          mainnet.AGENT,
           managerAddress,
           mainnet.STETH,
           mainnet.DAI,
@@ -200,7 +200,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(ContractFactory, 'PriceToleranceOverflowsAllowedLimit')
       await expect(
         ContractFactory.deploy(
-          mainnet.TREASURY,
+          mainnet.AGENT,
           managerAddress,
           mainnet.STETH,
           mainnet.DAI,
@@ -216,9 +216,9 @@ describe('Stonks', function () {
 
   describe('order placement:', function () {
     it('should not place order when balance is zero', async function () {
-      expect(subject.placeOrder()).to.be.rejectedWith(
-        'Stonks: insufficient balance'
-      )
+      await expect(
+        subject.placeOrder()
+      ).to.be.revertedWithCustomError(subject, 'MinimumPossibleBalanceNotMet')
     })
 
     it('should place order', async function () {
@@ -237,7 +237,7 @@ describe('Stonks', function () {
     })
   })
 
-  this.afterEach(async function () {
+  this.afterAll(async function () {
     await network.provider.send('evm_revert', [snapshotId])
   })
 })
