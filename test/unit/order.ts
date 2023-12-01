@@ -207,6 +207,12 @@ describe('Order', async function () {
     })
     it('should succesfully recover token from', async () => {
       const orderParams = await stonks.getOrderParameters()
+      const stranger = (await ethers.getSigners())[4]
+      const subjectWithStranger = await ethers.getContractAt(
+        'Order',
+        await subject.getAddress(),
+        stranger
+      )
 
       await network.provider.send('evm_increaseTime', [60 * 60 + 1])
 
@@ -218,17 +224,17 @@ describe('Order', async function () {
         await stonks.getAddress()
       )
       const orderBalanceBefore = await token.balanceOf(
-        await subject.getAddress()
+        await subjectWithStranger.getAddress()
       )
 
-      const cancelTx = await subject.recoverTokenFrom()
+      const cancelTx = await subjectWithStranger.recoverTokenFrom()
       await cancelTx.wait()
 
       const stonksBalanceAfter = await token.balanceOf(
         await stonks.getAddress()
       )
       const orderBalanceAfter = await token.balanceOf(
-        await subject.getAddress()
+        await subjectWithStranger.getAddress()
       )
 
       expect(
