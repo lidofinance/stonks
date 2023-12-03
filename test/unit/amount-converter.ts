@@ -2,6 +2,7 @@ import { ethers } from 'hardhat'
 
 import { IAmountConverter } from '../../typechain-types'
 import { mainnet } from '../../utils/contracts'
+import { expect } from "chai";
 
 describe('AmountConverter', function () {
   let subject: IAmountConverter
@@ -16,6 +17,19 @@ describe('AmountConverter', function () {
     )
 
     await subject.waitForDeployment()
+  })
+
+  describe('deploy check', async function () {
+    it('should not initialize with zero address', async function () {
+      const ContractFactory = await ethers.getContractFactory('AmountConverter')
+
+      await expect(ContractFactory.deploy(
+        ethers.ZeroAddress,
+        mainnet.CHAINLINK_USD_QUOTE,
+        [mainnet.STETH, mainnet.DAI, mainnet.USDC, mainnet.USDT],
+        [mainnet.DAI, mainnet.USDC, mainnet.USDT]
+      )).to.be.revertedWithCustomError(ContractFactory, "ZeroAddress")
+    })
   })
 
   describe('Price check', async function () {
