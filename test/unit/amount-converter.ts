@@ -1,6 +1,6 @@
 import { ethers } from 'hardhat'
 
-import { IAmountConverter, IFeedRegistry } from '../../typechain-types'
+import { IAmountConverter } from '../../typechain-types'
 import { mainnet } from '../../utils/contracts'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
 import { expect } from 'chai'
