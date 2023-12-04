@@ -10,6 +10,7 @@ import {Order} from "./Order.sol";
 import {AssetRecoverer} from "./AssetRecoverer.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
 import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
+import {IAmountConverterGoerli} from "./interfaces/IAmountConverterGoerli.sol";
 
 /**
  * @title Stonks Trading Management Contract
@@ -109,8 +110,9 @@ contract Stonks is IStonks, AssetRecoverer {
      */
     function estimateTradeOutput(uint256 amount) public view returns (uint256) {
         if (amount == 0) revert InvalidAmount();
-        uint256 expectedPurchaseAmount =
-            IAmountConverter(amountConverter).getExpectedOut(orderParameters.tokenFrom, orderParameters.tokenTo, amount);
+        uint256 expectedPurchaseAmount = IAmountConverterGoerli(amountConverter).getExpectedOut(
+            amount, orderParameters.tokenFrom, orderParameters.tokenTo, new bytes(0)
+        );
         return (expectedPurchaseAmount * (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) / MAX_BASIS_POINTS;
     }
 
