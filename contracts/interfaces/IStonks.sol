@@ -6,9 +6,9 @@ interface IStonks {
     struct OrderParameters {
         address tokenFrom;
         address tokenTo;
-        uint256 orderDurationInSeconds;
-        uint256 marginInBasisPoints;
-        uint256 priceToleranceInBasisPoints;
+        uint32 orderDurationInSeconds;
+        uint16 marginInBasisPoints;
+        uint16 priceToleranceInBasisPoints;
     }
 
     function getOrderParameters() external view returns (OrderParameters memory);

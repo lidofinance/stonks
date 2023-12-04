@@ -126,7 +126,7 @@ contract Order is IERC1271, AssetRecoverer {
      */
     function isValidSignature(bytes32 hash, bytes calldata) external view returns (bytes4 magicValue) {
         if (hash != orderHash) revert InvalidOrderHash();
-        if (validTo < block.timestamp) revert OrderExpired();
+        if (validTo <= block.timestamp) revert OrderExpired();
 
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
 

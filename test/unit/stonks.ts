@@ -189,7 +189,7 @@ describe('Stonks', function () {
         )
       ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
     })
-    it('should not initialize with orderDurationInSeconds less or equal 60', async function () {
+    it('should not initialize with orderDurationInSeconds less than 60', async function () {
       await expect(
         ContractFactory.deploy(
           mainnet.AGENT,
@@ -198,13 +198,13 @@ describe('Stonks', function () {
           mainnet.DAI,
           subjectTokenConverter,
           notZeroAddress,
-          60,
+          59,
           1000,
           1000
         )
       ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
     })
-    it('should not initialize with orderDurationInSeconds more 60 * 60 * 7', async function () {
+    it('should not initialize with orderDurationInSeconds more than day', async function () {
       await expect(
         ContractFactory.deploy(
           mainnet.AGENT,
@@ -213,7 +213,7 @@ describe('Stonks', function () {
           mainnet.DAI,
           subjectTokenConverter,
           notZeroAddress,
-          60 * 60 * 7 + 1,
+          60 * 60 * 24 + 1,
           1000,
           1000
         )

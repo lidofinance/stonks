@@ -31,7 +31,7 @@ contract Stonks is IStonks, AssetRecoverer {
 
     uint8 private constant MIN_POSSIBLE_BALANCE = 10;
     uint8 private constant MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60;
-    uint16 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60 * 60 * 7;
+    uint32 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60 * 60 * 24;
 
     address public immutable amountConverter;
     address public immutable orderSample;
@@ -67,7 +67,7 @@ contract Stonks is IStonks, AssetRecoverer {
         if (tokenFrom_ == tokenTo_) revert TokensCannotBeSame();
         if (amountConverter_ == address(0)) revert ZeroAddress();
         if (orderSample_ == address(0)) revert ZeroAddress();
-        if (orderDurationInSeconds_ <= MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS) revert InvalidOrderDuration();
+        if (orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS) revert InvalidOrderDuration();
         if (orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS) revert InvalidOrderDuration();
         if (marginInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) revert MarginOverflowsAllowedLimit();
         if (priceToleranceInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) revert PriceToleranceOverflowsAllowedLimit();
@@ -79,7 +79,7 @@ contract Stonks is IStonks, AssetRecoverer {
         orderParameters = OrderParameters({
             tokenFrom: tokenFrom_,
             tokenTo: tokenTo_,
-            orderDurationInSeconds: uint64(orderDurationInSeconds_),
+            orderDurationInSeconds: uint32(orderDurationInSeconds_),
             marginInBasisPoints: uint16(marginInBasisPoints_),
             priceToleranceInBasisPoints: uint16(priceToleranceInBasisPoints_)
         });
