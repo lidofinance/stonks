@@ -14,7 +14,7 @@ import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
 import { MAX_BASIS_POINTS } from '../../utils/gpv2-helpers'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
 
-describe.only('Stonks', function () {
+describe('Stonks', function () {
   let signer: Signer
   let subject: Stonks
   let subjectTokenConverter: AmountConverter
