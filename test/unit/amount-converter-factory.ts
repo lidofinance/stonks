@@ -10,16 +10,15 @@ describe('AmountConverterFactory', function () {
   let snapshotId: string
 
   this.beforeAll(async function () {
+    snapshotId = await network.provider.send('evm_snapshot')
+
     const ContractFactory = await ethers.getContractFactory(
       'AmountConverterFactory'
     )
-
     subject = await ContractFactory.deploy(
       mainnet.CHAINLINK_PRICE_FEED_REGISTRY
     )
     await subject.waitForDeployment()
-
-    snapshotId = await network.provider.send('evm_snapshot')
   })
 
   describe('initialization:', async function () {
@@ -34,9 +33,15 @@ describe('AmountConverterFactory', function () {
       const conversionTarget = mainnet.CHAINLINK_USD_QUOTE
       const tokensFrom = [mainnet.STETH]
       const tokensTo = [mainnet.DAI]
+      const priceFeedsHeartbeatTimeouts = [3600]
 
       await expect(
-        subject.deployAmountConverter(conversionTarget, tokensFrom, tokensTo)
+        subject.deployAmountConverter(
+          conversionTarget,
+          tokensFrom,
+          tokensTo,
+          priceFeedsHeartbeatTimeouts
+        )
       )
         .to.emit(subject, 'AmountConverterDeployed')
         .withArgs(
@@ -44,7 +49,8 @@ describe('AmountConverterFactory', function () {
           mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
           conversionTarget,
           tokensFrom,
-          tokensTo
+          tokensTo,
+          priceFeedsHeartbeatTimeouts
         )
     })
   })

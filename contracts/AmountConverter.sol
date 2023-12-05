@@ -5,7 +5,6 @@ pragma solidity 0.8.19;
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
 import {IFeedRegistry} from "./interfaces/IFeedRegistry.sol";
-import "hardhat/console.sol";
 
 /**
  * @title AmountConverter
@@ -27,27 +26,33 @@ contract AmountConverter is IAmountConverter {
 
     mapping(address => bool) public allowedTokensToSell;
     mapping(address => bool) public allowedTokensToBuy;
+    mapping(address => uint256) public priceFeedsHeartbeatTimeouts;
 
     error ZeroAddress();
     error ZeroAmount();
+    error InvalidHeartbeatArrayLength();
     error NoPriceFeedFound(address tokenFrom, address tokenTo);
     error SellTokenNotAllowed(address tokenFrom);
     error BuyTokenNotAllowed(address tokenTo);
     error SameTokensConversion();
     error UnexpectedPriceFeedAnswer();
+    error PriceFeedNotUpdated();
 
     /// @param feedRegistry_ Chainlink Price Feed Registry
     /// @param conversionTarget_ Target currency we expect to be equal to allowed tokens to buy
     /// @param allowedTokensToSell_ List of addresses which allowed to use as sell tokens
     /// @param allowedTokensToBuy_ List of addresses of tokens that we expect to be equal to conversionTarget
+    /// @param priceFeedsHeartbeatTimeouts_ List of timeouts for price feeds (should be in sync by index with allowedTokensToSell_)
     constructor(
         address feedRegistry_,
         address conversionTarget_,
         address[] memory allowedTokensToSell_,
-        address[] memory allowedTokensToBuy_
+        address[] memory allowedTokensToBuy_,
+        uint256[] memory priceFeedsHeartbeatTimeouts_
     ) {
         if (feedRegistry_ == address(0)) revert ZeroAddress();
         if (conversionTarget_ == address(0)) revert ZeroAddress();
+        if (allowedTokensToSell_.length != priceFeedsHeartbeatTimeouts_.length) revert InvalidHeartbeatArrayLength();
 
         feedRegistry = IFeedRegistry(feedRegistry_);
         conversionTarget = conversionTarget_;
@@ -61,6 +66,7 @@ contract AmountConverter is IAmountConverter {
             if (allowedTokensToSell_[i] == address(0)) revert ZeroAddress();
             feedRegistry.getFeed(allowedTokensToSell_[i], conversionTarget);
             allowedTokensToSell[allowedTokensToSell_[i]] = true;
+            priceFeedsHeartbeatTimeouts[allowedTokensToSell_[i]] = priceFeedsHeartbeatTimeouts_[i];
         }
     }
 
@@ -105,8 +111,9 @@ contract AmountConverter is IAmountConverter {
     // @dev Internal function to get price from Chainlink Price Feed Registry.
     ///
     function _fetchPrice(address base, address quote) internal view returns (uint256, uint256) {
-        (, int256 price,,,) = feedRegistry.latestRoundData(base, quote);
+        (, int256 price,, uint256 updatedAt,) = feedRegistry.latestRoundData(base, quote);
         if (price <= 0) revert UnexpectedPriceFeedAnswer();
+        if (block.timestamp > updatedAt + priceFeedsHeartbeatTimeouts[base]) revert PriceFeedNotUpdated();
 
         uint256 decimals = feedRegistry.decimals(base, quote);
 

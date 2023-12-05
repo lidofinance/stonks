@@ -1,4 +1,4 @@
-import { ethers } from 'hardhat'
+import { ethers, network } from 'hardhat'
 
 import { IAmountConverter } from '../../typechain-types'
 import { mainnet } from '../../utils/contracts'
@@ -7,14 +7,17 @@ import { expect } from 'chai'
 
 describe('AmountConverter', function () {
   let subject: IAmountConverter
+  let snapshotId: string
 
   this.beforeAll(async function () {
+    snapshotId = await network.provider.send('evm_snapshot')
     const ContractFactory = await ethers.getContractFactory('AmountConverter')
     subject = await ContractFactory.deploy(
       mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
       '0x0000000000000000000000000000000000000348', // USD
       [mainnet.STETH, mainnet.DAI, mainnet.USDC, mainnet.USDT],
-      [mainnet.DAI, mainnet.USDC, mainnet.USDT]
+      [mainnet.DAI, mainnet.USDC, mainnet.USDT],
+      [3600, 3600, 86400, 86400]
     )
 
     await subject.waitForDeployment()
@@ -29,7 +32,8 @@ describe('AmountConverter', function () {
           ethers.ZeroAddress,
           mainnet.CHAINLINK_USD_QUOTE,
           [mainnet.STETH, mainnet.DAI, mainnet.USDC, mainnet.USDT],
-          [mainnet.DAI, mainnet.USDC, mainnet.USDT]
+          [mainnet.DAI, mainnet.USDC, mainnet.USDT],
+          [3600, 3600, 86400, 86400]
         )
       ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
     })
@@ -42,7 +46,8 @@ describe('AmountConverter', function () {
           mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
           ethers.ZeroAddress,
           [mainnet.STETH, mainnet.DAI, mainnet.USDC, mainnet.USDT],
-          [mainnet.DAI, mainnet.USDC, mainnet.USDT]
+          [mainnet.DAI, mainnet.USDC, mainnet.USDT],
+          [3600, 3600, 86400, 86400]
         )
       ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
     })
@@ -55,7 +60,8 @@ describe('AmountConverter', function () {
           mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
           mainnet.CHAINLINK_USD_QUOTE,
           [mainnet.STETH, ethers.ZeroAddress],
-          [mainnet.DAI, mainnet.USDC, mainnet.USDT]
+          [mainnet.DAI, mainnet.USDC, mainnet.USDT],
+          [3600, 3600]
         )
       ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
     })
@@ -68,9 +74,27 @@ describe('AmountConverter', function () {
           mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
           mainnet.CHAINLINK_USD_QUOTE,
           [mainnet.STETH],
-          [ethers.ZeroAddress, mainnet.DAI, mainnet.USDC, mainnet.USDT]
+          [ethers.ZeroAddress, mainnet.DAI, mainnet.USDC, mainnet.USDT],
+          [3600]
         )
       ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+    })
+
+    it('should not initialize with wrong length priceFeedsHeartbeatTimeouts', async function () {
+      const ContractFactory = await ethers.getContractFactory('AmountConverter')
+
+      await expect(
+        ContractFactory.deploy(
+          mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+          mainnet.CHAINLINK_USD_QUOTE,
+          [mainnet.STETH],
+          [ethers.ZeroAddress, mainnet.DAI, mainnet.USDC, mainnet.USDT],
+          []
+        )
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidHeartbeatArrayLength'
+      )
     })
   })
 
@@ -134,5 +158,47 @@ describe('AmountConverter', function () {
         ).toString()
       )
     })
+    it('should revert if updatedAt is behind heartbeat', async function () {
+      const FeedRegistryTestFactory =
+        await ethers.getContractFactory('FeedRegistryTest')
+      const feedRegistryTest = await FeedRegistryTestFactory.deploy(
+        mainnet.CHAINLINK_PRICE_FEED_REGISTRY
+      )
+      await feedRegistryTest.waitForDeployment()
+
+      const ContractFactory = await ethers.getContractFactory('AmountConverter')
+      const localSubject = await ContractFactory.deploy(
+        await feedRegistryTest.getAddress(),
+        '0x0000000000000000000000000000000000000348', // USD
+        [mainnet.STETH],
+        [mainnet.DAI],
+        [3600]
+      )
+      localSubject.waitForDeployment()
+
+      const amountToSell = ethers.parseEther('1')
+      const resultAmount = await localSubject.getExpectedOut(
+        mainnet.STETH,
+        mainnet.DAI,
+        amountToSell
+      )
+
+      await feedRegistryTest.setHeartbeat(3600)
+      const result = await getExpectedOut(
+        mainnet.STETH,
+        mainnet.DAI,
+        amountToSell
+      )
+      expect(resultAmount.toString()).to.equal(result.toString())
+
+      await feedRegistryTest.setHeartbeat(3601)
+      await expect(
+        localSubject.getExpectedOut(mainnet.STETH, mainnet.DAI, amountToSell)
+      ).to.be.revertedWithCustomError(localSubject, 'PriceFeedNotUpdated')
+    })
+  })
+
+  this.afterAll(async function () {
+    await network.provider.send('evm_revert', [snapshotId])
   })
 })

@@ -55,6 +55,7 @@ describe('Stonks', function () {
         conversionTarget: '0x0000000000000000000000000000000000000348', // USD
         allowedTokensToSell: [mainnet.STETH],
         allowedStableTokensToBuy: [mainnet.DAI],
+        priceFeedsHeartbeatTimeouts: [3600]
       },
     })
 

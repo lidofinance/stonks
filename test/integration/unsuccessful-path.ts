@@ -18,6 +18,7 @@ describe('Unsuccessful path', function () {
   let orderReceipt: TransactionReceipt
   let subjectTokenConverter: AmountConverter
   let snapshotId: string
+  let orderDuration: number = 600
 
   this.beforeAll(async function () {
     snapshotId = await network.provider.send('evm_snapshot')
@@ -35,13 +36,14 @@ describe('Unsuccessful path', function () {
         tokenTo: mainnet.DAI,
         manager: await signer.getAddress(),
         marginInBps: 100,
-        orderDuration: 3600,
+        orderDuration: orderDuration,
         priceToleranceInBps: 100,
       },
       amountConverterParams: {
         conversionTarget: '0x0000000000000000000000000000000000000348', // USD
         allowedTokensToSell: [mainnet.STETH],
         allowedStableTokensToBuy: [mainnet.DAI],
+        priceFeedsHeartbeatTimeouts: [3600]
       },
     })
 
@@ -50,7 +52,7 @@ describe('Unsuccessful path', function () {
   })
 
   describe('order creation:', async function () {
-    const value = ethers.parseEther('1')
+    const value = ethers.parseEther('100')
     let order: Order
 
     this.beforeAll(async () => {
@@ -111,7 +113,7 @@ describe('Unsuccessful path', function () {
     })
 
     it('should cancel the order after expiration time', async () => {
-      await network.provider.send('evm_increaseTime', [60 * 60 * 24 * 7])
+      await network.provider.send('evm_increaseTime', [orderDuration])
       await order.recoverTokenFrom()
 
       const steth = await ethers.getContractAt('IERC20', mainnet.STETH)
@@ -143,7 +145,7 @@ describe('Unsuccessful path', function () {
     })
 
     it('should cancel the order after expiration time', async () => {
-      await network.provider.send('evm_increaseTime', [60 * 60 * 24 * 7])
+      await network.provider.send('evm_increaseTime', [orderDuration])
       await order.recoverTokenFrom()
 
       const steth = await ethers.getContractAt('IERC20', mainnet.STETH)

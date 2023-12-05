@@ -3,7 +3,6 @@
 pragma solidity 0.8.19;
 
 import {AmountConverter} from "../AmountConverter.sol";
-import "hardhat/console.sol";
 
 contract AmountConverterTest {
     AmountConverter public amountConverter;
@@ -16,13 +15,15 @@ contract AmountConverterTest {
         address feedRegistry_,
         address conversionTarget_,
         address[] memory allowedTokensToSell_,
-        address[] memory allowedTokensToBuy_
+        address[] memory allowedTokensToBuy_,
+        uint256[] memory priceFeedsHeartbeatTimeouts_
     ) {
         amountConverter = new AmountConverter(
             feedRegistry_,
             conversionTarget_,
             allowedTokensToSell_,
-            allowedTokensToBuy_
+            allowedTokensToBuy_,
+            priceFeedsHeartbeatTimeouts_
         );
     }
 

@@ -14,7 +14,8 @@ contract AmountConverterFactory {
         address feedRegistryAddress,
         address conversionTarget,
         address[] allowedTokensToSell,
-        address[] allowedStableTokensToBuy
+        address[] allowedStableTokensToBuy,
+        uint256[] priceFeedsHeartbeatTimeouts
     );
 
     constructor(address feedRegistry_) {
@@ -25,13 +26,25 @@ contract AmountConverterFactory {
     function deployAmountConverter(
         address conversionTarget_,
         address[] memory allowedTokensToSell_,
-        address[] memory allowedStableTokensToBuy_
+        address[] memory allowedStableTokensToBuy_,
+        uint256[] memory priceFeedsHeartbeatTimeouts_
     ) public returns (address tokenAmountConverter) {
         tokenAmountConverter = address(
-            new AmountConverter(feedRegistry, conversionTarget_, allowedTokensToSell_, allowedStableTokensToBuy_)
+            new AmountConverter(
+                feedRegistry,
+                conversionTarget_,
+                allowedTokensToSell_,
+                allowedStableTokensToBuy_,
+                priceFeedsHeartbeatTimeouts_
+            )
         );
         emit AmountConverterDeployed(
-            tokenAmountConverter, feedRegistry, conversionTarget_, allowedTokensToSell_, allowedStableTokensToBuy_
+            tokenAmountConverter,
+            feedRegistry,
+            conversionTarget_,
+            allowedTokensToSell_,
+            allowedStableTokensToBuy_,
+            priceFeedsHeartbeatTimeouts_
         );
     }
 }

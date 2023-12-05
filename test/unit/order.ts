@@ -41,7 +41,8 @@ describe('Order', async function () {
       mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
       mainnet.CHAINLINK_USD_QUOTE,
       [mainnet.STETH],
-      [mainnet.DAI]
+      [mainnet.DAI],
+      [3600]
     )
     await amountConverterTest.waitForDeployment()
 
@@ -66,6 +67,7 @@ describe('Order', async function () {
           conversionTarget: mainnet.CHAINLINK_USD_QUOTE, // USD
           allowedTokensToSell: [mainnet.STETH],
           allowedStableTokensToBuy: [mainnet.DAI],
+          priceFeedsHeartbeatTimeouts: [3600]
         },
       })
     const HashHelperFactory = await ethers.getContractFactory('HashHelper')

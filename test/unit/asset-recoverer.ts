@@ -14,6 +14,7 @@ describe('Asset recoverer', async function () {
   let manager: Signer
 
   this.beforeAll(async function () {
+    snapshotId = await network.provider.send('evm_snapshot')
     manager = (await ethers.getSigners())[1]
 
     const ContractFactory =
@@ -29,7 +30,7 @@ describe('Asset recoverer', async function () {
       await assetRecoverer.getAddress(),
       manager
     )
-    snapshotId = await network.provider.send('evm_snapshot')
+    
   })
 
   describe('initialization:', async function () {

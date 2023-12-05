@@ -10,6 +10,7 @@ describe('StonksFactory', function () {
   let snapshotId: string
   let ContractFactory: StonksFactory__factory
   this.beforeAll(async function () {
+    snapshotId = await network.provider.send('evm_snapshot')
     ContractFactory = await ethers.getContractFactory('StonksFactory')
 
     subject = await ContractFactory.deploy(
@@ -18,8 +19,6 @@ describe('StonksFactory', function () {
       mainnet.VAULT_RELAYER
     )
     await subject.waitForDeployment()
-
-    snapshotId = await network.provider.send('evm_snapshot')
   })
 
   describe('initialization:', async function () {

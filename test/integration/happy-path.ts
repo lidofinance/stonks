@@ -42,6 +42,7 @@ describe('Happy path', function () {
         conversionTarget: "0x0000000000000000000000000000000000000348", // USD
         allowedTokensToSell: [mainnet.STETH],
         allowedStableTokensToBuy: [mainnet.DAI],
+        priceFeedsHeartbeatTimeouts: [3600]
       },
     })
 
@@ -50,7 +51,7 @@ describe('Happy path', function () {
   })
 
   describe('order creation:', async function () {
-    const value = ethers.parseEther('1')
+    const value = ethers.parseEther('100')
     let order: Order
 
     this.beforeAll(async () => {
@@ -111,7 +112,7 @@ describe('Happy path', function () {
     it('should be possible to cancel order after expiration time', async () => {
       const localSnapshotId = await network.provider.send('evm_snapshot')
 
-      await network.provider.send('evm_increaseTime', [60 * 60 * 24 * 7])
+      await network.provider.send('evm_increaseTime', [3600])
       await order.recoverTokenFrom()
 
       const steth = await ethers.getContractAt('IERC20', mainnet.STETH)
@@ -127,7 +128,7 @@ describe('Happy path', function () {
         mainnet.VAULT_RELAYER,
         '0x',
       ])
-      await fillUpBalance(mainnet.VAULT_RELAYER, ethers.parseEther('1'))
+      await fillUpBalance(mainnet.VAULT_RELAYER, ethers.parseEther('100'))
       await network.provider.request({
         method: 'hardhat_impersonateAccount',
         params: [mainnet.VAULT_RELAYER],

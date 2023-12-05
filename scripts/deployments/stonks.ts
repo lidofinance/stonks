@@ -28,6 +28,7 @@ export type DeployStonksParams = {
     conversionTarget: string
     allowedTokensToSell: string[]
     allowedStableTokensToBuy: string[]
+    priceFeedsHeartbeatTimeouts: number[]
   }
 }
 type ReturnType = {
@@ -63,13 +64,18 @@ export async function deployStonks({
   } else if (amountConverterParams) {
     const { amountConverterFactory } =
       await deployAmountConverterFactory(priceFeedRegistry)
-    const { allowedTokensToSell, allowedStableTokensToBuy, conversionTarget } =
-      amountConverterParams
+    const {
+      allowedTokensToSell,
+      allowedStableTokensToBuy,
+      conversionTarget,
+      priceFeedsHeartbeatTimeouts,
+    } = amountConverterParams
     const deployTokenConverterTX =
       await amountConverterFactory.deployAmountConverter(
         conversionTarget,
         allowedTokensToSell,
-        allowedStableTokensToBuy
+        allowedStableTokensToBuy,
+        priceFeedsHeartbeatTimeouts
       )
     const receipt = await deployTokenConverterTX.wait()
 
