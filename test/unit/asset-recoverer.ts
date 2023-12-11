@@ -34,9 +34,18 @@ describe('Asset recoverer', async function () {
   })
 
   describe('initialization:', async function () {
-    it('Should have right manager and agent addresses', async function () {
+    it('should have right manager and agent addresses', async function () {
       expect(await subject.agent()).to.equal(mainnet.AGENT)
       expect(await subject.manager()).to.equal(await manager.getAddress())
+    })
+    it('should revert with agent zero adress', async function () {
+      const ContractFactory =
+        await ethers.getContractFactory('AssetRecovererTest')
+      await expect(ContractFactory.deploy(
+        ethers.ZeroAddress,
+        manager
+      )).to.be.revertedWithCustomError(ContractFactory, 'InvalidAgentAddress')
+
     })
   })
 
@@ -53,12 +62,6 @@ describe('Asset recoverer', async function () {
       token = await ethers.getContractAt('IERC20', mainnet.DAI)
       subjectAddress = await subject.getAddress()
 
-      await fillUpBalance(subjectAddress, amount)
-      await fillUpERC20FromTreasury({
-        amount,
-        token: mainnet.DAI,
-        address: subjectAddress,
-      })
 
       const NFT721 = await ethers.getContractFactory("NFT_721");
       nft721 = await NFT721.deploy("NFT_721", "N721");
@@ -68,98 +71,205 @@ describe('Asset recoverer', async function () {
       await nft1155.waitForDeployment();
     })
 
-    it('should successfully recover Ether', async () => {
-      const subjectBalanceBefore =
-        await ethers.provider.getBalance(subjectAddress)
-      const treasuryBalanceBefore = await ethers.provider.getBalance(
-        mainnet.AGENT
-      )
-
-      expect(subjectBalanceBefore).to.be.equal(amount)
-
-      const recoverTx = await subject.recoverEther()
-      await recoverTx.wait()
-
-      const subjectBalanceAfter =
-        await ethers.provider.getBalance(subjectAddress)
-      const treasuryBalanceAfter = await ethers.provider.getBalance(
-        mainnet.AGENT
-      )
-
-      expect(subjectBalanceAfter).to.be.equal(subjectBalanceBefore - amount)
-      expect(treasuryBalanceAfter).to.be.equal(treasuryBalanceBefore + amount)
-    })
-    it('should successfully recover ERC20', async () => {
-      expect(await token.balanceOf(await subject.getAddress())).to.be.equal(
-        amount
-      )
-
-      const recoverTx = await subject.recoverERC20(mainnet.DAI, amount)
-      await recoverTx.wait()
-
-      expect(await token.balanceOf(await subject.getAddress())).to.be.equal(
-        BigInt(0)
-      )
-    })
-    it('should successfully recover ERC721', async () => {
-      const nftHolder = (await ethers.getSigners())[0].address
-      const nftAddress = await nft721.getAddress()
-
-      expect(await nft721.ownerOf(nftId)).to.equal(nftHolder)
-      await nft721.transferFrom(nftHolder, subjectAddress, nftId)
-      expect(await nft721.ownerOf(nftId)).to.equal(subjectAddress)
-
-      const recoverTx = await subject.recoverERC721(nftAddress, nftId)
-      await recoverTx.wait()
-
-      expect(await nft721.ownerOf(nftId)).to.equal(mainnet.AGENT)
-      // TODO: check events
-    })
-    it('should successfully recover recoverERC1155', async () => {
-
-      const nftHolder = (await ethers.getSigners())[0].address
-      const nftAddress = await nft1155.getAddress()
-
-      expect(await nft1155.balanceOf(nftHolder, nftId)).to.equal(10)
-      expect(await nft1155.balanceOf(mainnet.AGENT, nftId)).to.equal(0)
-
-      // cannot fully test recoverERC115 because subjectAddress can't receive ERC1155
-      await expect(nft1155.safeTransferFrom(nftHolder, subjectAddress, BigInt(nftId), BigInt(4), '0x'))
-        .to.be.revertedWith('ERC1155: transfer to non-ERC1155Receiver implementer')
-
-    })
-    it('should revert if it is called by stranger', async () => {
-      const localSubject = await ethers.getContractAt(
-        'Order',
-        await subject.getAddress(),
-        (await ethers.getSigners())[2]
-      )
-
-      await expect(localSubject.recoverEther()).to.be.revertedWithCustomError(
-        subject, 'NotAgentOrManager'
-      )
-    })
-    it('should successfully recover by manager', async () => {
-      const localSubject = await ethers.getContractAt(
-        'Order',
-        await subject.getAddress(),
-        manager
-      )
-
-      localSubject.recoverERC20(mainnet.DAI, amount)
-    })
-    it('should successfully recover by agent', async () => {
-      network.provider.request({
-        method: 'hardhat_impersonateAccount',
-        params: [mainnet.AGENT],
+    describe('recovering Ether:', async function () {
+      let snapshotId: string
+      this.beforeEach(async function () {
+        snapshotId = await network.provider.send('evm_snapshot')
+        await fillUpBalance(subjectAddress, amount)
       })
-      const agent = await ethers.provider.getSigner(mainnet.AGENT)
-      const localSubject = await ethers.getContractAt(
-        'Order',
-        await subject.getAddress(),
-        agent
-      )
-      localSubject.recoverERC20(mainnet.DAI, amount)
+
+      this.afterEach(async function () {
+        await network.provider.send('evm_revert', [snapshotId])
+      })
+
+      it('should successfully recover Ether', async () => {
+        const subjectBalanceBefore =
+          await ethers.provider.getBalance(subjectAddress)
+        const treasuryBalanceBefore = await ethers.provider.getBalance(
+          mainnet.AGENT
+        )
+
+        expect(subjectBalanceBefore).to.be.equal(amount)
+
+        const recoverTx = await subject.recoverEther()
+        await recoverTx.wait()
+
+        const subjectBalanceAfter =
+          await ethers.provider.getBalance(subjectAddress)
+        const treasuryBalanceAfter = await ethers.provider.getBalance(
+          mainnet.AGENT
+        )
+
+        expect(subjectBalanceAfter).to.be.equal(subjectBalanceBefore - amount)
+        expect(treasuryBalanceAfter).to.be.equal(treasuryBalanceBefore + amount)
+      })
+
+      it('should revert if it is called by stranger Ether', async () => {
+        const localSubject = await ethers.getContractAt(
+          'Order',
+          await subject.getAddress(),
+          (await ethers.getSigners())[2]
+        )
+
+        await expect(localSubject.recoverEther()).to.be.revertedWithCustomError(
+          subject, 'NotAgentOrManager'
+        )
+      })
+    })
+
+    describe('recovering ERC20:', async function () {
+      let snapshotId: string
+      this.beforeEach(async function () {
+        snapshotId = await network.provider.send('evm_snapshot')
+        await fillUpERC20FromTreasury({
+          amount,
+          token: mainnet.DAI,
+          address: subjectAddress,
+        })
+      })
+
+      this.afterEach(async function () {
+        await network.provider.send('evm_revert', [snapshotId])
+      })
+
+      it('should successfully recover ERC20', async () => {
+        expect(await token.balanceOf(await subject.getAddress())).to.be.equal(
+          amount
+        )
+
+        const recoverTx = await subject.recoverERC20(mainnet.DAI, amount)
+        await recoverTx.wait()
+
+        expect(await token.balanceOf(await subject.getAddress())).to.be.equal(
+          BigInt(0)
+        )
+      })
+      it('should successfully recover by manager ERC20', async () => {
+        expect(await token.balanceOf(await subject.getAddress())).to.be.equal(
+          amount
+        )
+        const localSubject = await ethers.getContractAt(
+          'Order',
+          await subject.getAddress(),
+          manager
+        )
+
+        const recoverTx = await localSubject.recoverERC20(mainnet.DAI, amount)
+        await recoverTx.wait()
+
+        expect(await token.balanceOf(await subject.getAddress())).to.be.equal(
+          BigInt(0)
+        )
+      })
+
+      it('should successfully recover by agent ERC20', async () => {
+        expect(await token.balanceOf(await subject.getAddress())).to.be.equal(
+          amount
+        )
+        network.provider.request({
+          method: 'hardhat_impersonateAccount',
+          params: [mainnet.AGENT],
+        })
+        const agent = await ethers.provider.getSigner(mainnet.AGENT)
+        const localSubject = await ethers.getContractAt(
+          'Order',
+          await subject.getAddress(),
+          agent
+        )
+        const recoverTx = await localSubject.recoverERC20(mainnet.DAI, amount)
+        await recoverTx.wait()
+
+        expect(await token.balanceOf(await subject.getAddress())).to.be.equal(
+          BigInt(0)
+        )
+      })
+
+      it('should revert if it is called by stranger ERC20', async () => {
+        const localSubject = await ethers.getContractAt(
+          'Order',
+          await subject.getAddress(),
+          (await ethers.getSigners())[2]
+        )
+
+        await expect(localSubject.recoverERC20(mainnet.DAI, amount))
+          .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+      })
+    })
+
+    describe('recovering ERC721:', async function () {
+      let snapshotId: string
+      this.beforeEach(async function () {
+        snapshotId = await network.provider.send('evm_snapshot')
+
+        const nftHolder = (await ethers.getSigners())[0].address
+        await nft721.transferFrom(nftHolder, subjectAddress, nftId)
+      })
+
+      this.afterEach(async function () {
+        await network.provider.send('evm_revert', [snapshotId])
+      })
+
+      it('should successfully recover ERC721', async () => {
+        const nftAddress = await nft721.getAddress()
+
+        expect(await nft721.ownerOf(nftId)).to.equal(subjectAddress)
+
+        const recoverTx = await subject.recoverERC721(nftAddress, nftId)
+        await recoverTx.wait()
+
+        expect(await nft721.ownerOf(nftId)).to.equal(mainnet.AGENT)
+      })
+
+      it('should successfully recover by agent ERC721', async () => {
+        const nftAddress = await nft721.getAddress()
+
+        expect(await nft721.ownerOf(nftId)).to.equal(subjectAddress)
+
+        network.provider.request({
+          method: 'hardhat_impersonateAccount',
+          params: [mainnet.AGENT],
+        })
+
+        const recoverTx = await subject.recoverERC721(nftAddress, nftId)
+        await recoverTx.wait()
+
+        expect(await nft721.ownerOf(nftId)).to.equal(mainnet.AGENT)
+      })
+
+      it('should revert if it is called by stranger ERC721', async () => {
+        const nftAddress = await nft721.getAddress()
+
+        expect(await nft721.ownerOf(nftId)).to.equal(subjectAddress)
+        const stranger = (await ethers.getSigners())[2]
+
+        network.provider.request({
+          method: 'hardhat_impersonateAccount',
+          params: [stranger],
+        })
+
+        const localSubject = await ethers.getContractAt(
+          'Order',
+          await subject.getAddress(),
+          stranger
+        )
+
+        expect(localSubject.recoverERC721(nftAddress, nftId))
+          .to.be.revertedWithCustomError(localSubject,'NotAgentOrManager')
+      })
+    })
+
+    describe('recovering ERC1155:', async function () {
+      it('should successfully recover recover ERC1155', async () => {
+
+        const nftHolder = (await ethers.getSigners())[0].address
+
+        expect(await nft1155.balanceOf(nftHolder, nftId)).to.equal(10)
+        expect(await nft1155.balanceOf(mainnet.AGENT, nftId)).to.equal(0)
+
+        // cannot fully test recoverERC115 because subjectAddress can't receive ERC1155
+        await expect(nft1155.safeTransferFrom(nftHolder, subjectAddress, BigInt(nftId), BigInt(4), '0x'))
+          .to.be.revertedWith('ERC1155: transfer to non-ERC1155Receiver implementer')
+      })
     })
   })
 

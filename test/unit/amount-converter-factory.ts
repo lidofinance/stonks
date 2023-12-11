@@ -27,6 +27,14 @@ describe('AmountConverterFactory', function () {
         mainnet.CHAINLINK_PRICE_FEED_REGISTRY
       )
     })
+    it('should revert with zero address', async function () {
+      const ContractFactory = await ethers.getContractFactory(
+        'AmountConverterFactory'
+      )
+      await expect(ContractFactory.deploy(
+        ethers.ZeroAddress
+      )).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+    })
   })
   describe('amount converter deployment:', async function () {
     it('should deploy stonks with correct params', async function () {
