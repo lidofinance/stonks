@@ -3,7 +3,7 @@ import { ethers, network } from 'hardhat'
 
 import fmt from '../utils/format'
 import { confirmOrAbort } from '../utils/prompt'
-import { getDeployer, verify } from '../utils/deployment'
+import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
 import { ChainlinkFeedRegistryStub__factory } from '../typechain-types/factories/contracts/stubs'
 
 const OWNER: string = ''
@@ -26,7 +26,7 @@ async function main() {
   await confirmOrAbort()
 
   const registry = await new ChainlinkFeedRegistryStub__factory(deployer).deploy(OWNER, MANAGER)
-  await registry.waitForDeployment()
+  const receipt = await waitForDeployment(registry.deploymentTransaction()!)
 
   const registryAddress = await registry.getAddress()
 
@@ -35,7 +35,7 @@ async function main() {
   )
 
   if (network.name !== 'hardhat') {
-    await verify(registryAddress, [OWNER, MANAGER])
+    await verify(registryAddress, [OWNER, MANAGER], receipt)
   } else {
     console.log(`Run on developer network, verification is skipped`)
   }

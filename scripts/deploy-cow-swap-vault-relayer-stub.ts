@@ -3,7 +3,7 @@ import { ethers, network } from 'hardhat'
 
 import fmt from '../utils/format'
 import { confirmOrAbort } from '../utils/prompt'
-import { getDeployer, verify } from '../utils/deployment'
+import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
 import { CoWSwapVaultRelayerStub__factory } from '../typechain-types/factories/contracts/stubs/CoWSwapVaultRelayerStub.sol'
 
 const OWNER: string = ''
@@ -27,14 +27,14 @@ async function main() {
   await confirmOrAbort()
 
   const relayer = await new CoWSwapVaultRelayerStub__factory(deployer).deploy(OWNER, MANAGER)
-  await relayer.waitForDeployment()
 
+  const receipt = await waitForDeployment(relayer.deploymentTransaction()!)
   const relayerAddress = await relayer.getAddress()
 
   console.log(`${fmt.name('CoWSwapVaultRelayerStub')} deployed at ${fmt.address(relayerAddress)}`)
 
   if (network.name !== 'hardhat') {
-    await verify(relayerAddress, [OWNER, MANAGER])
+    await verify(relayerAddress, [OWNER, MANAGER], receipt)
   } else {
     console.log(`Run on developer network, verification is skipped`)
   }
