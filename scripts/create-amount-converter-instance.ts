@@ -97,7 +97,7 @@ async function main() {
       receipt
     )
   } else {
-    console.log(`Deploying on the test network, verification is skipped.`)
+    console.log(`Deployed on the local hardhat network, verification is skipped.`)
   }
 
   assert.equal(conversionTarget.toLowerCase(), CONVERSION_TARGET.toLowerCase())

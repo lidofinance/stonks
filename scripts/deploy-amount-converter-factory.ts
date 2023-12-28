@@ -40,7 +40,7 @@ async function main() {
   if (network.name !== 'hardhat') {
     await verify(address, [CHAINLINK_PRICE_FEED_REGISTRY], receipt)
   } else {
-    console.log(`Deploying on the test network, verification is skipped.`)
+    console.log(`Deployed on the local hardhat network, verification is skipped.`)
   }
 }
 

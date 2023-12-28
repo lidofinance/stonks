@@ -12,8 +12,8 @@ if (!MAINNET_RPC_URL && !GOERLI_RPC_URL) {
   throw new Error(`RPC url was not provided. Please, ensure the .env file is filled correctly.`)
 }
 
-const WALLET_PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY!
-const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY!
+const WALLET_PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY
+const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -21,9 +21,9 @@ const config: HardhatUserConfig = {
     settings: {
       optimizer: {
         enabled: true,
-        runs: 200
-      }
-    }
+        runs: 200,
+      },
+    },
   },
   networks: {},
   etherscan: {
@@ -34,7 +34,7 @@ const config: HardhatUserConfig = {
 if (MAINNET_RPC_URL) {
   config.networks!.mainnet = {
     url: process.env.RPC_URL,
-    accounts: [WALLET_PRIVATE_KEY],
+    accounts: WALLET_PRIVATE_KEY ? [WALLET_PRIVATE_KEY] : undefined,
   }
   config.networks!.hardhat = {
     forking: {
@@ -47,7 +47,7 @@ if (MAINNET_RPC_URL) {
 if (GOERLI_RPC_URL) {
   config.networks!.goerli = {
     url: process.env.GOERLI_RPC_URL,
-    accounts: [WALLET_PRIVATE_KEY],
+    accounts: WALLET_PRIVATE_KEY ? [WALLET_PRIVATE_KEY] : undefined,
   }
 }
 

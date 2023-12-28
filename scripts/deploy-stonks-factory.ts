@@ -8,12 +8,12 @@ import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
 import { OrderSampleDeployedEvent } from '../typechain-types/contracts/factories/StonksFactory'
 
 const AGENT = ''
-const SETTLEMENT = ''
-const VAULT_RELAYER = ''
+const COWSWAP_SETTLEMENT = ''
+const COWSWAP_VAULT_RELAYER = ''
 
 assert(ethers.isAddress(AGENT), 'AGENT is not a valid address')
-assert(ethers.isAddress(SETTLEMENT), 'SETTLEMENT is not a valid address')
-assert(ethers.isAddress(VAULT_RELAYER), 'VAULT_RELAYER is not a valid address')
+assert(ethers.isAddress(COWSWAP_SETTLEMENT), 'COWSWAP_SETTLEMENT is not a valid address')
+assert(ethers.isAddress(COWSWAP_VAULT_RELAYER), 'COWSWAP_VAULT_RELAYER is not a valid address')
 
 async function main() {
   // prettier-ignore
@@ -25,15 +25,17 @@ async function main() {
 
   console.log(`Deployment parameters:`)
   console.log(`  * ${fmt.name('Agent')} address: ${fmt.value(AGENT)}`)
-  console.log(`  * ${fmt.name('Settlement')} address: ${fmt.value(SETTLEMENT)}`)
-  console.log(`  * ${fmt.name('VaultRelayer')} address: ${fmt.value(VAULT_RELAYER)}\n`)
+  console.log(`  * ${fmt.name('CoWSwapSettlement')} address: ${fmt.value(COWSWAP_SETTLEMENT)}`)
+  console.log(
+    `  * ${fmt.name('CoWSwapVaultRelayer')} address: ${fmt.value(COWSWAP_VAULT_RELAYER)}\n`
+  )
 
   await confirmOrAbort('Proceed?')
 
   const stonksFactory = await new StonksFactory__factory(deployer).deploy(
     AGENT,
-    SETTLEMENT,
-    VAULT_RELAYER
+    COWSWAP_SETTLEMENT,
+    COWSWAP_VAULT_RELAYER
   )
 
   const receipt = await waitForDeployment(stonksFactory.deploymentTransaction()!)
@@ -65,10 +67,10 @@ async function main() {
     `Sample of the ${fmt.name('Order')} contract was deployed at ${fmt.address(orderAddress)}\n`
   )
   if (network.name !== 'hardhat') {
-    await verify(stonksFactoryAddress, [AGENT, SETTLEMENT, VAULT_RELAYER], receipt)
-    await verify(orderAddress, [AGENT, SETTLEMENT, VAULT_RELAYER], receipt)
+    await verify(stonksFactoryAddress, [AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER], receipt)
+    await verify(orderAddress, [AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER], receipt)
   } else {
-    console.log(`Deploying on the test network, verification is skipped.`)
+    console.log(`Deployed on the local hardhat network, verification is skipped.`)
   }
 }
 

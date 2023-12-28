@@ -35,8 +35,10 @@ async function main() {
 
   const deployer = await getDeployer()
 
-  for (const [pair, config] of Object.entries(STONKS_CONFIGS)) {
-    console.log(`Deploy config for pair ${fmt.name(pair)}:`)
+  const entries = Object.entries(STONKS_CONFIGS)
+  for (let i = 0; i < entries.length; ++i) {
+    const [pair, config] = entries[i]
+    console.log(`${i + 1}. Deploy config for pair ${fmt.name(pair)}:`)
     console.log(`  * token from: ${fmt.value(config.tokenFrom)}`)
     console.log(`  * token to: ${fmt.value(config.tokenTo)}`)
     console.log(`  * order duration (sec): ${fmt.value(config.orderDurationInSeconds)}`)
@@ -50,7 +52,6 @@ async function main() {
   const factory = StonksFactory__factory.connect(STONKS_FACTORY, deployer)
   const orderSample = await factory.orderSample()
 
-  const entries = Object.entries(STONKS_CONFIGS)
   for (let i = 0; i < entries.length; ++i) {
     const [pair, config] = entries[i]
     console.log(`${i + 1}/${entries.length}. Deploying pair ${fmt.name(pair)}...`)
@@ -109,7 +110,7 @@ async function main() {
         receipt
       )
     } else {
-      console.log(`Deploying on the test network, verification is skipped.`)
+      console.log(`Deployed on the local hardhat network, verification is skipped.`)
     }
 
     assert.equal(agent.toLowerCase(), AGENT.toLowerCase())
