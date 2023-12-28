@@ -11,3 +11,8 @@ cache
 build
 artifacts
 
+# OS specific
+.DS_Store
+
+# compilers
+solc

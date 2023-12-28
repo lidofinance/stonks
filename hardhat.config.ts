@@ -7,6 +7,7 @@ dotenv.config()
 
 const MAINNET_RPC_URL = process.env.RPC_URL
 const GOERLI_RPC_URL = process.env.GOERLI_RPC_URL
+const HOLESKY_RPC_URL = process.env.HOLESKY_RPC_URL
 
 if (!MAINNET_RPC_URL && !GOERLI_RPC_URL) {
   throw new Error(`RPC url was not provided. Please, ensure the .env file is filled correctly.`)
@@ -28,12 +29,22 @@ const config: HardhatUserConfig = {
   networks: {},
   etherscan: {
     apiKey: ETHERSCAN_API_KEY,
+    customChains: [
+      {
+        network: "holesky",
+        chainId: 17000,
+        urls: {
+          apiURL: "https://api-holesky.etherscan.io/api",
+          browserURL: "https://holesky.etherscan.io"
+        }
+      }
+    ]
   },
 }
 
 if (MAINNET_RPC_URL) {
   config.networks!.mainnet = {
-    url: process.env.RPC_URL,
+    url: MAINNET_RPC_URL,
     accounts: WALLET_PRIVATE_KEY ? [WALLET_PRIVATE_KEY] : undefined,
   }
   config.networks!.hardhat = {
@@ -46,7 +57,14 @@ if (MAINNET_RPC_URL) {
 
 if (GOERLI_RPC_URL) {
   config.networks!.goerli = {
-    url: process.env.GOERLI_RPC_URL,
+    url: GOERLI_RPC_URL,
+    accounts: WALLET_PRIVATE_KEY ? [WALLET_PRIVATE_KEY] : undefined,
+  }
+}
+
+if (HOLESKY_RPC_URL) {
+  config.networks!.holesky = {
+    url: HOLESKY_RPC_URL,
     accounts: WALLET_PRIVATE_KEY ? [WALLET_PRIVATE_KEY] : undefined,
   }
 }
