@@ -3,7 +3,7 @@ import { ethers, network } from 'hardhat'
 
 import fmt from '../utils/format'
 import { confirmOrAbort } from '../utils/prompt'
-import { getDeployer, verify } from '../utils/deployment'
+import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
 import { AmountConverterFactory__factory } from '../typechain-types'
 import { AmountConverterDeployedEvent } from '../typechain-types/contracts/factories/AmountConverterFactory'
 
@@ -15,8 +15,11 @@ const ALLOWED_TOKENS_TO_BUY: string[] = []
 
 const PRICE_FEEDS_HEARTBEAT_TIMEOUTS: bigint[] = []
 
-assert(ethers.isAddress(AMOUNT_CONVERTER_FACTORY), "AMOUNT_CONVERTER_FACTORY isn't set")
-assert(ethers.isAddress(CONVERSION_TARGET), `Invalid conversion target value`)
+assert(
+  ethers.isAddress(AMOUNT_CONVERTER_FACTORY),
+  'AMOUNT_CONVERTER_FACTORY is not a valid address'
+)
+assert(ethers.isAddress(CONVERSION_TARGET), `CONVERSION_TARGET is not a valid address`)
 assert(ALLOWED_TOKENS_TO_SELL.length > 0, 'Allowed tokens to sell is empty')
 assert(ALLOWED_TOKENS_TO_BUY.length > 0, 'Allowed tokens to buy is empty')
 assert(
@@ -58,11 +61,9 @@ async function main() {
     PRICE_FEEDS_HEARTBEAT_TIMEOUTS
   )
 
-  console.log(`The deployment tx hash: ${fmt.tx(tx.hash)}`)
-  console.log('Waiting for confirmations...\n')
-  const receipt = await tx.wait()
+  const receipt = await waitForDeployment(tx)
 
-  const amountConverterDeployedLog = receipt!.logs.find(
+  const amountConverterDeployedLog = receipt.logs.find(
     (log) => log.topics[0] === factory.getEvent('AmountConverterDeployed').fragment.topicHash
   ) as AmountConverterDeployedEvent.Log | undefined
 
@@ -84,12 +85,17 @@ async function main() {
   )
 
   if (network.name !== 'hardhat') {
-    await verify(amountConverterAddress, [
-      CONVERSION_TARGET,
-      ALLOWED_TOKENS_TO_SELL,
-      ALLOWED_TOKENS_TO_BUY,
-      PRICE_FEEDS_HEARTBEAT_TIMEOUTS,
-    ])
+    await verify(
+      amountConverterAddress,
+      [
+        await factory.feedRegistry(),
+        CONVERSION_TARGET,
+        ALLOWED_TOKENS_TO_SELL,
+        ALLOWED_TOKENS_TO_BUY,
+        PRICE_FEEDS_HEARTBEAT_TIMEOUTS,
+      ],
+      receipt
+    )
   } else {
     console.log(`Deploying on the test network, verification is skipped.`)
   }

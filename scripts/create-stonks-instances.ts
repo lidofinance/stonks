@@ -1,9 +1,9 @@
 import { assert } from 'chai'
-import { network } from 'hardhat'
+import { ethers, network } from 'hardhat'
 
 import fmt from '../utils/format'
 import { confirmOrAbort } from '../utils/prompt'
-import { getDeployer, verify } from '../utils/deployment'
+import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
 import { StonksFactory__factory } from '../typechain-types'
 import { StonksDeployedEvent } from '../typechain-types/contracts/factories/StonksFactory'
 
@@ -20,6 +20,11 @@ const STONKS_FACTORY = ''
 const AMOUNT_CONVERTER = ''
 const MANAGER_ADDRESS = ''
 const STONKS_CONFIGS: Record<string, StonksConfig> = {}
+
+assert(ethers.isAddress(AGENT), 'AGENT is not a valid address')
+assert(ethers.isAddress(STONKS_FACTORY), 'STONKS_FACTORY is not a valid address')
+assert(ethers.isAddress(AMOUNT_CONVERTER), 'AMOUNT_CONVERTER is not a valid address')
+assert(Object.values(STONKS_CONFIGS).length > 0, 'STONKS_CONFIGS is empty')
 
 async function main() {
   // prettier-ignore
@@ -49,20 +54,17 @@ async function main() {
   for (let i = 0; i < entries.length; ++i) {
     const [pair, config] = entries[i]
     console.log(`${i + 1}/${entries.length}. Deploying pair ${fmt.name(pair)}...`)
-    const deployArgs = [
+    const tx = await factory.deployStonks(
       MANAGER_ADDRESS,
       config.tokenFrom,
       config.tokenTo,
       AMOUNT_CONVERTER,
       config.orderDurationInSeconds,
       config.marginBasisPoints,
-      config.priceToleranceInBasisPoints,
-    ] as const
-    const tx = await factory.deployStonks(...deployArgs)
-    console.log(`The deployment tx hash: ${fmt.tx(tx.hash)}`)
-    console.log('Waiting for confirmations...\n')
+      config.priceToleranceInBasisPoints
+    )
+    const receipt = await waitForDeployment(tx)
 
-    const receipt = await tx.wait()
     const stonksDeployedLog = receipt!.logs.find(
       (log) => log.topics[0] === factory.getEvent('StonksDeployed').fragment.topicHash
     ) as StonksDeployedEvent.Log | undefined
@@ -91,7 +93,21 @@ async function main() {
       ].join(' ')
     )
     if (network.name !== 'hardhat') {
-      await verify(stonksAddress, deployArgs as unknown as unknown[])
+      await verify(
+        stonksAddress,
+        [
+          agent,
+          operator,
+          tokenFrom,
+          tokenTo,
+          amountConverter,
+          orderSample,
+          orderDurationInSeconds,
+          marginBasisPoints,
+          priceToleranceInBasisPoints,
+        ],
+        receipt
+      )
     } else {
       console.log(`Deploying on the test network, verification is skipped.`)
     }

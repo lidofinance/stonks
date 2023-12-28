@@ -1,14 +1,19 @@
-import { ethers, network } from 'hardhat'
+import { assert } from 'chai'
+import { network, ethers } from 'hardhat'
 
 import fmt from '../utils/format'
 import { confirmOrAbort } from '../utils/prompt'
 import { StonksFactory__factory } from '../typechain-types'
-import { getDeployer, verify } from '../utils/deployment'
+import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
 import { OrderSampleDeployedEvent } from '../typechain-types/contracts/factories/StonksFactory'
 
 const AGENT = ''
 const SETTLEMENT = ''
 const VAULT_RELAYER = ''
+
+assert(ethers.isAddress(AGENT), 'AGENT is not a valid address')
+assert(ethers.isAddress(SETTLEMENT), 'SETTLEMENT is not a valid address')
+assert(ethers.isAddress(VAULT_RELAYER), 'VAULT_RELAYER is not a valid address')
 
 async function main() {
   // prettier-ignore
@@ -31,13 +36,9 @@ async function main() {
     VAULT_RELAYER
   )
 
-  const deployTxHash = stonksFactory.deploymentTransaction()!.hash
-  console.log(`The deployment tx hash: ${fmt.tx(deployTxHash)}`)
-  console.log('Waiting for confirmations...\n')
+  const receipt = await waitForDeployment(stonksFactory.deploymentTransaction()!)
 
-  await stonksFactory.waitForDeployment()
-  const deployReceipt = await ethers.provider.getTransactionReceipt(deployTxHash)
-  const orderSampleDeployedLog = deployReceipt!.logs.find(
+  const orderSampleDeployedLog = receipt.logs.find(
     (log) => log.topics[0] === stonksFactory.interface.getEvent('OrderSampleDeployed').topicHash
   )
 
@@ -55,17 +56,17 @@ async function main() {
 
   const { orderAddress } = orderSampleDeployedLogDescription.args
 
-  const stonksAddress = await stonksFactory.getAddress()
+  const stonksFactoryAddress = await stonksFactory.getAddress()
   // prettier-ignore
   console.log(
-    `The ${fmt.name('StonksFactory')} contract was deployed successfully: ${fmt.address(stonksAddress)}\n`
+    `The ${fmt.name('StonksFactory')} contract was deployed successfully: ${fmt.address(stonksFactoryAddress)}\n`
   )
   console.log(
     `Sample of the ${fmt.name('Order')} contract was deployed at ${fmt.address(orderAddress)}\n`
   )
   if (network.name !== 'hardhat') {
-    await verify(stonksAddress, [AGENT, SETTLEMENT, VAULT_RELAYER])
-    await verify(orderAddress, [AGENT, SETTLEMENT, VAULT_RELAYER])
+    await verify(stonksFactoryAddress, [AGENT, SETTLEMENT, VAULT_RELAYER], receipt)
+    await verify(orderAddress, [AGENT, SETTLEMENT, VAULT_RELAYER], receipt)
   } else {
     console.log(`Deploying on the test network, verification is skipped.`)
   }

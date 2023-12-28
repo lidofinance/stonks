@@ -1,11 +1,17 @@
-import { network } from 'hardhat'
+import { assert } from 'chai'
+import { ethers, network } from 'hardhat'
 
 import fmt from '../utils/format'
 import { AmountConverterFactory__factory } from '../typechain-types'
-import { getDeployer, verify } from '../utils/deployment'
+import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
 import { confirmOrAbort } from '../utils/prompt'
 
 const CHAINLINK_PRICE_FEED_REGISTRY = ''
+
+assert(
+  ethers.isAddress(CHAINLINK_PRICE_FEED_REGISTRY),
+  'CHAINLINK_PRICE_FEED_REGISTRY is not a valid address'
+)
 
 async function main() {
   // prettier-ignore
@@ -24,10 +30,7 @@ async function main() {
     CHAINLINK_PRICE_FEED_REGISTRY
   )
 
-  console.log(`The deployment tx hash: ${fmt.tx(amountConverter.deploymentTransaction()!.hash)}`)
-  console.log('Waiting for confirmations...\n')
-
-  await amountConverter.waitForDeployment()
+  const receipt = await waitForDeployment(amountConverter.deploymentTransaction()!)
 
   const address = await amountConverter.getAddress()
   console.log(
@@ -35,7 +38,7 @@ async function main() {
   )
 
   if (network.name !== 'hardhat') {
-    await verify(address, [CHAINLINK_PRICE_FEED_REGISTRY])
+    await verify(address, [CHAINLINK_PRICE_FEED_REGISTRY], receipt)
   } else {
     console.log(`Deploying on the test network, verification is skipped.`)
   }

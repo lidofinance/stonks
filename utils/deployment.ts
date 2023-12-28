@@ -1,4 +1,5 @@
 import fmt from './format'
+import { ContractTransactionResponse, ContractTransactionReceipt, TransactionReceipt } from 'ethers'
 import { ethers, run, network } from 'hardhat'
 
 export async function getDeployer() {
@@ -21,8 +22,22 @@ export async function getDeployer() {
   return deployer
 }
 
-export async function verify(address: string, args: unknown[]) {
+export async function waitForDeployment(tx: ContractTransactionResponse) {
+  console.log(`The deployment tx hash: ${fmt.tx(tx.hash)}`)
+  console.log('Waiting for the inclusion...\n')
+  const receipt = await tx.wait(1)
+  return receipt!
+}
+
+export async function verify(
+  address: string,
+  args: unknown[],
+  deployTx?: ContractTransactionReceipt
+) {
   console.log(`Verifying contract ${fmt.address(address)} ...`)
+  if (deployTx) {
+    await waitForConfirmations(deployTx, 5)
+  }
   try {
     await run('verify:verify', { address: address, constructorArguments: args })
   } catch (e: any) {
@@ -43,4 +58,26 @@ export async function verify(address: string, args: unknown[]) {
 
 function formatArgument(arg: unknown): string {
   return Array.isArray(arg) ? `[${arg.map((arg) => formatArgument(arg))}]` : `"${arg}"`
+}
+
+async function waitForConfirmations(
+  receipt: ContractTransactionReceipt | TransactionReceipt,
+  confirmations: number = 0
+) {
+  const currentBlockNumber = await receipt.provider.getBlockNumber()
+  const targetBlockNumber = receipt.blockNumber + confirmations
+
+  if (currentBlockNumber >= targetBlockNumber) return
+
+  console.log(`Waiting for ${targetBlockNumber - currentBlockNumber} confirmations...`)
+  await new Promise<void>((resolve) => {
+    const blockMinedHandler = (blockNumber: number) => {
+      if (blockNumber === targetBlockNumber) {
+        receipt.provider.off('block', blockMinedHandler)
+        return resolve()
+      }
+      console.log(`  ${targetBlockNumber - blockNumber} confirmations left`)
+    }
+    receipt.provider.on('block', blockMinedHandler)
+  })
 }
