@@ -136,8 +136,13 @@ async function main() {
 // contains only the part of the methods required in the script. Full description:
 // https://docs.soliditylang.org/en/latest/using-the-compiler.html#input-description
 interface SolcInputSlice {
+  language: 'Solidity'
   sources: Record<string, { content: string }>
   settings: {
+    optimizer: {
+      runs: number
+      enabled: boolean
+    }
     outputSelection: Record<string, Record<string, string[]>>
     metadata?: {
       appendCBOR?: boolean
@@ -211,6 +216,46 @@ async function loadEtherscanSourceCode(
     }
 
     let solcInput = response.result[0].SourceCode
+    if (solcInput.startsWith('{{')) {
+      return {
+        name: result.ContractName,
+        solcInput: JSON.parse(solcInput.slice(1, solcInput.length - 1)),
+        compiler: result.CompilerVersion,
+      }
+    } else {
+      // treat response as single file flattened contract and use default solc options
+      return {
+        name: result.ContractName,
+        compiler: result.CompilerVersion,
+        solcInput: {
+          language: 'Solidity',
+          sources: {
+            [result.ContractName]: {
+              content: solcInput,
+            },
+          },
+          settings: {
+            optimizer: {
+              enabled: result.OptimizationUsed === '1',
+              runs: Number(result.Runs),
+            },
+            outputSelection: {
+              '*': {
+                '*': [
+                  'abi',
+                  'evm.bytecode',
+                  'evm.deployedBytecode',
+                  'evm.methodIdentifiers',
+                  'metadata',
+                ],
+                '': ['ast'],
+              },
+            },
+          },
+        },
+      }
+    }
+
     // TODO: handle contracts which were uploaded as single file
     solcInput = solcInput.startsWith('{{') ? solcInput.slice(1, solcInput.length - 1) : solcInput
 
