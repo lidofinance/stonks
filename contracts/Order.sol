@@ -30,7 +30,7 @@ contract Order is IERC1271, AssetRecoverer {
     using GPv2Order for GPv2Order.Data;
     using SafeERC20 for IERC20;
 
-    bytes4 constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
+    bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
     uint256 private constant MAX_BASIS_POINTS = 10_000;
     bytes32 private constant APP_DATA = keccak256("LIDO_DOES_STONKS");
 
@@ -134,14 +134,12 @@ contract Order is IERC1271, AssetRecoverer {
         /// This is a safeguard against market volatility and drastic price changes, which could otherwise lead to unfavorable trades.
         /// If the price deviates beyond the tolerance level, the order is invalidated to protect against executing a trade at an undesirable rate.
 
-        uint256 currentCalculatedPurchaseAmount =
-            IStonks(stonks).estimateTradeOutput(sellAmount);
+        uint256 currentCalculatedPurchaseAmount = IStonks(stonks).estimateTradeOutput(sellAmount);
 
         if (currentCalculatedPurchaseAmount <= buyAmount) return ERC1271_MAGIC_VALUE;
 
         uint256 differenceAmount = currentCalculatedPurchaseAmount - buyAmount;
-        uint256 maxToleratedAmountDeviation =
-            buyAmount * orderParameters.priceToleranceInBasisPoints / MAX_BASIS_POINTS;
+        uint256 maxToleratedAmountDeviation = buyAmount * orderParameters.priceToleranceInBasisPoints / MAX_BASIS_POINTS;
 
         if (differenceAmount > maxToleratedAmountDeviation) revert PriceConditionChanged();
 
