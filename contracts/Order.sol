@@ -36,6 +36,7 @@ contract Order is IERC1271, AssetRecoverer {
 
     address public immutable settlement;
     address public immutable relayer;
+    bytes32 public immutable domainSeparator;
 
     address public stonks;
 
@@ -66,6 +67,7 @@ contract Order is IERC1271, AssetRecoverer {
         // these variables retain their initial values assigned at the time of the original contract deployment.
         settlement = settlement_;
         relayer = relayer_;
+        domainSeparator = ICoWSwapSettlement(settlement_).domainSeparator();
 
         // This variable is stored in the contract's storage and will be overwritten
         // when a new proxy is created via a minimal proxy. Currently, it is set to true
@@ -105,7 +107,6 @@ contract Order is IERC1271, AssetRecoverer {
             sellTokenBalance: GPv2Order.BALANCE_ERC20,
             buyTokenBalance: GPv2Order.BALANCE_ERC20
         });
-        bytes32 domainSeparator = ICoWSwapSettlement(settlement).domainSeparator();
         orderHash = order.hash(domainSeparator);
 
         // Approval is set to the maximum value of uint256 as the contract is intended for single-use only.
