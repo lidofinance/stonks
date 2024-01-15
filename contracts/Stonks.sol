@@ -5,6 +5,7 @@ pragma solidity 0.8.19;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {Order} from "./Order.sol";
 import {AssetRecoverer} from "./AssetRecoverer.sol";
@@ -25,6 +26,7 @@ import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
  */
 contract Stonks is IStonks, AssetRecoverer {
     using SafeERC20 for IERC20;
+    using SafeCast for uint256;
 
     uint16 private constant MAX_BASIS_POINTS = 10_000;
     uint16 private constant BASIS_POINTS_PARAMETERS_LIMIT = 1_000;
@@ -81,9 +83,9 @@ contract Stonks is IStonks, AssetRecoverer {
         orderParameters = OrderParameters({
             tokenFrom: tokenFrom_,
             tokenTo: tokenTo_,
-            orderDurationInSeconds: uint32(orderDurationInSeconds_),
-            marginInBasisPoints: uint16(marginInBasisPoints_),
-            priceToleranceInBasisPoints: uint16(priceToleranceInBasisPoints_)
+            orderDurationInSeconds: orderDurationInSeconds_.toUint32(),
+            marginInBasisPoints: marginInBasisPoints_.toUint16(),
+            priceToleranceInBasisPoints: priceToleranceInBasisPoints_.toUint16()
         });
     }
 
