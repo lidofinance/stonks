@@ -120,7 +120,7 @@ contract Stonks is IStonks, AssetRecoverer {
 
     /**
      * @notice Estimates trade output based on current input token balance.
-     * @dev Uses current balance for output estimation via `getExpectedTradeResult`.
+     * @dev Uses current balance for output estimation via `estimateTradeOutput`.
      */
     function estimateOutputFromCurrentBalance() external view returns (uint256) {
         uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
@@ -130,7 +130,7 @@ contract Stonks is IStonks, AssetRecoverer {
     /**
      * @notice Returns trading parameters from Stonks for use in the Order contract.
      * @dev Facilitates gas efficiency by allowing Order to access existing parameters in Stonks without redundant storage.
-     * @return Tuple of tokenFrom, tokenTo, tokenConverter, orderDuration, margin, and price tolerance values.
+     * @return Tuple of tokenFrom, tokenTo, orderDurationInSeconds, marginInBasisPoints, and priceToleranceInBasisPoints.
      */
     function getOrderParameters() external view returns (OrderParameters memory) {
         return orderParameters;

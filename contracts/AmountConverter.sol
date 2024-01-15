@@ -14,9 +14,8 @@ import {IFeedRegistry} from "./interfaces/IFeedRegistry.sol";
  * two tokens.
  *
  * The primary function `getExpectedOut` is the main point of interaction. It fetches the price of the
- * provided token to USD from the Chainlink Price Feed, adjusts for the desired
- * margin, and then calculates the expected amount of the output token based on the input amount of the
- * sellToken.
+ * provided token to USD from the Chainlink Price Feed and calculates the expected amount of the output
+ * token based on the input amount of the sellToken.
  */
 contract AmountConverter is IAmountConverter {
     // Conversion targets: https://github.com/smartcontractkit/chainlink/blob/develop/contracts/src/v0.8/Denominations.sol
