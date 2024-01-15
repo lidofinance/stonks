@@ -67,7 +67,7 @@ describe('Order', async function () {
           conversionTarget: mainnet.CHAINLINK_USD_QUOTE, // USD
           allowedTokensToSell: [mainnet.STETH],
           allowedStableTokensToBuy: [mainnet.DAI],
-          priceFeedsHeartbeatTimeouts: [3600]
+          priceFeedsHeartbeatTimeouts: [3600],
         },
       })
     const HashHelperFactory = await ethers.getContractFactory('HashHelper')
@@ -142,7 +142,9 @@ describe('Order', async function () {
       expect(tokenTo).to.equal(orderParams['tokenTo'])
       expect(sellAmount).to.equal(orderData.order.sellAmount)
       expect(buyAmount).to.equal(orderData.order.buyAmount)
-      expect(validTo).to.equal(BigInt(orderData.timestamp) + BigInt(orderParams.orderDurationInSeconds))
+      expect(validTo).to.equal(
+        BigInt(orderData.timestamp) + BigInt(orderParams.orderDurationInSeconds)
+      )
     })
   })
 

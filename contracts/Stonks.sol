@@ -46,6 +46,8 @@ contract Stonks is IStonks, AssetRecoverer {
     error MinimumPossibleBalanceNotMet();
     error InvalidAmount();
 
+    event OrderContractCreated(address indexed orderContract);
+
     /**
      * @notice Initializes the Stonks contract with key trading parameters.
      * @dev Stores essential parameters for trade execution in immutable variables, ensuring consistency and security of trades.
@@ -98,6 +100,8 @@ contract Stonks is IStonks, AssetRecoverer {
         Order orderCopy = Order(Clones.clone(orderSample));
         IERC20(orderParameters.tokenFrom).safeTransfer(address(orderCopy), balance);
         orderCopy.initialize(manager);
+
+        emit OrderContractCreated(address(orderCopy));
 
         return address(orderCopy);
     }
