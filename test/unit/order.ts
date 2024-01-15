@@ -29,6 +29,7 @@ describe('Order', async function () {
   let subject: Order
   let orderHash: string
   let orderData: PlaceOrderDataEvent
+  let expectedBuyAmount: bigint
 
   this.beforeAll(async function () {
     snapshotId = await network.provider.send('evm_snapshot')
@@ -84,7 +85,8 @@ describe('Order', async function () {
       address: await stonks.getAddress(),
     })
 
-    const placeOrderTx = await stonks.placeOrder()
+    expectedBuyAmount = await stonks.estimateOutputFromCurrentBalance()
+    const placeOrderTx = await stonks.placeOrder(expectedBuyAmount)
     const placeOrderTxReceipt = await placeOrderTx.wait()
 
     if (!placeOrderTxReceipt) throw Error('placeOrderTxReceipt is null')
@@ -94,7 +96,11 @@ describe('Order', async function () {
     orderData = decodedOrderTx
     subject = await ethers.getContractAt('Order', orderData.address, manager)
 
-    orderHash = await formOrderHashFromTxReceipt(placeOrderTxReceipt, stonks)
+    orderHash = await formOrderHashFromTxReceipt(
+      placeOrderTxReceipt,
+      stonks,
+      expectedBuyAmount
+    )
   })
 
   describe('initialization (direct):', function () {
@@ -104,7 +110,7 @@ describe('Order', async function () {
         await stonks.orderSample()
       )
       await expect(
-        subject.initialize(ethers.ZeroAddress)
+        subject.initialize(expectedBuyAmount, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(subject, 'OrderAlreadyInitialized')
     })
   })
@@ -123,8 +129,12 @@ describe('Order', async function () {
       expect(orderData.order.sellAmount).to.equal(
         await token.balanceOf(subject)
       )
+      const buyAmountFromBalance =
+        await stonks.estimateOutputFromCurrentBalance()
       expect(orderData.order.buyAmount).to.equal(
-        await stonks.estimateTradeOutput(orderData.order.sellAmount)
+        buyAmountFromBalance > expectedBuyAmount
+          ? buyAmountFromBalance
+          : expectedBuyAmount
       )
       expect(orderData.order.receiver).to.be.equal(mainnet.AGENT)
       expect(BigInt(orderData.order.feeAmount)).to.be.equal(BigInt(0))

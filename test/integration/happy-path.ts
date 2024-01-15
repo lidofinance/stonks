@@ -18,6 +18,7 @@ describe('Happy path', function () {
   let orderReceipt: TransactionReceipt
   let subjectTokenConverter: AmountConverter
   let snapshotId: string
+  let expectedBuyAmount: bigint
 
   this.beforeAll(async function () {
     snapshotId = await network.provider.send('evm_snapshot')
@@ -39,10 +40,10 @@ describe('Happy path', function () {
         priceToleranceInBps: 100,
       },
       amountConverterParams: {
-        conversionTarget: "0x0000000000000000000000000000000000000348", // USD
+        conversionTarget: '0x0000000000000000000000000000000000000348', // USD
         allowedTokensToSell: [mainnet.STETH],
         allowedStableTokensToBuy: [mainnet.DAI],
-        priceFeedsHeartbeatTimeouts: [3600]
+        priceFeedsHeartbeatTimeouts: [3600],
       },
     })
 
@@ -79,7 +80,8 @@ describe('Happy path', function () {
     })
 
     it('should place order', async () => {
-      const orderTx = await subject.placeOrder()
+      expectedBuyAmount = await subject.estimateOutputFromCurrentBalance()
+      const orderTx = await subject.placeOrder(expectedBuyAmount)
 
       orderReceipt = (await orderTx.wait())!
       if (!orderReceipt) throw new Error('No order receipt')
@@ -95,7 +97,11 @@ describe('Happy path', function () {
     })
 
     it('settlement should check hash', async () => {
-      const orderHash = await formOrderHashFromTxReceipt(orderReceipt, subject)
+      const orderHash = await formOrderHashFromTxReceipt(
+        orderReceipt,
+        subject,
+        expectedBuyAmount
+      )
 
       expect(await order.isValidSignature(orderHash, '0x')).to.equal(
         MAGIC_VALUE
@@ -106,7 +112,9 @@ describe('Happy path', function () {
     })
 
     it('should not be possible to cancel order due to expiration time', () => {
-      expect(order.recoverTokenFrom()).to.be.revertedWith('Order: order is expired')
+      expect(order.recoverTokenFrom()).to.be.revertedWith(
+        'Order: order is expired'
+      )
     })
 
     it('should be possible to cancel order after expiration time', async () => {

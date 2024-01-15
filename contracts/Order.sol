@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {GPv2Order} from "./lib/GPv2Order.sol";
 import {AssetRecoverer} from "./AssetRecoverer.sol";
@@ -76,9 +77,10 @@ contract Order is IERC1271, AssetRecoverer {
     }
 
     /// @notice Initializes the contract for trading by defining order parameters and approving tokens.
+    /// @param minBuyAmount_ The minimum accepted trade outcome.
     /// @param manager_ The manager's address to be set for the contract.
     /// @dev This function calculates the buy amount considering trade margins, sets the order parameters, and approves the token for trading.
-    function initialize(address manager_) external {
+    function initialize(uint256 minBuyAmount_, address manager_) external {
         if (initialized) revert OrderAlreadyInitialized();
 
         initialized = true;
@@ -89,7 +91,7 @@ contract Order is IERC1271, AssetRecoverer {
 
         validTo = uint32(block.timestamp + orderParameters.orderDurationInSeconds);
         sellAmount = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
-        buyAmount = IStonks(stonks).estimateTradeOutput(sellAmount);
+        buyAmount = Math.max(IStonks(stonks).estimateTradeOutput(sellAmount), minBuyAmount_);
 
         GPv2Order.Data memory order = GPv2Order.Data({
             sellToken: IERC20Metadata(orderParameters.tokenFrom),
@@ -118,15 +120,15 @@ contract Order is IERC1271, AssetRecoverer {
 
     /**
      * @notice Validates the order's signature and ensures compliance with price and timing constraints.
-     * @param hash The hash of the order for validation.
+     * @param hash_ The hash of the order for validation.
      * @dev Checks include:
      *      - Matching the provided hash with the stored order hash.
      *      - Confirming order validity within the specified timeframe (`validTo`).
      *      - Computing and comparing expected purchase amounts with set trade margins and price tolerances.
      *      - Reverts if hash mismatch, order expiration, or excessive price deviation occurs.
      */
-    function isValidSignature(bytes32 hash, bytes calldata) external view returns (bytes4 magicValue) {
-        if (hash != orderHash) revert InvalidOrderHash();
+    function isValidSignature(bytes32 hash_, bytes calldata) external view returns (bytes4 magicValue) {
+        if (hash_ != orderHash) revert InvalidOrderHash();
         if (validTo <= block.timestamp) revert OrderExpired();
 
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
@@ -165,11 +167,11 @@ contract Order is IERC1271, AssetRecoverer {
 
     /// @notice Facilitates the recovery of ERC20 tokens from the contract, except for the token involved in the order.
     /// @param token_ The address of the token to recover.
-    /// @param amount The amount of the token to recover.
+    /// @param amount_ The amount of the token to recover.
     /// @dev Can only be called by the agent or manager of the contract. This is a safety feature to prevent accidental token loss.
-    function recoverERC20(address token_, uint256 amount) public override onlyAgentOrManager {
+    function recoverERC20(address token_, uint256 amount_) public override onlyAgentOrManager {
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
         if (token_ == orderParameters.tokenFrom) revert CannotRecoverTokenFrom();
-        AssetRecoverer.recoverERC20(token_, amount);
+        AssetRecoverer.recoverERC20(token_, amount_);
     }
 }

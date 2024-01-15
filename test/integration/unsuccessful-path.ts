@@ -18,6 +18,7 @@ describe('Unsuccessful path', function () {
   let orderReceipt: TransactionReceipt
   let subjectTokenConverter: AmountConverter
   let snapshotId: string
+  let expectedBuyAmount: bigint
   let orderDuration: number = 600
 
   this.beforeAll(async function () {
@@ -43,7 +44,7 @@ describe('Unsuccessful path', function () {
         conversionTarget: '0x0000000000000000000000000000000000000348', // USD
         allowedTokensToSell: [mainnet.STETH],
         allowedStableTokensToBuy: [mainnet.DAI],
-        priceFeedsHeartbeatTimeouts: [3600]
+        priceFeedsHeartbeatTimeouts: [3600],
       },
     })
 
@@ -80,7 +81,8 @@ describe('Unsuccessful path', function () {
     })
 
     it('should place order', async () => {
-      const orderTx = await subject.placeOrder()
+      expectedBuyAmount = await subject.estimateOutputFromCurrentBalance()
+      const orderTx = await subject.placeOrder(expectedBuyAmount)
 
       orderReceipt = (await orderTx.wait())!
       if (!orderReceipt) throw new Error('No order receipt')
@@ -96,7 +98,11 @@ describe('Unsuccessful path', function () {
     })
 
     it('settlement should check hash', async () => {
-      const orderHash = await formOrderHashFromTxReceipt(orderReceipt, subject)
+      const orderHash = await formOrderHashFromTxReceipt(
+        orderReceipt,
+        subject,
+        expectedBuyAmount
+      )
 
       expect(await order.isValidSignature(orderHash, '0x')).to.equal(
         MAGIC_VALUE
@@ -123,7 +129,8 @@ describe('Unsuccessful path', function () {
     })
 
     it('should re-place order', async () => {
-      const orderTx = await subject.placeOrder()
+      const expectedBuyAmount = await subject.estimateOutputFromCurrentBalance()
+      const orderTx = await subject.placeOrder(expectedBuyAmount)
 
       orderReceipt = (await orderTx.wait())!
       if (!orderReceipt) throw new Error('No order receipt')
@@ -156,17 +163,23 @@ describe('Unsuccessful path', function () {
 
     it('should successfully recover assets', async () => {
       const steth = await ethers.getContractAt('IERC20', mainnet.STETH)
-      const stonksBalanceBefore = await steth.balanceOf(await subject.getAddress())
+      const stonksBalanceBefore = await steth.balanceOf(
+        await subject.getAddress()
+      )
       const agentBalanceBefore = await steth.balanceOf(mainnet.AGENT)
 
       const tx = await subject.recoverERC20(mainnet.STETH, stonksBalanceBefore)
       await tx.wait()
 
-      const stonksBalanceAfter = await steth.balanceOf(await subject.getAddress())
+      const stonksBalanceAfter = await steth.balanceOf(
+        await subject.getAddress()
+      )
       const agentBalanceAfter = await steth.balanceOf(mainnet.AGENT)
 
       expect(isClose(stonksBalanceAfter, BigInt(0))).to.be.true
-      expect(isClose(agentBalanceAfter, agentBalanceBefore + stonksBalanceBefore)).to.be.true
+      expect(
+        isClose(agentBalanceAfter, agentBalanceBefore + stonksBalanceBefore)
+      ).to.be.true
     })
   })
 

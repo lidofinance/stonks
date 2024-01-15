@@ -93,7 +93,9 @@ contract Stonks is IStonks, AssetRecoverer {
      * @notice Initiates a new trading order by creating an Order contract clone with the current token balance.
      * @dev Transfers the tokenFrom balance to the new Order instance and initializes it with the Stonks' manager settings for execution.
      */
-    function placeOrder() external onlyAgentOrManager returns (address) {
+    function placeOrder(uint256 minBuyAmount_) external onlyAgentOrManager returns (address) {
+        if (minBuyAmount_ == 0) revert InvalidAmount();
+
         uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
 
         // Contract needs to hold at least 10 wei to cover steth shares issue
@@ -101,7 +103,7 @@ contract Stonks is IStonks, AssetRecoverer {
 
         Order orderCopy = Order(Clones.clone(orderSample));
         IERC20(orderParameters.tokenFrom).safeTransfer(address(orderCopy), balance);
-        orderCopy.initialize(manager);
+        orderCopy.initialize(minBuyAmount_, manager);
 
         emit OrderContractCreated(address(orderCopy));
 
@@ -110,13 +112,14 @@ contract Stonks is IStonks, AssetRecoverer {
 
     /**
      * @notice Estimates output amount for a given trade input amount.
-     * @param amount Input token amount for trade.
+     * @param amount_ Input token amount for trade.
      * @dev Uses token amount converter for output estimation.
      */
-    function estimateTradeOutput(uint256 amount) public view returns (uint256) {
-        if (amount == 0) revert InvalidAmount();
-        uint256 expectedPurchaseAmount =
-            IAmountConverter(amountConverter).getExpectedOut(orderParameters.tokenFrom, orderParameters.tokenTo, amount);
+    function estimateTradeOutput(uint256 amount_) public view returns (uint256) {
+        if (amount_ == 0) revert InvalidAmount();
+        uint256 expectedPurchaseAmount = IAmountConverter(amountConverter).getExpectedOut(
+            orderParameters.tokenFrom, orderParameters.tokenTo, amount_
+        );
         return (expectedPurchaseAmount * (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) / MAX_BASIS_POINTS;
     }
 

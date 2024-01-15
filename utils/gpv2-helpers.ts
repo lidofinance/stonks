@@ -20,14 +20,16 @@ export const orderPartials = {
 
 export const formOrderHashFromTxReceipt = async (
   receipt: TransactionReceipt,
-  stonks: Stonks
+  stonks: Stonks,
+  minBuyAmount: bigint = 0n
 ) => {
   const blockNumber = receipt.blockNumber
   const blockTimestamp = (await ethers.provider.getBlock(blockNumber))
     ?.timestamp
 
   if (!blockTimestamp) throw Error('blockTimestamp is null')
-  const { address: orderInstanceAddress, order } = await getPlaceOrderData(receipt)
+  const { address: orderInstanceAddress, order } =
+    await getPlaceOrderData(receipt)
   const orderParameters = await stonks.getOrderParameters()
   const validTo =
     blockTimestamp + Number(orderParameters.orderDurationInSeconds) // 1 hour
@@ -52,7 +54,7 @@ export const formOrderHashFromTxReceipt = async (
     buyToken: orderParameters.tokenTo,
     receiver: mainnet.AGENT,
     sellAmount: sellAmount,
-    buyAmount: buyAmount,
+    buyAmount: buyAmount > minBuyAmount ? buyAmount : minBuyAmount,
     validTo: validTo,
     appData: orderPartials.appData,
     feeAmount: 0,

@@ -111,12 +111,12 @@ contract AmountConverter is IAmountConverter {
     ///
     // @dev Internal function to get price from Chainlink Price Feed Registry.
     ///
-    function _fetchPrice(address base, address quote) internal view returns (uint256, uint256) {
-        (, int256 price,, uint256 updatedAt,) = feedRegistry.latestRoundData(base, quote);
+    function _fetchPrice(address base_, address quote_) internal view returns (uint256, uint256) {
+        (, int256 price,, uint256 updatedAt,) = feedRegistry.latestRoundData(base_, quote_);
         if (price <= 0) revert UnexpectedPriceFeedAnswer();
-        if (block.timestamp > updatedAt + priceFeedsHeartbeatTimeouts[base]) revert PriceFeedNotUpdated();
+        if (block.timestamp > updatedAt + priceFeedsHeartbeatTimeouts[base_]) revert PriceFeedNotUpdated();
 
-        uint256 decimals = feedRegistry.decimals(base, quote);
+        uint256 decimals = feedRegistry.decimals(base_, quote_);
 
         return (uint256(price), decimals);
     }

@@ -48,36 +48,36 @@ abstract contract AssetRecoverer {
 
     /**
      * @dev Allows the agent or manager to recover ERC20 tokens held by the contract.
-     * @param _token The address of the ERC20 token to recover.
-     * @param _amount The amount of the ERC20 token to recover.
+     * @param token_ The address of the ERC20 token to recover.
+     * @param amount_ The amount of the ERC20 token to recover.
      * Emits an ERC20Recovered event upon success.
      */
-    function recoverERC20(address _token, uint256 _amount) public virtual onlyAgentOrManager {
-        IERC20(_token).safeTransfer(agent, _amount);
-        emit ERC20Recovered(_token, agent, _amount);
+    function recoverERC20(address token_, uint256 amount_) public virtual onlyAgentOrManager {
+        IERC20(token_).safeTransfer(agent, amount_);
+        emit ERC20Recovered(token_, agent, amount_);
     }
 
     /**
      * @dev Allows the agent or manager to recover ERC721 tokens held by the contract.
-     * @param _token The address of the ERC721 token to recover.
-     * @param _tokenId The token ID of the ERC721 token to recover.
+     * @param token_ The address of the ERC721 token to recover.
+     * @param tokenId_ The token ID of the ERC721 token to recover.
      * Emits an ERC721Recovered event upon success.
      */
-    function recoverERC721(address _token, uint256 _tokenId) external onlyAgentOrManager {
-        IERC721(_token).safeTransferFrom(address(this), agent, _tokenId);
-        emit ERC721Recovered(_token, _tokenId, agent);
+    function recoverERC721(address token_, uint256 tokenId_) external onlyAgentOrManager {
+        IERC721(token_).safeTransferFrom(address(this), agent, tokenId_);
+        emit ERC721Recovered(token_, tokenId_, agent);
     }
 
     /**
      * @dev Allows the agent or manager to recover ERC1155 tokens held by the contract.
-     * @param _token The address of the ERC1155 token to recover.
-     * @param _tokenId The token ID of the ERC1155 token to recover.
+     * @param token_ The address of the ERC1155 token to recover.
+     * @param tokenId_ The token ID of the ERC1155 token to recover.
      * Emits an ERC1155Recovered event upon success.
      */
-    function recoverERC1155(address _token, uint256 _tokenId) external onlyAgentOrManager {
-        uint256 amount = IERC1155(_token).balanceOf(address(this), _tokenId);
-        IERC1155(_token).safeTransferFrom(address(this), agent, _tokenId, amount, "");
-        emit ERC1155Recovered(_token, _tokenId, agent, amount);
+    function recoverERC1155(address token_, uint256 tokenId_) external onlyAgentOrManager {
+        uint256 amount = IERC1155(token_).balanceOf(address(this), tokenId_);
+        IERC1155(token_).safeTransferFrom(address(this), agent, tokenId_, amount, "");
+        emit ERC1155Recovered(token_, tokenId_, agent, amount);
     }
 
     /**

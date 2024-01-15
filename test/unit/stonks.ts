@@ -55,7 +55,7 @@ describe('Stonks', function () {
         conversionTarget: '0x0000000000000000000000000000000000000348', // USD
         allowedTokensToSell: [mainnet.STETH],
         allowedStableTokensToBuy: [mainnet.DAI],
-        priceFeedsHeartbeatTimeouts: [3600]
+        priceFeedsHeartbeatTimeouts: [3600],
       },
     })
 
@@ -63,21 +63,20 @@ describe('Stonks', function () {
     subjectTokenConverter = tokenConverter
   })
 
-
   describe('initialization:', function () {
     const notZeroAddress = '0x0000000000000000000000000000000000000999'
     type ContractFactory = Parameters<typeof ContractFactory.deploy>
 
     let validParams: {
       agent: ContractFactory[0]
-      manager: ContractFactory[1],
-      tokenFrom: ContractFactory[2],
-      tokenTo: ContractFactory[3],
-      amountConverter: ContractFactory[4],
-      orderSample: ContractFactory[5],
-      orderDurationInSeconds: ContractFactory[6],
-      marginInBasisPoints: ContractFactory[7],
-      priceToleranceInBasisPoints: ContractFactory[8],
+      manager: ContractFactory[1]
+      tokenFrom: ContractFactory[2]
+      tokenTo: ContractFactory[3]
+      amountConverter: ContractFactory[4]
+      orderSample: ContractFactory[5]
+      orderDurationInSeconds: ContractFactory[6]
+      marginInBasisPoints: ContractFactory[7]
+      priceToleranceInBasisPoints: ContractFactory[8]
     }
 
     this.beforeAll(async function () {
@@ -349,7 +348,7 @@ describe('Stonks', function () {
 
   describe('order placement:', function () {
     it('should revert when balance is zero', async function () {
-      await expect(subject.placeOrder()).to.be.revertedWithCustomError(
+      await expect(subject.placeOrder(100)).to.be.revertedWithCustomError(
         subject,
         'MinimumPossibleBalanceNotMet'
       )
@@ -366,7 +365,8 @@ describe('Stonks', function () {
       expect(isClose(await steth.balanceOf(await subject.getAddress()), amount))
         .to.be.true
 
-      const tx = await subject.placeOrder()
+      const expectedBuyAmount = await subject.estimateOutputFromCurrentBalance()
+      const tx = await subject.placeOrder(expectedBuyAmount)
       await tx.wait()
     })
   })
