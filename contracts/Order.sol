@@ -129,7 +129,7 @@ contract Order is IERC1271, AssetRecoverer {
      */
     function isValidSignature(bytes32 hash_, bytes calldata) external view returns (bytes4 magicValue) {
         if (hash_ != orderHash) revert InvalidOrderHash();
-        if (validTo <= block.timestamp) revert OrderExpired();
+        if (validTo < block.timestamp) revert OrderExpired();
 
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
 
@@ -158,7 +158,7 @@ contract Order is IERC1271, AssetRecoverer {
     /// @notice Allows for the cancellation of the order and returns the tokens if the order has expired.
     /// @dev Can only be called if the order's validity period has passed.
     function recoverTokenFrom() external {
-        if (validTo > block.timestamp) revert OrderNotExpired();
+        if (validTo >= block.timestamp) revert OrderNotExpired();
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
         IERC20(orderParameters.tokenFrom).safeTransfer(
             stonks, IERC20(orderParameters.tokenFrom).balanceOf(address(this))
