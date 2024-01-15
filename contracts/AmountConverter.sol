@@ -104,6 +104,8 @@ contract AmountConverter is IAmountConverter {
         } else {
             expectedOutputAmount = (amountFrom_ * currentPrice) * 10 ** uint256(-effectiveDecimalDifference);
         }
+
+        if (expectedOutputAmount == 0) revert UnexpectedPriceFeedAnswer();
     }
 
     ///
