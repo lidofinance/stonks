@@ -48,7 +48,7 @@ export const getStonksDeployment = (
   tokenFrom: string
   tokenTo: string
   tokenConverter: string
-  operator: string
+  manager: string
   order: string
 } => {
   const stonksFactoryInterface = StonksFactory__factory.createInterface()
@@ -62,7 +62,7 @@ export const getStonksDeployment = (
     tokenFrom: data[1],
     tokenTo: data[2],
     tokenConverter: data[3],
-    operator: data[4],
+    manager: data[4],
     order: data[5],
   }
 }

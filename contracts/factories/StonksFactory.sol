@@ -15,13 +15,13 @@ contract StonksFactory {
     event StonksDeployed(
         address indexed stonksAddress,
         address agent,
-        address operator,
+        address manager,
         address tokenFrom,
         address tokenTo,
         address amountConverter,
         address order,
         uint256 orderDurationInSeconds,
-        uint256 marginBasisPoints,
+        uint256 marginInBasisPoints,
         uint256 priceToleranceInBasisPoints
     );
 
@@ -46,7 +46,7 @@ contract StonksFactory {
         address tokenTo_,
         address amountConverter_,
         uint256 orderDurationInSeconds_,
-        uint256 marginBasisPoints_,
+        uint256 marginInBasisPoints_,
         uint256 priceToleranceInBasisPoints_
     ) public returns (address stonks) {
         stonks = address(
@@ -58,7 +58,7 @@ contract StonksFactory {
                 amountConverter_,
                 orderSample,
                 orderDurationInSeconds_,
-                marginBasisPoints_,
+                marginInBasisPoints_,
                 priceToleranceInBasisPoints_
             )
         );
@@ -71,7 +71,7 @@ contract StonksFactory {
             amountConverter_,
             orderSample,
             orderDurationInSeconds_,
-            marginBasisPoints_,
+            marginInBasisPoints_,
             priceToleranceInBasisPoints_
         );
     }

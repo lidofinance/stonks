@@ -21,7 +21,7 @@ import { PlaceOrderDataEvent } from '../../utils/types'
 const PRICE_TOLERANCE_IN_BP = 1000
 
 describe('Order', async function () {
-  let operator: Signer
+  let manager: Signer
   let stonks: Stonks
   let hashHelper: HashHelper
   let amountConverter: AmountConverter
@@ -32,7 +32,7 @@ describe('Order', async function () {
 
   this.beforeAll(async function () {
     snapshotId = await network.provider.send('evm_snapshot')
-    operator = (await ethers.getSigners())[0]
+    manager = (await ethers.getSigners())[0]
 
     const amountConverterTestFactory = await ethers.getContractFactory(
       'AmountConverterTest'
@@ -57,7 +57,7 @@ describe('Order', async function () {
         stonksParams: {
           tokenFrom: mainnet.STETH,
           tokenTo: mainnet.DAI,
-          manager: await operator.getAddress(),
+          manager: await manager.getAddress(),
           marginInBps: 500,
           orderDuration: 3600,
           priceToleranceInBps: PRICE_TOLERANCE_IN_BP,
@@ -92,7 +92,7 @@ describe('Order', async function () {
     const decodedOrderTx = await getPlaceOrderData(placeOrderTxReceipt)
 
     orderData = decodedOrderTx
-    subject = await ethers.getContractAt('Order', orderData.address, operator)
+    subject = await ethers.getContractAt('Order', orderData.address, manager)
 
     orderHash = await formOrderHashFromTxReceipt(placeOrderTxReceipt, stonks)
   })
