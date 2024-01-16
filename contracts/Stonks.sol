@@ -31,9 +31,9 @@ contract Stonks is IStonks, AssetRecoverer {
     uint16 private constant MAX_BASIS_POINTS = 10_000;
     uint16 private constant BASIS_POINTS_PARAMETERS_LIMIT = 1_000;
 
-    uint8 private constant MIN_POSSIBLE_BALANCE = 10;
-    uint8 private constant MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60;
-    uint32 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60 * 60 * 24;
+    uint256 private constant MIN_POSSIBLE_BALANCE = 10;
+    uint256 private constant MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60;
+    uint256 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60 * 60 * 24;
 
     address public immutable amountConverter;
     address public immutable orderSample;
@@ -98,7 +98,7 @@ contract Stonks is IStonks, AssetRecoverer {
 
         uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
 
-        // Contract needs to hold at least 10 wei to cover steth shares issue
+        // Prevents dust trades to avoid rounding issues for rebasable tokens like stETH.
         if (balance <= MIN_POSSIBLE_BALANCE) revert MinimumPossibleBalanceNotMet();
 
         Order orderCopy = Order(Clones.clone(orderSample));
