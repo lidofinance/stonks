@@ -13,7 +13,7 @@ import {
   IERC1155,
 } from '../../typechain-types'
 
-describe.only('Asset recoverer', async function () {
+describe('Asset recoverer', async function () {
   let snapshotId: string
   let subject: AssetRecovererTest
   let manager: Signer
