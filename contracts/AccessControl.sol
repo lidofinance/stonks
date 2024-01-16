@@ -14,7 +14,6 @@ contract AccessControl {
     address public manager;
 
     error InvalidAgentAddress();
-    error InvalidManagerAddress();
     error NotAgentOrManager();
     error NotAgent();
 
@@ -31,7 +30,6 @@ contract AccessControl {
      * @param manager_ The address of the new manager.
      */
     function setManager(address manager_) external onlyAgent {
-        if (manager_ == address(0)) revert InvalidManagerAddress();
         manager = manager_;
     }
 

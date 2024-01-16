@@ -95,22 +95,6 @@ describe.only('Asset recoverer', async function () {
         subjectStrangerSigner.setManager(newManager)
       ).to.be.revertedWithCustomError(subject, 'NotAgent')
     })
-    it("shouldn't allow agent to change manager to zero address", async function () {
-      await network.provider.request({
-        method: 'hardhat_impersonateAccount',
-        params: [mainnet.AGENT],
-      })
-      const agent = await ethers.provider.getSigner(mainnet.AGENT)
-      const subjectAgentSigner = await ethers.getContractAt(
-        'AssetRecovererTest',
-        await subject.getAddress(),
-        agent
-      )
-
-      await expect(
-        subjectAgentSigner.setManager(ethers.ZeroAddress)
-      ).to.be.revertedWithCustomError(subject, 'InvalidManagerAddress')
-    })
     this.afterAll(async function () {
       await network.provider.send('evm_revert', [localSnapshotId])
     })
