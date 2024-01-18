@@ -27,15 +27,19 @@ contract AmountConverter is IAmountConverter {
     mapping(address tokenToBuy => bool allowed) public allowedTokensToBuy;
     mapping(address priceFeedAddress => uint256 priceFeedTimeout) public priceFeedsHeartbeatTimeouts;
 
-    error ZeroAddress();
-    error ZeroAmount();
+    error InvalidFeedRegistryAddress(address feedRegistryAddress);
+    error InvalidConversionTargetAddress(address conversionTargetAddress);
+    error InvalidAllowedTokenToBuy(address allowedTokenToBuy);
+    error InvalidAllowedTokenToSell(address allowedTokenToSell);
+    error InvalidAmount(uint256 amount);
     error InvalidHeartbeatArrayLength();
     error NoPriceFeedFound(address tokenFrom, address tokenTo);
     error SellTokenNotAllowed(address tokenFrom);
     error BuyTokenNotAllowed(address tokenTo);
     error SameTokensConversion();
     error UnexpectedPriceFeedAnswer();
-    error PriceFeedNotUpdated();
+    error InvalidExpectedOutAmount(uint256 amount);
+    error PriceFeedNotUpdated(uint256 updatedAt);
 
     /**
      * @param feedRegistry_ Chainlink Price Feed Registry
@@ -51,21 +55,21 @@ contract AmountConverter is IAmountConverter {
         address[] memory allowedTokensToBuy_,
         uint256[] memory priceFeedsHeartbeatTimeouts_
     ) {
-        if (feedRegistry_ == address(0)) revert ZeroAddress();
-        if (conversionTarget_ == address(0)) revert ZeroAddress();
+        if (feedRegistry_ == address(0)) revert InvalidFeedRegistryAddress(feedRegistry_);
+        if (conversionTarget_ == address(0)) revert InvalidConversionTargetAddress(conversionTarget_);
         if (allowedTokensToSell_.length != priceFeedsHeartbeatTimeouts_.length) revert InvalidHeartbeatArrayLength();
 
         FEED_REGISTRY = IFeedRegistry(feedRegistry_);
         CONVERSION_TARGET = conversionTarget_;
 
         for (uint256 i = 0; i < allowedTokensToBuy_.length; ++i) {
-            if (allowedTokensToBuy_[i] == address(0)) revert ZeroAddress();
+            if (allowedTokensToBuy_[i] == address(0)) revert InvalidAllowedTokenToBuy(allowedTokensToBuy_[i]);
             allowedTokensToBuy[allowedTokensToBuy_[i]] = true;
         }
 
         for (uint256 i = 0; i < allowedTokensToSell_.length; ++i) {
-            if (allowedTokensToSell_[i] == address(0)) revert ZeroAddress();
-            FEED_REGISTRY.getFeed(allowedTokensToSell_[i], CONVERSION_TARGET);
+            if (allowedTokensToSell_[i] == address(0)) revert InvalidAllowedTokenToSell(allowedTokensToSell_[i]);
+            FEED_REGISTRY.getFeed(allowedTokensToSell_[i], conversionTarget_);
             allowedTokensToSell[allowedTokensToSell_[i]] = true;
             priceFeedsHeartbeatTimeouts[allowedTokensToSell_[i]] = priceFeedsHeartbeatTimeouts_[i];
         }
@@ -92,9 +96,9 @@ contract AmountConverter is IAmountConverter {
         if (tokenFrom_ == tokenTo_) revert SameTokensConversion();
         if (allowedTokensToSell[tokenFrom_] == false) revert SellTokenNotAllowed(tokenFrom_);
         if (allowedTokensToBuy[tokenTo_] == false) revert BuyTokenNotAllowed(tokenTo_);
-        if (amountFrom_ == 0) revert ZeroAmount();
+        if (amountFrom_ == 0) revert InvalidAmount(amountFrom_);
 
-        (uint256 currentPrice, uint256 feedDecimals) = _fetchPrice(tokenFrom_, CONVERSION_TARGET);
+        (uint256 currentPrice, uint256 feedDecimals) = _fetchPriceAndDecimals(tokenFrom_, CONVERSION_TARGET);
 
         uint256 decimalsOfSellToken = IERC20Metadata(tokenFrom_).decimals();
         uint256 decimalsOfBuyToken = IERC20Metadata(tokenTo_).decimals();
@@ -107,19 +111,22 @@ contract AmountConverter is IAmountConverter {
             expectedOutputAmount = (amountFrom_ * currentPrice) * 10 ** uint256(-effectiveDecimalDifference);
         }
 
-        if (expectedOutputAmount == 0) revert UnexpectedPriceFeedAnswer();
+        if (expectedOutputAmount == 0) revert InvalidExpectedOutAmount(expectedOutputAmount);
     }
 
     /**
      * @dev Internal function to get price from Chainlink Price Feed Registry.
      */
-    function _fetchPrice(address base_, address quote_) internal view returns (uint256, uint256) {
-        (, int256 price,, uint256 updatedAt,) = FEED_REGISTRY.latestRoundData(base_, quote_);
-        if (price <= 0) revert UnexpectedPriceFeedAnswer();
-        if (block.timestamp > updatedAt + priceFeedsHeartbeatTimeouts[base_]) revert PriceFeedNotUpdated();
+    function _fetchPriceAndDecimals(address base_, address quote_)
+        internal
+        view
+        returns (uint256 price, uint256 decimals)
+    {
+        (, int256 intPrice,, uint256 updatedAt,) = FEED_REGISTRY.latestRoundData(base_, quote_);
+        if (intPrice <= 0) revert UnexpectedPriceFeedAnswer();
+        if (block.timestamp > updatedAt + priceFeedsHeartbeatTimeouts[base_]) revert PriceFeedNotUpdated(updatedAt);
 
-        uint256 decimals = FEED_REGISTRY.decimals(base_, quote_);
-
-        return (uint256(price), decimals);
+        price = uint256(intPrice);
+        decimals = FEED_REGISTRY.decimals(base_, quote_);
     }
 }

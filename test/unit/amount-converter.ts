@@ -35,7 +35,10 @@ describe('AmountConverter', function () {
           [mainnet.DAI, mainnet.USDC, mainnet.USDT],
           [3600, 3600, 86400, 86400]
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidFeedRegistryAddress'
+      )
     })
 
     it('should not initialize with conversion target zero address', async function () {
@@ -49,7 +52,10 @@ describe('AmountConverter', function () {
           [mainnet.DAI, mainnet.USDC, mainnet.USDT],
           [3600, 3600, 86400, 86400]
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidConversionTargetAddress'
+      )
     })
 
     it('should not initialize with zero address in allowedTokensToSell', async function () {
@@ -63,7 +69,10 @@ describe('AmountConverter', function () {
           [mainnet.DAI, mainnet.USDC, mainnet.USDT],
           [3600, 3600]
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidAllowedTokenToSell'
+      )
     })
 
     it('should not initialize with zero address in allowedTokensToBuy', async function () {
@@ -77,7 +86,10 @@ describe('AmountConverter', function () {
           [ethers.ZeroAddress, mainnet.DAI, mainnet.USDC, mainnet.USDT],
           [3600]
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidAllowedTokenToBuy'
+      )
     })
 
     it('should not initialize with wrong length priceFeedsHeartbeatTimeouts', async function () {
@@ -102,7 +114,7 @@ describe('AmountConverter', function () {
     it('should revert if amount is zero', async function () {
       await expect(
         subject.getExpectedOut(mainnet.STETH, mainnet.DAI, 0)
-      ).to.be.revertedWithCustomError(subject, 'ZeroAmount')
+      ).to.be.revertedWithCustomError(subject, 'InvalidAmount')
     })
     it('should revert if tokenFrom is not allowed', async function () {
       await expect(
