@@ -40,7 +40,11 @@ contract Stonks is IStonks, AssetRecoverer {
 
     OrderParameters public orderParameters;
 
-    error ZeroAddress();
+    error InvalidManagerAddress(address manager);
+    error InvalidTokenFromAddress(address tokenFrom);
+    error InvalidTokenToAddress(address tokenTo);
+    error InvalidAmountConverterAddress(address amountConverter);
+    error InvalidOrderSampleAddress(address orderSample);
     error TokensCannotBeSame();
     error InvalidOrderDuration(uint256 min, uint256 max, uint256 recieved);
     error MarginOverflowsAllowedLimit(uint256 limit, uint256 recieved);
@@ -65,12 +69,12 @@ contract Stonks is IStonks, AssetRecoverer {
         uint256 marginInBasisPoints_,
         uint256 priceToleranceInBasisPoints_
     ) AssetRecoverer(agent_) {
-        if (manager_ == address(0)) revert ZeroAddress();
-        if (tokenFrom_ == address(0)) revert ZeroAddress();
-        if (tokenTo_ == address(0)) revert ZeroAddress();
+        if (manager_ == address(0)) revert InvalidManagerAddress(manager_);
+        if (tokenFrom_ == address(0)) revert InvalidTokenFromAddress(tokenFrom_);
+        if (tokenTo_ == address(0)) revert InvalidTokenToAddress(tokenTo_);
         if (tokenFrom_ == tokenTo_) revert TokensCannotBeSame();
-        if (amountConverter_ == address(0)) revert ZeroAddress();
-        if (orderSample_ == address(0)) revert ZeroAddress();
+        if (amountConverter_ == address(0)) revert InvalidAmountConverterAddress(amountConverter_);
+        if (orderSample_ == address(0)) revert InvalidOrderSampleAddress(orderSample_);
         if (orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS) {
             revert InvalidOrderDuration(
                 MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS, MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS, orderDurationInSeconds_

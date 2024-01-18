@@ -146,7 +146,7 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidManagerAddress')
     })
     it('should not initialize with tokenFrom zero address', async function () {
       await expect(
@@ -161,7 +161,10 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidTokenFromAddress'
+      )
     })
     it('should not initialize with tokenTo zero address', async function () {
       await expect(
@@ -176,7 +179,7 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidTokenToAddress')
     })
     it('should not initialize with same tokens address', async function () {
       await expect(
@@ -206,7 +209,10 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidAmountConverterAddress'
+      )
     })
     it('should not initialize with orderSample zero address', async function () {
       await expect(
@@ -221,7 +227,10 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidOrderSampleAddress'
+      )
     })
     it('should not initialize with orderDurationInSeconds less than 60', async function () {
       await expect(
