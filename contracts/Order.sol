@@ -16,14 +16,13 @@ import {ICoWSwapSettlement} from "./interfaces/ICoWSwapSettlement.sol";
 
 /**
  * @title CoW Swap Trading Order Contract
- * @dev Handles the execution of individual trading orders for the Stonks contract on CoW Swap.
+ * @dev Handles the execution of individual trading order for the Stonks contract on CoW Swap.
  *
  * Features:
  *  - Retrieves trade parameters from Stonks contract, ensuring alignment with the overall trading strategy.
- *  - Manages price-related calculations, including conversion rates and margins, to determine trade amounts.
- *  - Single-use design: Each contract proxy is intended for one-time use, providing fresh settings for each trade.
+ *  - Single-use design: each contract proxy is intended for one-time use, providing fresh settings for each trade.
  *  - Complies with ERC1271 for secure order validation.
- *  - Includes asset recovery capabilities for enhanced safety.
+ *  - Provides asset recovery functionality.
  *
  * @notice Serves as an execution module for CoW Swap trades, operating under parameters set by the Stonks contract.
  */
@@ -82,7 +81,7 @@ contract Order is IERC1271, AssetRecoverer {
      * @notice Initializes the contract for trading by defining order parameters and approving tokens.
      * @param minBuyAmount_ The minimum accepted trade outcome.
      * @param manager_ The manager's address to be set for the contract.
-     * @dev This function calculates the buy amount considering trade margins, sets the order parameters, and approves the token for trading.
+     * @dev This function calculates the buy amount from ChainLink and manager input, sets the order parameters, and approves tokens for trading.
      */
     function initialize(uint256 minBuyAmount_, address manager_) external {
         if (initialized) revert OrderAlreadyInitialized();
@@ -128,8 +127,8 @@ contract Order is IERC1271, AssetRecoverer {
      * @dev Checks include:
      *      - Matching the provided hash with the stored order hash.
      *      - Confirming order validity within the specified timeframe (`validTo`).
-     *      - Computing and comparing expected purchase amounts with set trade margins and price tolerances.
-     *      - Reverts if hash mismatch, order expiration, or excessive price deviation occurs.
+     *      - Computing and comparing expected purchase amounts with market price (provided by ChainLink).
+     *      - Checking that the price tolerance is not exceeded.
      */
     function isValidSignature(bytes32 hash_, bytes calldata) external view returns (bytes4 magicValue) {
         if (hash_ != orderHash) revert InvalidOrderHash();
@@ -162,7 +161,7 @@ contract Order is IERC1271, AssetRecoverer {
     }
 
     /**
-     * @notice Allows for the cancellation of the order and returns the tokens if the order has expired.
+     * @notice Allows to return tokens if the order has expired.
      * @dev Can only be called if the order's validity period has passed.
      */
     function recoverTokenFrom() external {
