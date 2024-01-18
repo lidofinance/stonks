@@ -50,11 +50,11 @@ contract Order is IERC1271, AssetRecoverer {
     event OrderCreated(address indexed order, bytes32 orderHash, GPv2Order.Data orderData);
 
     error OrderAlreadyInitialized();
-    error InvalidOrderHash();
-    error OrderNotExpired();
-    error OrderExpired();
-    error PriceConditionChanged();
+    error OrderExpired(uint256 validTo);
     error CannotRecoverTokenFrom(address token);
+    error InvalidOrderHash(bytes32 expected, bytes32 actual);
+    error OrderNotExpired(uint256 validTo, uint256 currentTimestamp);
+    error PriceConditionChanged(uint256 maxAcceptedAmount, uint256 actualAmount);
 
     /**
      * @param agent_ The agent's address with control over the contract.
@@ -131,8 +131,8 @@ contract Order is IERC1271, AssetRecoverer {
      *      - Checking that the price tolerance is not exceeded.
      */
     function isValidSignature(bytes32 hash_, bytes calldata) external view returns (bytes4 magicValue) {
-        if (hash_ != orderHash) revert InvalidOrderHash();
-        if (validTo < block.timestamp) revert OrderExpired();
+        if (hash_ != orderHash) revert InvalidOrderHash(orderHash, hash_);
+        if (validTo < block.timestamp) revert OrderExpired(validTo);
 
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
 
@@ -147,7 +147,9 @@ contract Order is IERC1271, AssetRecoverer {
         uint256 differenceAmount = currentCalculatedPurchaseAmount - buyAmount;
         uint256 maxToleratedAmountDeviation = buyAmount * orderParameters.priceToleranceInBasisPoints / MAX_BASIS_POINTS;
 
-        if (differenceAmount > maxToleratedAmountDeviation) revert PriceConditionChanged();
+        if (differenceAmount > maxToleratedAmountDeviation) {
+            revert PriceConditionChanged(buyAmount + maxToleratedAmountDeviation, currentCalculatedPurchaseAmount);
+        }
 
         return ERC1271_MAGIC_VALUE;
     }
@@ -165,7 +167,7 @@ contract Order is IERC1271, AssetRecoverer {
      * @dev Can only be called if the order's validity period has passed.
      */
     function recoverTokenFrom() external {
-        if (validTo >= block.timestamp) revert OrderNotExpired();
+        if (validTo >= block.timestamp) revert OrderNotExpired(validTo, block.timestamp);
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
         IERC20(orderParameters.tokenFrom).safeTransfer(
             stonks, IERC20(orderParameters.tokenFrom).balanceOf(address(this))
