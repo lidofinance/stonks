@@ -5,7 +5,7 @@ pragma solidity 0.8.23;
 import {AmountConverter} from "../AmountConverter.sol";
 
 contract AmountConverterFactory {
-    address public immutable feedRegistry;
+    address public immutable FEED_REGISTRY;
 
     error ZeroAddress();
 
@@ -20,7 +20,7 @@ contract AmountConverterFactory {
 
     constructor(address feedRegistry_) {
         if (feedRegistry_ == address(0)) revert ZeroAddress();
-        feedRegistry = feedRegistry_;
+        FEED_REGISTRY = feedRegistry_;
     }
 
     function deployAmountConverter(
@@ -31,7 +31,7 @@ contract AmountConverterFactory {
     ) public returns (address tokenAmountConverter) {
         tokenAmountConverter = address(
             new AmountConverter(
-                feedRegistry,
+                FEED_REGISTRY,
                 conversionTarget_,
                 allowedTokensToSell_,
                 allowedStableTokensToBuy_,
@@ -40,7 +40,7 @@ contract AmountConverterFactory {
         );
         emit AmountConverterDeployed(
             tokenAmountConverter,
-            feedRegistry,
+            FEED_REGISTRY,
             conversionTarget_,
             allowedTokensToSell_,
             allowedStableTokensToBuy_,

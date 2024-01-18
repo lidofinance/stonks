@@ -35,8 +35,8 @@ contract Stonks is IStonks, AssetRecoverer {
     uint256 private constant MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60;
     uint256 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60 * 60 * 24;
 
-    address public immutable amountConverter;
-    address public immutable orderSample;
+    address public immutable AMOUNT_CONVERTER;
+    address public immutable ORDER_SAMPLE;
 
     OrderParameters public orderParameters;
 
@@ -77,8 +77,8 @@ contract Stonks is IStonks, AssetRecoverer {
         if (priceToleranceInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) revert PriceToleranceOverflowsAllowedLimit();
 
         manager = manager_;
-        orderSample = orderSample_;
-        amountConverter = amountConverter_;
+        ORDER_SAMPLE = orderSample_;
+        AMOUNT_CONVERTER = amountConverter_;
 
         orderParameters = OrderParameters({
             tokenFrom: tokenFrom_,
@@ -101,7 +101,7 @@ contract Stonks is IStonks, AssetRecoverer {
         // Prevents dust trades to avoid rounding issues for rebasable tokens like stETH.
         if (balance <= MIN_POSSIBLE_BALANCE) revert MinimumPossibleBalanceNotMet();
 
-        Order orderCopy = Order(Clones.clone(orderSample));
+        Order orderCopy = Order(Clones.clone(ORDER_SAMPLE));
         IERC20(orderParameters.tokenFrom).safeTransfer(address(orderCopy), balance);
         orderCopy.initialize(minBuyAmount_, manager);
 
@@ -117,7 +117,7 @@ contract Stonks is IStonks, AssetRecoverer {
      */
     function estimateTradeOutput(uint256 amount_) public view returns (uint256) {
         if (amount_ == 0) revert InvalidAmount();
-        uint256 expectedPurchaseAmount = IAmountConverter(amountConverter).getExpectedOut(
+        uint256 expectedPurchaseAmount = IAmountConverter(AMOUNT_CONVERTER).getExpectedOut(
             orderParameters.tokenFrom, orderParameters.tokenTo, amount_
         );
         return (expectedPurchaseAmount * (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) / MAX_BASIS_POINTS;

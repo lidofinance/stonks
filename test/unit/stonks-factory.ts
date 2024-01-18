@@ -1,6 +1,6 @@
 import { ethers, network } from 'hardhat'
 import { expect } from 'chai'
-import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
+import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
 import { StonksFactory, StonksFactory__factory } from '../../typechain-types'
 
 import { mainnet } from '../../utils/contracts'
@@ -23,37 +23,43 @@ describe('StonksFactory', function () {
 
   describe('initialization:', async function () {
     it('should have right treasury address', async function () {
-      expect(await subject.agent()).to.equal(mainnet.AGENT)
+      expect(await subject.AGENT()).to.equal(mainnet.AGENT)
     })
     it('should have right settlement address', async function () {
-      expect(await subject.settlement()).to.equal(mainnet.SETTLEMENT)
+      expect(await subject.SETTLEMENT()).to.equal(mainnet.SETTLEMENT)
     })
     it('should have right vault relayer address', async function () {
-      expect(await subject.relayer()).to.equal(mainnet.VAULT_RELAYER)
+      expect(await subject.RELAYER()).to.equal(mainnet.VAULT_RELAYER)
     })
     it('should have an order sample deployed', async function () {
-      expect(await subject.orderSample()).to.not.equal(ethers.ZeroAddress)
+      expect(await subject.ORDER_SAMPLE()).to.not.equal(ethers.ZeroAddress)
     })
     it('should not initialize with agent zero address', async function () {
-      await expect(ContractFactory.deploy(
-        ethers.ZeroAddress,
-        mainnet.SETTLEMENT,
-        mainnet.VAULT_RELAYER
-      )).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      await expect(
+        ContractFactory.deploy(
+          ethers.ZeroAddress,
+          mainnet.SETTLEMENT,
+          mainnet.VAULT_RELAYER
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
     })
     it('should not initialize with settlement zero address', async function () {
-      await expect(ContractFactory.deploy(
-        mainnet.AGENT,
-        ethers.ZeroAddress,
-        mainnet.VAULT_RELAYER
-      )).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      await expect(
+        ContractFactory.deploy(
+          mainnet.AGENT,
+          ethers.ZeroAddress,
+          mainnet.VAULT_RELAYER
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
     })
     it('should not initialize with relayer zero address', async function () {
-      await expect(ContractFactory.deploy(
-        mainnet.AGENT,
-        mainnet.SETTLEMENT,
-        ethers.ZeroAddress
-      )).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      await expect(
+        ContractFactory.deploy(
+          mainnet.AGENT,
+          mainnet.SETTLEMENT,
+          ethers.ZeroAddress
+        )
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
     })
   })
   describe('stonks deployment:', async function () {
@@ -63,7 +69,7 @@ describe('StonksFactory', function () {
       const tokenFrom = mainnet.STETH
       const tokenTo = mainnet.DAI
       const amountConverter = await signers[1].getAddress()
-      const orderSample = await subject.orderSample()
+      const orderSample = await subject.ORDER_SAMPLE()
       const orderDuration = 3600
       const marginInBP = 100
       const toleranceInBP = 200

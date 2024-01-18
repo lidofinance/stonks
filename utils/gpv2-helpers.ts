@@ -35,7 +35,7 @@ export const formOrderHashFromTxReceipt = async (
     blockTimestamp + Number(orderParameters.orderDurationInSeconds) // 1 hour
   const tokenConverter = await ethers.getContractAt(
     'AmountConverter',
-    await stonks.amountConverter()
+    await stonks.AMOUNT_CONVERTER()
   )
   const token = await ethers.getContractAt('IERC20', orderParameters.tokenFrom)
   const sellAmount = await token.balanceOf(orderInstanceAddress)

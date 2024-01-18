@@ -14,14 +14,14 @@ import {IFeedRegistry} from "./interfaces/IFeedRegistry.sol";
  * two tokens.
  *
  * The primary function `getExpectedOut` is the main point of interaction. It fetches the price of the
- * provided token to `conversionTarget` currency (so far USD is a primary conversion target) from the
+ * provided token to `CONVERSION_TARGET` currency (so far USD is a primary conversion target) from the
  * Chainlink Price Feed and calculates the expected amount of the output token based on the input amount of the sellToken.
  */
 contract AmountConverter is IAmountConverter {
     // Conversion targets: https://github.com/smartcontractkit/chainlink/blob/develop/contracts/src/v0.8/Denominations.sol
-    address public immutable conversionTarget;
+    address public immutable CONVERSION_TARGET;
 
-    IFeedRegistry public immutable feedRegistry;
+    IFeedRegistry public immutable FEED_REGISTRY;
 
     mapping(address => bool) public allowedTokensToSell;
     mapping(address => bool) public allowedTokensToBuy;
@@ -53,8 +53,8 @@ contract AmountConverter is IAmountConverter {
         if (conversionTarget_ == address(0)) revert ZeroAddress();
         if (allowedTokensToSell_.length != priceFeedsHeartbeatTimeouts_.length) revert InvalidHeartbeatArrayLength();
 
-        feedRegistry = IFeedRegistry(feedRegistry_);
-        conversionTarget = conversionTarget_;
+        FEED_REGISTRY = IFeedRegistry(feedRegistry_);
+        CONVERSION_TARGET = conversionTarget_;
 
         for (uint256 i = 0; i < allowedTokensToBuy_.length; ++i) {
             if (allowedTokensToBuy_[i] == address(0)) revert ZeroAddress();
@@ -63,7 +63,7 @@ contract AmountConverter is IAmountConverter {
 
         for (uint256 i = 0; i < allowedTokensToSell_.length; ++i) {
             if (allowedTokensToSell_[i] == address(0)) revert ZeroAddress();
-            feedRegistry.getFeed(allowedTokensToSell_[i], conversionTarget);
+            FEED_REGISTRY.getFeed(allowedTokensToSell_[i], CONVERSION_TARGET);
             allowedTokensToSell[allowedTokensToSell_[i]] = true;
             priceFeedsHeartbeatTimeouts[allowedTokensToSell_[i]] = priceFeedsHeartbeatTimeouts_[i];
         }
@@ -72,13 +72,13 @@ contract AmountConverter is IAmountConverter {
     /**
      * @notice Calculates the expected amount of `tokenTo_` that one would receive for a given amount of `tokenFrom_`.
      * @dev This function computes the expected output amount of `tokenTo_` when selling `tokenFrom_`.
-     *      It uses the Chainlink Price Feed to get the current price of `tokenFrom_` in terms of the `conversionTarget`
+     *      It uses the Chainlink Price Feed to get the current price of `tokenFrom_` in terms of the `CONVERSION_TARGET`
      *      (usually USD). The function then adjusts this price based on the token decimals and returns the expected
      *      amount of `tokenTo_` one would receive for the specified `amountFrom_` of `tokenFrom_`.
-     *      This function assumes that `tokenTo_` is equivalent in value to the `conversionTarget`.
+     *      This function assumes that `tokenTo_` is equivalent in value to the `CONVERSION_TARGET`.
      *
      * @param tokenFrom_ The address of the token being sold.
-     * @param tokenTo_ The address of the token being bought, expected to be equivalent to the `conversionTarget`.
+     * @param tokenTo_ The address of the token being bought, expected to be equivalent to the `CONVERSION_TARGET`.
      * @param amountFrom_ The amount of `tokenFrom_` that is being sold.
      * @return expectedOutputAmount The expected amount of `tokenTo_` that will be received.
      */
@@ -92,7 +92,7 @@ contract AmountConverter is IAmountConverter {
         if (allowedTokensToBuy[tokenTo_] == false) revert BuyTokenNotAllowed(tokenTo_);
         if (amountFrom_ == 0) revert ZeroAmount();
 
-        (uint256 currentPrice, uint256 feedDecimals) = _fetchPrice(tokenFrom_, conversionTarget);
+        (uint256 currentPrice, uint256 feedDecimals) = _fetchPrice(tokenFrom_, CONVERSION_TARGET);
 
         uint256 decimalsOfSellToken = IERC20Metadata(tokenFrom_).decimals();
         uint256 decimalsOfBuyToken = IERC20Metadata(tokenTo_).decimals();
@@ -112,11 +112,11 @@ contract AmountConverter is IAmountConverter {
     // @dev Internal function to get price from Chainlink Price Feed Registry.
     ///
     function _fetchPrice(address base_, address quote_) internal view returns (uint256, uint256) {
-        (, int256 price,, uint256 updatedAt,) = feedRegistry.latestRoundData(base_, quote_);
+        (, int256 price,, uint256 updatedAt,) = FEED_REGISTRY.latestRoundData(base_, quote_);
         if (price <= 0) revert UnexpectedPriceFeedAnswer();
         if (block.timestamp > updatedAt + priceFeedsHeartbeatTimeouts[base_]) revert PriceFeedNotUpdated();
 
-        uint256 decimals = feedRegistry.decimals(base_, quote_);
+        uint256 decimals = FEED_REGISTRY.decimals(base_, quote_);
 
         return (uint256(price), decimals);
     }

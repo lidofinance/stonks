@@ -35,9 +35,9 @@ contract Order is IERC1271, AssetRecoverer {
     uint256 private constant MAX_BASIS_POINTS = 10_000;
     bytes32 private constant APP_DATA = keccak256("LIDO_DOES_STONKS");
 
-    address public immutable settlement;
-    address public immutable relayer;
-    bytes32 public immutable domainSeparator;
+    address public immutable SETTLEMENT;
+    address public immutable RELAYER;
+    bytes32 public immutable DOMAIN_SEPARATOR;
 
     address public stonks;
 
@@ -66,9 +66,9 @@ contract Order is IERC1271, AssetRecoverer {
         // Immutable variables are set at contract deployment and remain unchangeable thereafter.
         // This ensures that even when creating new proxies via a minimal proxy,
         // these variables retain their initial values assigned at the time of the original contract deployment.
-        settlement = settlement_;
-        relayer = relayer_;
-        domainSeparator = ICoWSwapSettlement(settlement_).domainSeparator();
+        SETTLEMENT = settlement_;
+        RELAYER = relayer_;
+        DOMAIN_SEPARATOR = ICoWSwapSettlement(settlement_).domainSeparator();
 
         // This variable is stored in the contract's storage and will be overwritten
         // when a new proxy is created via a minimal proxy. Currently, it is set to true
@@ -96,7 +96,7 @@ contract Order is IERC1271, AssetRecoverer {
         GPv2Order.Data memory order = GPv2Order.Data({
             sellToken: IERC20Metadata(orderParameters.tokenFrom),
             buyToken: IERC20Metadata(orderParameters.tokenTo),
-            receiver: agent,
+            receiver: AGENT,
             sellAmount: sellAmount,
             buyAmount: buyAmount,
             validTo: validTo,
@@ -109,11 +109,11 @@ contract Order is IERC1271, AssetRecoverer {
             sellTokenBalance: GPv2Order.BALANCE_ERC20,
             buyTokenBalance: GPv2Order.BALANCE_ERC20
         });
-        orderHash = order.hash(domainSeparator);
+        orderHash = order.hash(DOMAIN_SEPARATOR);
 
         // Approval is set to the maximum value of uint256 as the contract is intended for single-use only.
         // This eliminates the need for subsequent approval calls, optimizing for gas efficiency in one-time transactions.
-        IERC20(orderParameters.tokenFrom).approve(relayer, type(uint256).max);
+        IERC20(orderParameters.tokenFrom).approve(RELAYER, type(uint256).max);
 
         emit OrderCreated(address(this), orderHash, order);
     }

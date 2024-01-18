@@ -107,7 +107,7 @@ describe('Order', async function () {
     it('sample instance should be initialized by default', async () => {
       const subject = await ethers.getContractAt(
         'Order',
-        await stonks.orderSample()
+        await stonks.ORDER_SAMPLE()
       )
       await expect(
         subject.initialize(expectedBuyAmount, ethers.ZeroAddress)

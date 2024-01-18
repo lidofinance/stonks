@@ -23,7 +23,7 @@ describe('AmountConverterFactory', function () {
 
   describe('initialization:', async function () {
     it('should have right treasury address', async function () {
-      expect(await subject.feedRegistry()).to.equal(
+      expect(await subject.FEED_REGISTRY()).to.equal(
         mainnet.CHAINLINK_PRICE_FEED_REGISTRY
       )
     })
@@ -31,9 +31,9 @@ describe('AmountConverterFactory', function () {
       const ContractFactory = await ethers.getContractFactory(
         'AmountConverterFactory'
       )
-      await expect(ContractFactory.deploy(
-        ethers.ZeroAddress
-      )).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      await expect(
+        ContractFactory.deploy(ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
     })
   })
   describe('amount converter deployment:', async function () {

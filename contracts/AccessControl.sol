@@ -10,7 +10,7 @@ pragma solidity 0.8.23;
  * manager can be set by the agent.
  */
 contract AccessControl {
-    address public immutable agent;
+    address public immutable AGENT;
     address public manager;
 
     error InvalidAgentAddress();
@@ -24,7 +24,7 @@ contract AccessControl {
      */
     constructor(address agent_) {
         if (agent_ == address(0)) revert InvalidAgentAddress();
-        agent = agent_;
+        AGENT = agent_;
     }
 
     /**
@@ -40,7 +40,7 @@ contract AccessControl {
      * @dev Modifier to restrict function access from either the agent or the manager.
      */
     modifier onlyAgentOrManager() {
-        if (msg.sender != agent && msg.sender != manager) revert NotAgentOrManager();
+        if (msg.sender != AGENT && msg.sender != manager) revert NotAgentOrManager();
         _;
     }
 
@@ -48,7 +48,7 @@ contract AccessControl {
      * @dev Modifier to restrict function access from the agent.
      */
     modifier onlyAgent() {
-        if (msg.sender != agent) revert NotAgent();
+        if (msg.sender != AGENT) revert NotAgent();
         _;
     }
 }

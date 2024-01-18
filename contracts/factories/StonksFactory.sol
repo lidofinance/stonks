@@ -6,10 +6,10 @@ import {Stonks} from "../Stonks.sol";
 import {Order} from "../Order.sol";
 
 contract StonksFactory {
-    address public immutable agent;
-    address public immutable orderSample;
-    address public immutable settlement;
-    address public immutable relayer;
+    address public immutable AGENT;
+    address public immutable ORDER_SAMPLE;
+    address public immutable SETTLEMENT;
+    address public immutable RELAYER;
 
     event OrderSampleDeployed(address orderAddress);
     event StonksDeployed(
@@ -32,12 +32,12 @@ contract StonksFactory {
         if (settlement_ == address(0)) revert ZeroAddress();
         if (relayer_ == address(0)) revert ZeroAddress();
 
-        agent = agent_;
-        relayer = relayer_;
-        settlement = settlement_;
-        orderSample = address(new Order(agent_, settlement_, relayer_));
+        AGENT = agent_;
+        RELAYER = relayer_;
+        SETTLEMENT = settlement_;
+        ORDER_SAMPLE = address(new Order(agent_, settlement_, relayer_));
 
-        emit OrderSampleDeployed(orderSample);
+        emit OrderSampleDeployed(ORDER_SAMPLE);
     }
 
     function deployStonks(
@@ -51,12 +51,12 @@ contract StonksFactory {
     ) public returns (address stonks) {
         stonks = address(
             new Stonks(
-                agent,
+                AGENT,
                 manager_,
                 tokenFrom_, 
                 tokenTo_,
                 amountConverter_,
-                orderSample,
+                ORDER_SAMPLE,
                 orderDurationInSeconds_,
                 marginInBasisPoints_,
                 priceToleranceInBasisPoints_
@@ -64,12 +64,12 @@ contract StonksFactory {
         );
         emit StonksDeployed(
             stonks,
-            agent,
+            AGENT,
             manager_,
             tokenFrom_,
             tokenTo_,
             amountConverter_,
-            orderSample,
+            ORDER_SAMPLE,
             orderDurationInSeconds_,
             marginInBasisPoints_,
             priceToleranceInBasisPoints_

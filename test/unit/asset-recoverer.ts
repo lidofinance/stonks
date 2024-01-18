@@ -36,7 +36,7 @@ describe('Asset recoverer', async function () {
 
   describe('initialization:', async function () {
     it('should have right manager and agent addresses', async function () {
-      expect(await subject.agent()).to.equal(mainnet.AGENT)
+      expect(await subject.AGENT()).to.equal(mainnet.AGENT)
       expect(await subject.manager()).to.equal(await manager.getAddress())
     })
     it('should revert with agent zero adress', async function () {
