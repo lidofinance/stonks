@@ -1,6 +1,6 @@
-// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
+// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.19;
+pragma solidity 0.8.23;
 
 import {IFeedRegistry} from "../interfaces/IFeedRegistry.sol";
 
@@ -25,13 +25,12 @@ contract FeedRegistryTest {
     }
 
     function latestRoundData(address base, address quote)
-        external view
+        external
+        view
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
     {
-        (roundId, answer, startedAt, updatedAt, answeredInRound) = IFeedRegistry(feedRegistry).latestRoundData(
-            base,
-            quote
-        );
+        (roundId, answer, startedAt, updatedAt, answeredInRound) =
+            IFeedRegistry(feedRegistry).latestRoundData(base, quote);
 
         if (heartbeat != 0) {
             updatedAt = block.timestamp - heartbeat;

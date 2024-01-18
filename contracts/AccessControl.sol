@@ -1,6 +1,6 @@
-// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
+// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.19;
+pragma solidity 0.8.23;
 
 /**
  * @title AccessControl
@@ -17,6 +17,8 @@ contract AccessControl {
     error NotAgentOrManager();
     error NotAgent();
 
+    event ManagerSet(address indexed manager);
+
     /**
      * @dev Initializes the contract setting the deployer as the initial agent.
      */
@@ -31,6 +33,7 @@ contract AccessControl {
      */
     function setManager(address manager_) external onlyAgent {
         manager = manager_;
+        emit ManagerSet(manager_);
     }
 
     /**
