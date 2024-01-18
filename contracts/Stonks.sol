@@ -17,12 +17,11 @@ import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
  * @dev Centralizes the management of CoW Swap trading orders, interfacing with the Order contract.
  *
  * Features:
- *  - Stores key trading parameters like token pairs and margins in immutable variables.
- *  - Facilitates the creation of new Order contracts for individual trades.
- *  - Provides asset recovery functionality for additional security.
- *  - Maintains a consistent trading strategy through centralized parameter management.
+ *  - Stores key trading parameters: token pair, margin, price tokerance and order duration in immutable variables.
+ *  - Creates a minimum proxy from the Order contract and passes params for individual trades.
+ *  - Provides asset recovery functionality.
  *
- * @notice Orchestrates the setup and execution of trades on CoW Swap, utilizing Order contracts for each transaction.
+ * @notice Orchestrates the setup and execution of trades on CoW Swap, utilizing Order contracts for each trade.
  */
 contract Stonks is IStonks, AssetRecoverer {
     using SafeERC20 for IERC20;
@@ -108,6 +107,7 @@ contract Stonks is IStonks, AssetRecoverer {
     /**
      * @notice Initiates a new trading order by creating an Order contract clone with the current token balance.
      * @dev Transfers the tokenFrom balance to the new Order instance and initializes it with the Stonks' manager settings for execution.
+     * @param minBuyAmount_ Minimum amount of tokenTo to be received as a result of the trade.
      */
     function placeOrder(uint256 minBuyAmount_) external onlyAgentOrManager returns (address) {
         if (minBuyAmount_ == 0) revert InvalidAmount(minBuyAmount_);
@@ -128,6 +128,7 @@ contract Stonks is IStonks, AssetRecoverer {
 
     /**
      * @notice Estimates output amount for a given trade input amount.
+     * Subtracts the amount that corresponds to the margin parameter from the result obtained from the amount converter.
      * @param amount_ Input token amount for trade.
      * @dev Uses token amount converter for output estimation.
      */
