@@ -15,10 +15,6 @@ const config: HardhatUserConfig = {
       url: process.env.RPC_URL,
       accounts: [WALLET_PRIVATE_KEY],
     },
-    goerli: {
-      url: process.env.GOERLI_RPC_URL,
-      accounts: [WALLET_PRIVATE_KEY],
-    },
     hardhat: {
       forking: {
         url: process.env.RPC_URL!,
