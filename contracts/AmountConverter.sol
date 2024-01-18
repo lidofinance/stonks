@@ -23,9 +23,9 @@ contract AmountConverter is IAmountConverter {
 
     IFeedRegistry public immutable FEED_REGISTRY;
 
-    mapping(address => bool) public allowedTokensToSell;
-    mapping(address => bool) public allowedTokensToBuy;
-    mapping(address => uint256) public priceFeedsHeartbeatTimeouts;
+    mapping(address tokenToSell => bool allowed) public allowedTokensToSell;
+    mapping(address tokenToBuy => bool allowed) public allowedTokensToBuy;
+    mapping(address priceFeedAddress => uint256 priceFeedTimeout) public priceFeedsHeartbeatTimeouts;
 
     error ZeroAddress();
     error ZeroAmount();
