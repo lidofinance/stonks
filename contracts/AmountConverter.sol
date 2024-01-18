@@ -37,11 +37,13 @@ contract AmountConverter is IAmountConverter {
     error UnexpectedPriceFeedAnswer();
     error PriceFeedNotUpdated();
 
-    /// @param feedRegistry_ Chainlink Price Feed Registry
-    /// @param conversionTarget_ Target currency we expect to be equal to allowed tokens to buy
-    /// @param allowedTokensToSell_ List of addresses which allowed to use as sell tokens
-    /// @param allowedTokensToBuy_ List of addresses of tokens that we expect to be equal to conversionTarget
-    /// @param priceFeedsHeartbeatTimeouts_ List of timeouts for price feeds (should be in sync by index with allowedTokensToSell_)
+    /**
+     * @param feedRegistry_ Chainlink Price Feed Registry
+     * @param conversionTarget_ Target currency we expect to be equal to allowed tokens to buy
+     * @param allowedTokensToSell_ List of addresses which allowed to use as sell tokens
+     * @param allowedTokensToBuy_ List of addresses of tokens that we expect to be equal to conversionTarget
+     * @param priceFeedsHeartbeatTimeouts_ List of timeouts for price feeds (should be in sync by index with allowedTokensToSell_)
+     */
     constructor(
         address feedRegistry_,
         address conversionTarget_,
@@ -108,9 +110,9 @@ contract AmountConverter is IAmountConverter {
         if (expectedOutputAmount == 0) revert UnexpectedPriceFeedAnswer();
     }
 
-    ///
-    // @dev Internal function to get price from Chainlink Price Feed Registry.
-    ///
+    /**
+     * @dev Internal function to get price from Chainlink Price Feed Registry.
+     */
     function _fetchPrice(address base_, address quote_) internal view returns (uint256, uint256) {
         (, int256 price,, uint256 updatedAt,) = FEED_REGISTRY.latestRoundData(base_, quote_);
         if (price <= 0) revert UnexpectedPriceFeedAnswer();

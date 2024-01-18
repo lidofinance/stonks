@@ -57,11 +57,13 @@ contract Order is IERC1271, AssetRecoverer {
     error PriceConditionChanged();
     error CannotRecoverTokenFrom();
 
-    /// @param agent_ The agent's address with control over the contract.
-    /// @param settlement_ The address of the settlement contract.
-    /// @param relayer_ The address of the relayer handling orders.
-    /// @dev This constructor sets up necessary parameters and state variables to enable the contract's interaction with the CoW Swap protocol.
-    /// @dev It also marks the contract as initialized to prevent unauthorized re-initialization.
+    /**
+     * @param agent_ The agent's address with control over the contract.
+     * @param settlement_ The address of the settlement contract.
+     * @param relayer_ The address of the relayer handling orders.
+     * @dev This constructor sets up necessary parameters and state variables to enable the contract's interaction with the CoW Swap protocol.
+     * @dev It also marks the contract as initialized to prevent unauthorized re-initialization.
+     */
     constructor(address agent_, address settlement_, address relayer_) AssetRecoverer(agent_) {
         // Immutable variables are set at contract deployment and remain unchangeable thereafter.
         // This ensures that even when creating new proxies via a minimal proxy,
@@ -76,10 +78,12 @@ contract Order is IERC1271, AssetRecoverer {
         initialized = true;
     }
 
-    /// @notice Initializes the contract for trading by defining order parameters and approving tokens.
-    /// @param minBuyAmount_ The minimum accepted trade outcome.
-    /// @param manager_ The manager's address to be set for the contract.
-    /// @dev This function calculates the buy amount considering trade margins, sets the order parameters, and approves the token for trading.
+    /**
+     * @notice Initializes the contract for trading by defining order parameters and approving tokens.
+     * @param minBuyAmount_ The minimum accepted trade outcome.
+     * @param manager_ The manager's address to be set for the contract.
+     * @dev This function calculates the buy amount considering trade margins, sets the order parameters, and approves the token for trading.
+     */
     function initialize(uint256 minBuyAmount_, address manager_) external {
         if (initialized) revert OrderAlreadyInitialized();
 
@@ -149,14 +153,18 @@ contract Order is IERC1271, AssetRecoverer {
         return ERC1271_MAGIC_VALUE;
     }
 
-    /// @notice Retrieves the details of the placed order.
+    /**
+     * @notice Retrieves the details of the placed order.
+     */
     function getOrderDetails() external view returns (bytes32, address, address, uint256, uint256, uint32) {
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
         return (orderHash, orderParameters.tokenFrom, orderParameters.tokenTo, sellAmount, buyAmount, validTo);
     }
 
-    /// @notice Allows for the cancellation of the order and returns the tokens if the order has expired.
-    /// @dev Can only be called if the order's validity period has passed.
+    /**
+     * @notice Allows for the cancellation of the order and returns the tokens if the order has expired.
+     * @dev Can only be called if the order's validity period has passed.
+     */
     function recoverTokenFrom() external {
         if (validTo >= block.timestamp) revert OrderNotExpired();
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
@@ -165,10 +173,12 @@ contract Order is IERC1271, AssetRecoverer {
         );
     }
 
-    /// @notice Facilitates the recovery of ERC20 tokens from the contract, except for the token involved in the order.
-    /// @param token_ The address of the token to recover.
-    /// @param amount_ The amount of the token to recover.
-    /// @dev Can only be called by the agent or manager of the contract. This is a safety feature to prevent accidental token loss.
+    /**
+     * @notice Facilitates the recovery of ERC20 tokens from the contract, except for the token involved in the order.
+     * @param token_ The address of the token to recover.
+     * @param amount_ The amount of the token to recover.
+     * @dev Can only be called by the agent or manager of the contract. This is a safety feature to prevent accidental token loss.
+     */
     function recoverERC20(address token_, uint256 amount_) public override onlyAgentOrManager {
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
         if (token_ == orderParameters.tokenFrom) revert CannotRecoverTokenFrom();
