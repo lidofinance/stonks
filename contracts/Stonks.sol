@@ -42,11 +42,11 @@ contract Stonks is IStonks, AssetRecoverer {
 
     error ZeroAddress();
     error TokensCannotBeSame();
-    error InvalidOrderDuration();
-    error MarginOverflowsAllowedLimit();
-    error PriceToleranceOverflowsAllowedLimit();
-    error MinimumPossibleBalanceNotMet();
-    error InvalidAmount();
+    error InvalidOrderDuration(uint256 min, uint256 max, uint256 recieved);
+    error MarginOverflowsAllowedLimit(uint256 limit, uint256 recieved);
+    error PriceToleranceOverflowsAllowedLimit(uint256 limit, uint256 recieved);
+    error MinimumPossibleBalanceNotMet(uint256 min, uint256 recieved);
+    error InvalidAmount(uint256 amount);
 
     event OrderContractCreated(address indexed orderContract);
 
@@ -71,10 +71,22 @@ contract Stonks is IStonks, AssetRecoverer {
         if (tokenFrom_ == tokenTo_) revert TokensCannotBeSame();
         if (amountConverter_ == address(0)) revert ZeroAddress();
         if (orderSample_ == address(0)) revert ZeroAddress();
-        if (orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS) revert InvalidOrderDuration();
-        if (orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS) revert InvalidOrderDuration();
-        if (marginInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) revert MarginOverflowsAllowedLimit();
-        if (priceToleranceInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) revert PriceToleranceOverflowsAllowedLimit();
+        if (orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS) {
+            revert InvalidOrderDuration(
+                MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS, MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS, orderDurationInSeconds_
+            );
+        }
+        if (orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS) {
+            revert InvalidOrderDuration(
+                MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS, MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS, orderDurationInSeconds_
+            );
+        }
+        if (marginInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) {
+            revert MarginOverflowsAllowedLimit(BASIS_POINTS_PARAMETERS_LIMIT, marginInBasisPoints_);
+        }
+        if (priceToleranceInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) {
+            revert PriceToleranceOverflowsAllowedLimit(BASIS_POINTS_PARAMETERS_LIMIT, priceToleranceInBasisPoints_);
+        }
 
         manager = manager_;
         ORDER_SAMPLE = orderSample_;
@@ -94,12 +106,12 @@ contract Stonks is IStonks, AssetRecoverer {
      * @dev Transfers the tokenFrom balance to the new Order instance and initializes it with the Stonks' manager settings for execution.
      */
     function placeOrder(uint256 minBuyAmount_) external onlyAgentOrManager returns (address) {
-        if (minBuyAmount_ == 0) revert InvalidAmount();
+        if (minBuyAmount_ == 0) revert InvalidAmount(minBuyAmount_);
 
         uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
 
         // Prevents dust trades to avoid rounding issues for rebasable tokens like stETH.
-        if (balance <= MIN_POSSIBLE_BALANCE) revert MinimumPossibleBalanceNotMet();
+        if (balance <= MIN_POSSIBLE_BALANCE) revert MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, balance);
 
         Order orderCopy = Order(Clones.clone(ORDER_SAMPLE));
         IERC20(orderParameters.tokenFrom).safeTransfer(address(orderCopy), balance);
@@ -116,7 +128,7 @@ contract Stonks is IStonks, AssetRecoverer {
      * @dev Uses token amount converter for output estimation.
      */
     function estimateTradeOutput(uint256 amount_) public view returns (uint256) {
-        if (amount_ == 0) revert InvalidAmount();
+        if (amount_ == 0) revert InvalidAmount(amount_);
         uint256 expectedPurchaseAmount = IAmountConverter(AMOUNT_CONVERTER).getExpectedOut(
             orderParameters.tokenFrom, orderParameters.tokenTo, amount_
         );

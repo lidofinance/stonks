@@ -80,20 +80,21 @@ describe('Asset recoverer', async function () {
         await subject.getAddress(),
         manager
       )
-      await expect(
-        subjectManagerSigner.setManager(newManager)
-      ).to.be.revertedWithCustomError(subject, 'NotAgent')
+      await expect(subjectManagerSigner.setManager(newManager))
+        .to.be.revertedWithCustomError(subject, 'NotAgent')
+        .withArgs(await manager.getAddress())
     })
     it("shouldn't allow stranger to change manager", async function () {
       const newManager = await (await ethers.getSigners())[2].getAddress()
+      const signer = (await ethers.getSigners())[3]
       const subjectStrangerSigner = await ethers.getContractAt(
         'AssetRecovererTest',
         await subject.getAddress(),
-        (await ethers.getSigners())[3]
+        signer
       )
-      await expect(
-        subjectStrangerSigner.setManager(newManager)
-      ).to.be.revertedWithCustomError(subject, 'NotAgent')
+      await expect(subjectStrangerSigner.setManager(newManager))
+        .to.be.revertedWithCustomError(subject, 'NotAgent')
+        .withArgs(await signer.getAddress())
     })
     this.afterAll(async function () {
       await network.provider.send('evm_revert', [localSnapshotId])
@@ -155,16 +156,16 @@ describe('Asset recoverer', async function () {
       })
 
       it('should revert if it is called by stranger Ether', async () => {
+        const signer = (await ethers.getSigners())[2]
         const localSubject = await ethers.getContractAt(
           'Order',
           await subject.getAddress(),
-          (await ethers.getSigners())[2]
+          signer
         )
 
-        await expect(localSubject.recoverEther()).to.be.revertedWithCustomError(
-          subject,
-          'NotAgentOrManager'
-        )
+        await expect(localSubject.recoverEther())
+          .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+          .withArgs(await signer.getAddress())
       })
     })
 
@@ -236,15 +237,16 @@ describe('Asset recoverer', async function () {
       })
 
       it('should revert if it is called by stranger ERC20', async () => {
+        const signer = (await ethers.getSigners())[2]
         const localSubject = await ethers.getContractAt(
           'Order',
           await subject.getAddress(),
-          (await ethers.getSigners())[2]
+          signer
         )
 
-        await expect(
-          localSubject.recoverERC20(mainnet.DAI, amount)
-        ).to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        await expect(localSubject.recoverERC20(mainnet.DAI, amount))
+          .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+          .withArgs(await signer.getAddress())
       })
     })
 
@@ -305,9 +307,9 @@ describe('Asset recoverer', async function () {
           stranger
         )
 
-        expect(
-          localSubject.recoverERC721(nftAddress, nftId)
-        ).to.be.revertedWithCustomError(localSubject, 'NotAgentOrManager')
+        expect(localSubject.recoverERC721(nftAddress, nftId))
+          .to.be.revertedWithCustomError(localSubject, 'NotAgentOrManager')
+          .withArgs(await stranger.getAddress())
       })
     })
 

@@ -13,17 +13,17 @@ contract AccessControl {
     address public immutable AGENT;
     address public manager;
 
-    error InvalidAgentAddress();
-    error NotAgentOrManager();
-    error NotAgent();
+    error InvalidAgentAddress(address agent_);
+    error NotAgentOrManager(address sender);
+    error NotAgent(address sender);
 
     event ManagerSet(address indexed manager);
 
     /**
-     * @dev Initializes the contract setting the deployer as the initial agent.
+     * @dev Initializes the contract setting the agent.
      */
     constructor(address agent_) {
-        if (agent_ == address(0)) revert InvalidAgentAddress();
+        if (agent_ == address(0)) revert InvalidAgentAddress(agent_);
         AGENT = agent_;
     }
 
@@ -40,7 +40,7 @@ contract AccessControl {
      * @dev Modifier to restrict function access from either the agent or the manager.
      */
     modifier onlyAgentOrManager() {
-        if (msg.sender != AGENT && msg.sender != manager) revert NotAgentOrManager();
+        if (msg.sender != AGENT && msg.sender != manager) revert NotAgentOrManager(msg.sender);
         _;
     }
 
@@ -48,7 +48,7 @@ contract AccessControl {
      * @dev Modifier to restrict function access from the agent.
      */
     modifier onlyAgent() {
-        if (msg.sender != AGENT) revert NotAgent();
+        if (msg.sender != AGENT) revert NotAgent(msg.sender);
         _;
     }
 }

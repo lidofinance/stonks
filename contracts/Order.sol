@@ -55,7 +55,7 @@ contract Order is IERC1271, AssetRecoverer {
     error OrderNotExpired();
     error OrderExpired();
     error PriceConditionChanged();
-    error CannotRecoverTokenFrom();
+    error CannotRecoverTokenFrom(address token);
 
     /**
      * @param agent_ The agent's address with control over the contract.
@@ -181,7 +181,7 @@ contract Order is IERC1271, AssetRecoverer {
      */
     function recoverERC20(address token_, uint256 amount_) public override onlyAgentOrManager {
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
-        if (token_ == orderParameters.tokenFrom) revert CannotRecoverTokenFrom();
+        if (token_ == orderParameters.tokenFrom) revert CannotRecoverTokenFrom(orderParameters.tokenFrom);
         AssetRecoverer.recoverERC20(token_, amount_);
     }
 }

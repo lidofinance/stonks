@@ -270,9 +270,9 @@ describe('Order', async function () {
   describe('recoverERC20:', async function () {
     it('should revert if recover a token from', async () => {
       const orderParams = await stonks.getOrderParameters()
-      await expect(
-        subject.recoverERC20(orderParams['tokenFrom'], BigInt(1))
-      ).revertedWithCustomError(subject, 'CannotRecoverTokenFrom')
+      await expect(subject.recoverERC20(orderParams['tokenFrom'], BigInt(1)))
+        .revertedWithCustomError(subject, 'CannotRecoverTokenFrom')
+        .withArgs(orderParams['tokenFrom'])
     })
     it('should revert if called by stranger', async () => {
       const amount = ethers.parseEther('1')
@@ -281,14 +281,15 @@ describe('Order', async function () {
         amount: amount,
         address: await subject.getAddress(),
       })
+      const signer = (await ethers.getSigners())[4]
       const localSubject = await ethers.getContractAt(
         'Order',
         await subject.getAddress(),
-        (await ethers.getSigners())[4]
+        signer
       )
-      await expect(
-        localSubject.recoverERC20(mainnet.DAI, BigInt(1))
-      ).revertedWithCustomError(subject, 'NotAgentOrManager')
+      await expect(localSubject.recoverERC20(mainnet.DAI, BigInt(1)))
+        .revertedWithCustomError(subject, 'NotAgentOrManager')
+        .withArgs(await signer.getAddress())
     })
     it('should successfully recover a token', async () => {
       const amount = ethers.parseEther('1')
