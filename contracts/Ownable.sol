@@ -3,13 +3,12 @@
 pragma solidity 0.8.23;
 
 /**
- * @title AccessControl
+ * @title Ownable
  *
- * @dev Provides access control by creating agent and manager roles.
- * The agent is set during contract deployment and cannot be changed. The
- * manager can be set by the agent.
+ * @dev Provides basic access control mechanism where two accounts (agent and manager) can be granted access to specific functions.
+ * The agent is set during contract deployment and cannot be changed. The manager can be set by the agent.
  */
-contract AccessControl {
+contract Ownable {
     address public immutable AGENT;
     address public manager;
 

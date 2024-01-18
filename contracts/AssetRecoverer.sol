@@ -7,14 +7,14 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {AccessControl} from "./AccessControl.sol";
+import {Ownable} from "./Ownable.sol";
 
 /**
  * @title AssetRecoverer
  * @dev Abstract contract providing mechanisms for recovering various asset types (ETH, ERC20, ERC721, ERC1155) from a contract.
  * This contract is designed to allow asset recovery by an authorized agent or a manager.
  */
-abstract contract AssetRecoverer is AccessControl {
+abstract contract AssetRecoverer is Ownable {
     using SafeERC20 for IERC20;
 
     event EtherRecovered(address indexed _recipient, uint256 _amount);
@@ -26,7 +26,7 @@ abstract contract AssetRecoverer is AccessControl {
      * @dev Sets the initial agent address.
      * @param agent_ The address of the Lido DAO treasury.
      */
-    constructor(address agent_) AccessControl(agent_) {}
+    constructor(address agent_) Ownable(agent_) {}
 
     /**
      * @dev Allows the agent or manager to recover Ether held by the contract.
