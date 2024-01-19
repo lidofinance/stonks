@@ -34,18 +34,16 @@ contract Order is IERC1271, AssetRecoverer {
     uint256 private constant MAX_BASIS_POINTS = 10_000;
     bytes32 private constant APP_DATA = keccak256("LIDO_DOES_STONKS");
 
+    uint256 private sellAmount;
+    uint256 private buyAmount;
+    bytes32 private orderHash;
+    address public stonks;
+    uint32 private validTo;
+    bool private initialized;
+
     address public immutable SETTLEMENT;
     address public immutable RELAYER;
     bytes32 public immutable DOMAIN_SEPARATOR;
-
-    address public stonks;
-
-    uint256 private sellAmount;
-    uint256 private buyAmount;
-
-    uint32 private validTo;
-    bytes32 private orderHash;
-    bool private initialized;
 
     event OrderCreated(address indexed order, bytes32 orderHash, GPv2Order.Data orderData);
 
