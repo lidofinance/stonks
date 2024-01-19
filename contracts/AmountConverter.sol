@@ -41,6 +41,10 @@ contract AmountConverter is IAmountConverter {
     error InvalidExpectedOutAmount(uint256 amount);
     error PriceFeedNotUpdated(uint256 updatedAt);
 
+    event AllowedTokenToSellAdded(address tokenAddress);
+    event AllowedTokenToBuyAdded(address tokenAddress);
+    event PriceFeedHeartbeatTimeoutChanged(address tokenAddress, uint256 timeout);
+
     /**
      * @param feedRegistry_ Chainlink Price Feed Registry
      * @param conversionTarget_ Target currency we expect to be equal to allowed tokens to buy
@@ -65,6 +69,7 @@ contract AmountConverter is IAmountConverter {
         for (uint256 i = 0; i < allowedTokensToBuy_.length; ++i) {
             if (allowedTokensToBuy_[i] == address(0)) revert InvalidAllowedTokenToBuy(allowedTokensToBuy_[i]);
             allowedTokensToBuy[allowedTokensToBuy_[i]] = true;
+            emit AllowedTokenToBuyAdded(allowedTokensToBuy_[i]);
         }
 
         for (uint256 i = 0; i < allowedTokensToSell_.length; ++i) {
@@ -72,6 +77,9 @@ contract AmountConverter is IAmountConverter {
             FEED_REGISTRY.getFeed(allowedTokensToSell_[i], conversionTarget_);
             allowedTokensToSell[allowedTokensToSell_[i]] = true;
             priceFeedsHeartbeatTimeouts[allowedTokensToSell_[i]] = priceFeedsHeartbeatTimeouts_[i];
+
+            emit AllowedTokenToSellAdded(allowedTokensToSell_[i]);
+            emit PriceFeedHeartbeatTimeoutChanged(allowedTokensToSell_[i], priceFeedsHeartbeatTimeouts_[i]);
         }
     }
 

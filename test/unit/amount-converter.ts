@@ -210,6 +210,30 @@ describe('AmountConverter', function () {
     })
   })
 
+  describe('events:', async function () {
+    it('constructor should emits event about added tokens', async function () {
+      const ContractFactory = await ethers.getContractFactory('AmountConverter')
+      const localSubject = await ContractFactory.deploy(
+        mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+        '0x0000000000000000000000000000000000000348', // USD
+        [mainnet.STETH],
+        [mainnet.DAI],
+        [3600]
+      )
+      const tx = localSubject.waitForDeployment()
+
+      await expect(localSubject.deploymentTransaction())
+        .to.emit(localSubject, 'AllowedTokenToSellAdded')
+        .withArgs(mainnet.STETH)
+      await expect(localSubject.deploymentTransaction())
+        .to.emit(localSubject, 'AllowedTokenToBuyAdded')
+        .withArgs(mainnet.DAI)
+      await expect(localSubject.deploymentTransaction())
+        .to.emit(localSubject, 'PriceFeedHeartbeatTimeoutChanged')
+        .withArgs(mainnet.STETH, 3600)
+    })
+  })
+
   this.afterAll(async function () {
     await network.provider.send('evm_revert', [snapshotId])
   })
