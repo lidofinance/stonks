@@ -41,7 +41,7 @@ describe('StonksFactory', function () {
           mainnet.SETTLEMENT,
           mainnet.VAULT_RELAYER
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidAgentAddress')
     })
     it('should not initialize with settlement zero address', async function () {
       await expect(
@@ -50,7 +50,10 @@ describe('StonksFactory', function () {
           ethers.ZeroAddress,
           mainnet.VAULT_RELAYER
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidSettlementAddress'
+      )
     })
     it('should not initialize with relayer zero address', async function () {
       await expect(
@@ -59,7 +62,17 @@ describe('StonksFactory', function () {
           mainnet.SETTLEMENT,
           ethers.ZeroAddress
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidRelayerAddress')
+    })
+    it('should emit events on deployment', async function () {
+      const tx = subject.deploymentTransaction()
+      await expect(tx).to.emit(subject, 'AgentSet').withArgs(mainnet.AGENT)
+      await expect(tx)
+        .to.emit(subject, 'SettlementSet')
+        .withArgs(mainnet.SETTLEMENT)
+      await expect(tx)
+        .to.emit(subject, 'RelayerSet')
+        .withArgs(mainnet.VAULT_RELAYER)
     })
   })
   describe('stonks deployment:', async function () {

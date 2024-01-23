@@ -33,7 +33,22 @@ describe('AmountConverterFactory', function () {
       )
       await expect(
         ContractFactory.deploy(ethers.ZeroAddress)
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidFeedRegistryAddress'
+      )
+    })
+    it('should emit events on deployment', async function () {
+      const ContractFactory = await ethers.getContractFactory(
+        'AmountConverterFactory'
+      )
+      const subject = await ContractFactory.deploy(
+        mainnet.CHAINLINK_PRICE_FEED_REGISTRY
+      )
+      const tx = subject.deploymentTransaction()
+      await expect(tx)
+        .to.emit(subject, 'FeedRegistrySet')
+        .withArgs(mainnet.CHAINLINK_PRICE_FEED_REGISTRY)
     })
   })
   describe('amount converter deployment:', async function () {
