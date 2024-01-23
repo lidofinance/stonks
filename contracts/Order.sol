@@ -22,7 +22,7 @@ import {IStonks} from "./interfaces/IStonks.sol";
  *  - Complies with ERC1271 for secure order validation.
  *  - Provides asset recovery functionality.
  *
- * @notice Serves as an execution module for CoW Swap trades, operating under parameters set by the Stonks contract.
+ * @notice Serves as an execution module for CoW Protocol trades, operating under parameters set by the Stonks contract.
  */
 contract Order is IERC1271, AssetRecoverer {
     using GPv2Order for GPv2Order.Data;
@@ -30,6 +30,7 @@ contract Order is IERC1271, AssetRecoverer {
 
     // bytes4(keccak256("isValidSignature(bytes32,bytes)")
     bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
+    uint256 private constant MIN_POSSIBLE_BALANCE = 10;
     uint256 private constant MAX_BASIS_POINTS = 10_000;
     bytes32 private constant APP_DATA = keccak256("LIDO_DOES_STONKS");
 
@@ -43,10 +44,13 @@ contract Order is IERC1271, AssetRecoverer {
     uint32 private validTo;
     bool private initialized;
 
+    event RelayerSet(address relayer);
+    event DomainSeparatorSet(address manager);
     event OrderCreated(address indexed order, bytes32 orderHash, GPv2Order.Data orderData);
 
     error OrderAlreadyInitialized();
     error OrderExpired(uint256 validTo);
+    error InvalidAmountToRecover(uint256 amount);
     error CannotRecoverTokenFrom(address token);
     error InvalidOrderHash(bytes32 expected, bytes32 actual);
     error OrderNotExpired(uint256 validTo, uint256 currentTimestamp);
@@ -70,6 +74,9 @@ contract Order is IERC1271, AssetRecoverer {
         // when a new proxy is created via a minimal proxy. Currently, it is set to true
         // to prevent any initialization of a transaction on 'sample' by unauthorized entities.
         initialized = true;
+
+        emit RelayerSet(relayer_);
+        emit DomainSeparatorSet(agent_);
     }
 
     /**
@@ -152,7 +159,18 @@ contract Order is IERC1271, AssetRecoverer {
     /**
      * @notice Retrieves the details of the placed order.
      */
-    function getOrderDetails() external view returns (bytes32, address, address, uint256, uint256, uint32) {
+    function getOrderDetails()
+        external
+        view
+        returns (
+            bytes32 hash_,
+            address tokenFrom_,
+            address tokenTo_,
+            uint256 sellAmount_,
+            uint256 buyAmount_,
+            uint32 validTo_
+        )
+    {
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
         return (orderHash, orderParameters.tokenFrom, orderParameters.tokenTo, sellAmount, buyAmount, validTo);
     }
@@ -164,9 +182,10 @@ contract Order is IERC1271, AssetRecoverer {
     function recoverTokenFrom() external {
         if (validTo >= block.timestamp) revert OrderNotExpired(validTo, block.timestamp);
         IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
-        IERC20(orderParameters.tokenFrom).safeTransfer(
-            stonks, IERC20(orderParameters.tokenFrom).balanceOf(address(this))
-        );
+        uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
+        // Prevents dust transfers to avoid rounding issues for rebasable tokens like stETH.
+        if (balance <= MIN_POSSIBLE_BALANCE) revert InvalidAmountToRecover(balance);
+        IERC20(orderParameters.tokenFrom).safeTransfer(stonks, balance);
     }
 
     /**

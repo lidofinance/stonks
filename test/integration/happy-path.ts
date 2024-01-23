@@ -106,14 +106,15 @@ describe('Happy path', function () {
       expect(await order.isValidSignature(orderHash, '0x')).to.equal(
         MAGIC_VALUE
       )
-      expect(order.isValidSignature('0x', '0x')).to.be.revertedWith(
-        'order: invalid hash'
-      )
+      await expect(
+        order.isValidSignature(ethers.ZeroHash, '0x')
+      ).to.be.revertedWithCustomError(order, 'InvalidOrderHash')
     })
 
-    it('should not be possible to cancel order due to expiration time', () => {
-      expect(order.recoverTokenFrom()).to.be.revertedWith(
-        'Order: order is expired'
+    it('should not be possible to cancel order due to expiration time', async () => {
+      await expect(order.recoverTokenFrom()).to.be.revertedWithCustomError(
+        order,
+        'OrderNotExpired'
       )
     })
 

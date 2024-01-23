@@ -262,6 +262,15 @@ describe('Order', async function () {
         'OrderNotExpired'
       )
     })
+    it('should revert if nothing to recover', async () => {
+      await network.provider.send('evm_increaseTime', [60 * 60 + 1])
+
+      await subject.recoverTokenFrom()
+      await expect(subject.recoverTokenFrom()).to.be.revertedWithCustomError(
+        subject,
+        'InvalidAmountToRecover'
+      )
+    })
     this.afterEach(async function () {
       await network.provider.send('evm_revert', [localSnapshotId])
     })
