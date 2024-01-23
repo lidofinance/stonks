@@ -8,14 +8,8 @@ import {IFeedRegistry} from "./interfaces/IFeedRegistry.sol";
 
 /**
  * @title AmountConverter
- * @dev This contract provides functionalities to retrieve expected token conversion rates
- * based on the Chainlink Price Feed. It allows users to get the expected output amount of one token
- * in terms of another token, considering a specific margin. The contract assumes a relationship between
- * two tokens.
- *
- * The primary function `getExpectedOut` is the main point of interaction. It fetches the price of the
- * provided token to `CONVERSION_TARGET` currency (so far USD is a primary conversion target) from the
- * Chainlink Price Feed and calculates the expected amount of the output token based on the input amount of the sellToken.
+ * @dev This contract provides functionality for converting the amount
+ *      of Token A into the amount of Token B based on the Chainlink price feed.
  */
 contract AmountConverter is IAmountConverter {
     // Conversion targets: https://github.com/smartcontractkit/chainlink/blob/develop/contracts/src/v0.8/Denominations.sol
@@ -43,7 +37,7 @@ contract AmountConverter is IAmountConverter {
 
     event AllowedTokenToSellAdded(address tokenAddress);
     event AllowedTokenToBuyAdded(address tokenAddress);
-    event PriceFeedHeartbeatTimeoutChanged(address tokenAddress, uint256 timeout);
+    event PriceFeedHeartbeatTimeoutSet(address tokenAddress, uint256 timeout);
 
     /**
      * @param feedRegistry_ Chainlink Price Feed Registry
@@ -79,20 +73,17 @@ contract AmountConverter is IAmountConverter {
             priceFeedsHeartbeatTimeouts[allowedTokensToSell_[i]] = priceFeedsHeartbeatTimeouts_[i];
 
             emit AllowedTokenToSellAdded(allowedTokensToSell_[i]);
-            emit PriceFeedHeartbeatTimeoutChanged(allowedTokensToSell_[i], priceFeedsHeartbeatTimeouts_[i]);
+            emit PriceFeedHeartbeatTimeoutSet(allowedTokensToSell_[i], priceFeedsHeartbeatTimeouts_[i]);
         }
     }
 
     /**
      * @notice Calculates the expected amount of `tokenTo_` that one would receive for a given amount of `tokenFrom_`.
-     * @dev This function computes the expected output amount of `tokenTo_` when selling `tokenFrom_`.
-     *      It uses the Chainlink Price Feed to get the current price of `tokenFrom_` in terms of the `CONVERSION_TARGET`
-     *      (usually USD). The function then adjusts this price based on the token decimals and returns the expected
-     *      amount of `tokenTo_` one would receive for the specified `amountFrom_` of `tokenFrom_`.
-     *      This function assumes that `tokenTo_` is equivalent in value to the `CONVERSION_TARGET`.
+     * @dev Uses the Chainlink Price Feed to get the current price relation of `tokenFrom_` to `CONVERSION_TARGET`
+     *      whose price is expected to be equal or close to equal to the `tokenFrom_`.
      *
      * @param tokenFrom_ The address of the token being sold.
-     * @param tokenTo_ The address of the token being bought, expected to be equivalent to the `CONVERSION_TARGET`.
+     * @param tokenTo_ The address of the token being bought.
      * @param amountFrom_ The amount of `tokenFrom_` that is being sold.
      * @return expectedOutputAmount The expected amount of `tokenTo_` that will be received.
      */
@@ -123,7 +114,7 @@ contract AmountConverter is IAmountConverter {
     }
 
     /**
-     * @dev Internal function to get price from Chainlink Price Feed Registry.
+     * @dev Internal function to get price relation of `tokenFrom_` to `tokenTo_` from Chainlink Price Feed Registry.
      */
     function _fetchPriceAndDecimals(address base_, address quote_)
         internal

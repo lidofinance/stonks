@@ -229,7 +229,7 @@ describe('AmountConverter', function () {
         .to.emit(localSubject, 'AllowedTokenToBuyAdded')
         .withArgs(mainnet.DAI)
       await expect(localSubject.deploymentTransaction())
-        .to.emit(localSubject, 'PriceFeedHeartbeatTimeoutChanged')
+        .to.emit(localSubject, 'PriceFeedHeartbeatTimeoutSet')
         .withArgs(mainnet.STETH, 3600)
     })
   })
