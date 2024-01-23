@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
+import {ICoWSwapSettlement} from "../interfaces/ICoWSwapSettlement.sol";
+
 import {Stonks} from "../Stonks.sol";
 import {Order} from "../Order.sol";
 
@@ -10,15 +12,10 @@ import {Order} from "../Order.sol";
  * @dev Deploys new instances of the Stonks contract.
  */
 contract StonksFactory {
-    address public immutable AGENT;
     address public immutable ORDER_SAMPLE;
-    address public immutable SETTLEMENT;
-    address public immutable RELAYER;
+    address public immutable AGENT;
 
     event AgentSet(address agent);
-    event SettlementSet(address settlement);
-    event RelayerSet(address relayer);
-
     event OrderSampleDeployed(address orderAddress);
     event StonksDeployed(
         address indexed stonksAddress,
@@ -44,17 +41,13 @@ contract StonksFactory {
      */
     constructor(address agent_, address settlement_, address relayer_) {
         if (agent_ == address(0)) revert InvalidAgentAddress();
-        if (settlement_ == address(0)) revert InvalidSettlementAddress();
         if (relayer_ == address(0)) revert InvalidRelayerAddress();
+        if (settlement_ == address(0)) revert InvalidSettlementAddress();
 
         AGENT = agent_;
-        RELAYER = relayer_;
-        SETTLEMENT = settlement_;
-        ORDER_SAMPLE = address(new Order(agent_, settlement_, relayer_));
+        ORDER_SAMPLE = address(new Order(agent_, relayer_, ICoWSwapSettlement(settlement_).domainSeparator()));
 
         emit AgentSet(agent_);
-        emit SettlementSet(settlement_);
-        emit RelayerSet(relayer_);
         emit OrderSampleDeployed(ORDER_SAMPLE);
     }
 

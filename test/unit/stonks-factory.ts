@@ -25,12 +25,6 @@ describe('StonksFactory', function () {
     it('should have right treasury address', async function () {
       expect(await subject.AGENT()).to.equal(mainnet.AGENT)
     })
-    it('should have right settlement address', async function () {
-      expect(await subject.SETTLEMENT()).to.equal(mainnet.SETTLEMENT)
-    })
-    it('should have right vault relayer address', async function () {
-      expect(await subject.RELAYER()).to.equal(mainnet.VAULT_RELAYER)
-    })
     it('should have an order sample deployed', async function () {
       expect(await subject.ORDER_SAMPLE()).to.not.equal(ethers.ZeroAddress)
     })
@@ -67,12 +61,6 @@ describe('StonksFactory', function () {
     it('should emit events on deployment', async function () {
       const tx = subject.deploymentTransaction()
       await expect(tx).to.emit(subject, 'AgentSet').withArgs(mainnet.AGENT)
-      await expect(tx)
-        .to.emit(subject, 'SettlementSet')
-        .withArgs(mainnet.SETTLEMENT)
-      await expect(tx)
-        .to.emit(subject, 'RelayerSet')
-        .withArgs(mainnet.VAULT_RELAYER)
     })
   })
   describe('stonks deployment:', async function () {

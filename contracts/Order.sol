@@ -12,11 +12,9 @@ import {GPv2Order} from "./lib/GPv2Order.sol";
 import {AssetRecoverer} from "./AssetRecoverer.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
 
-import {ICoWSwapSettlement} from "./interfaces/ICoWSwapSettlement.sol";
-
 /**
- * @title CoW Swap Trading Order Contract
- * @dev Handles the execution of individual trading order for the Stonks contract on CoW Swap.
+ * @title CoW Protocol Programmatic Order
+ * @dev Handles the execution of individual trading order for the Stonks contract on CoW Protocol.
  *
  * Features:
  *  - Retrieves trade parameters from Stonks contract, ensuring alignment with the overall trading strategy.
@@ -30,9 +28,13 @@ contract Order is IERC1271, AssetRecoverer {
     using GPv2Order for GPv2Order.Data;
     using SafeERC20 for IERC20;
 
+    // bytes4(keccak256("isValidSignature(bytes32,bytes)")
     bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
     uint256 private constant MAX_BASIS_POINTS = 10_000;
     bytes32 private constant APP_DATA = keccak256("LIDO_DOES_STONKS");
+
+    address public immutable RELAYER;
+    bytes32 public immutable DOMAIN_SEPARATOR;
 
     uint256 private sellAmount;
     uint256 private buyAmount;
@@ -40,10 +42,6 @@ contract Order is IERC1271, AssetRecoverer {
     address public stonks;
     uint32 private validTo;
     bool private initialized;
-
-    address public immutable SETTLEMENT;
-    address public immutable RELAYER;
-    bytes32 public immutable DOMAIN_SEPARATOR;
 
     event OrderCreated(address indexed order, bytes32 orderHash, GPv2Order.Data orderData);
 
@@ -56,18 +54,17 @@ contract Order is IERC1271, AssetRecoverer {
 
     /**
      * @param agent_ The agent's address with control over the contract.
-     * @param settlement_ The address of the settlement contract.
      * @param relayer_ The address of the relayer handling orders.
-     * @dev This constructor sets up necessary parameters and state variables to enable the contract's interaction with the CoW Swap protocol.
+     * @param domainSeparator_ The EIP-712 domain separator to use.
+     * @dev This constructor sets up necessary parameters and state variables to enable the contract's interaction with the CoW Protocol.
      * @dev It also marks the contract as initialized to prevent unauthorized re-initialization.
      */
-    constructor(address agent_, address settlement_, address relayer_) AssetRecoverer(agent_) {
+    constructor(address agent_, address relayer_, bytes32 domainSeparator_) AssetRecoverer(agent_) {
         // Immutable variables are set at contract deployment and remain unchangeable thereafter.
         // This ensures that even when creating new proxies via a minimal proxy,
         // these variables retain their initial values assigned at the time of the original contract deployment.
-        SETTLEMENT = settlement_;
         RELAYER = relayer_;
-        DOMAIN_SEPARATOR = ICoWSwapSettlement(settlement_).domainSeparator();
+        DOMAIN_SEPARATOR = domainSeparator_;
 
         // This variable is stored in the contract's storage and will be overwritten
         // when a new proxy is created via a minimal proxy. Currently, it is set to true
