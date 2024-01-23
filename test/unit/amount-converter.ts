@@ -58,6 +58,40 @@ describe('AmountConverter', function () {
       )
     })
 
+    it('should not initialize with empty allowedTokensToSell', async function () {
+      const ContractFactory = await ethers.getContractFactory('AmountConverter')
+
+      await expect(
+        ContractFactory.deploy(
+          mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+          mainnet.CHAINLINK_USD_QUOTE,
+          [],
+          [mainnet.DAI, mainnet.USDC, mainnet.USDT],
+          [3600, 3600, 86400, 86400]
+        )
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidTokensToSellArrayLength'
+      )
+    })
+
+    it('should not initialize with empty allowedTokensToBuy', async function () {
+      const ContractFactory = await ethers.getContractFactory('AmountConverter')
+
+      await expect(
+        ContractFactory.deploy(
+          mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+          mainnet.CHAINLINK_USD_QUOTE,
+          [mainnet.STETH, mainnet.DAI, mainnet.USDC, mainnet.USDT],
+          [],
+          [3600, 3600, 86400, 86400]
+        )
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidTokensToBuyArrayLength'
+      )
+    })
+
     it('should not initialize with zero address in allowedTokensToSell', async function () {
       const ContractFactory = await ethers.getContractFactory('AmountConverter')
 

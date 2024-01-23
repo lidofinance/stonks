@@ -27,6 +27,8 @@ contract AmountConverter is IAmountConverter {
     error InvalidAllowedTokenToSell(address allowedTokenToSell);
     error InvalidAmount(uint256 amount);
     error InvalidHeartbeatArrayLength();
+    error InvalidTokensToSellArrayLength();
+    error InvalidTokensToBuyArrayLength();
     error NoPriceFeedFound(address tokenFrom, address tokenTo);
     error SellTokenNotAllowed(address tokenFrom);
     error BuyTokenNotAllowed(address tokenTo);
@@ -55,6 +57,8 @@ contract AmountConverter is IAmountConverter {
     ) {
         if (feedRegistry_ == address(0)) revert InvalidFeedRegistryAddress(feedRegistry_);
         if (conversionTarget_ == address(0)) revert InvalidConversionTargetAddress(conversionTarget_);
+        if (allowedTokensToSell_.length == 0) revert InvalidTokensToSellArrayLength();
+        if (allowedTokensToBuy_.length == 0) revert InvalidTokensToBuyArrayLength();
         if (allowedTokensToSell_.length != priceFeedsHeartbeatTimeouts_.length) revert InvalidHeartbeatArrayLength();
 
         FEED_REGISTRY = IFeedRegistry(feedRegistry_);
