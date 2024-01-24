@@ -31,8 +31,8 @@ contract Stonks is IStonks, AssetRecoverer {
     uint16 private constant BASIS_POINTS_PARAMETERS_LIMIT = 1_000;
 
     uint256 private constant MIN_POSSIBLE_BALANCE = 10;
-    uint256 private constant MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60;
-    uint256 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 60 * 60 * 24;
+    uint256 private constant MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS = 1 minutes;
+    uint256 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 1 days;
 
     address public immutable AMOUNT_CONVERTER;
     address public immutable ORDER_SAMPLE;
@@ -51,7 +51,9 @@ contract Stonks is IStonks, AssetRecoverer {
     error MinimumPossibleBalanceNotMet(uint256 min, uint256 recieved);
     error InvalidAmount(uint256 amount);
 
-    event OrderContractCreated(address indexed orderContract);
+    event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
+    event AmountConverterSet(address amountConverter);
+    event OrderSampleSet(address orderSample);
 
     /**
      * @notice Initializes the Stonks contract with key trading parameters.
@@ -102,6 +104,10 @@ contract Stonks is IStonks, AssetRecoverer {
             marginInBasisPoints: marginInBasisPoints_.toUint16(),
             priceToleranceInBasisPoints: priceToleranceInBasisPoints_.toUint16()
         });
+
+        emit ManagerSet(manager_);
+        emit AmountConverterSet(amountConverter_);
+        emit OrderSampleSet(orderSample_);
     }
 
     /**
@@ -121,16 +127,26 @@ contract Stonks is IStonks, AssetRecoverer {
         IERC20(orderParameters.tokenFrom).safeTransfer(address(orderCopy), balance);
         orderCopy.initialize(minBuyAmount_, manager);
 
-        emit OrderContractCreated(address(orderCopy));
+        emit OrderContractCreated(address(orderCopy), minBuyAmount_);
 
         return address(orderCopy);
     }
 
     /**
      * @notice Estimates output amount for a given trade input amount.
-     * Subtracts the amount that corresponds to the margin parameter from the result obtained from the amount converter.
      * @param amount_ Input token amount for trade.
      * @dev Uses token amount converter for output estimation.
+     * Subtracts the amount that corresponds to the margin parameter from the result obtained from the amount converter.
+     * 
+     * |       estimatedTradeOutput       expectedPurchaseAmount
+     * |  --------------*--------------------------*-----------------> amount
+     * |                 <-------- margin -------->
+     * 
+     * where:
+     *      expectedPurchaseAmount - amount received from the amountConverter based on Chainlink price feed.
+     *      margin - % taken from the expectedPurchaseAmount includes CoW Protocol fees and maximum accepted losses 
+     *               to handle market volatility.
+     *      estimatedTradeOutput - expectedPurchaseAmount subtracted by the margin that is expected to be result of the trade.
      */
     function estimateTradeOutput(uint256 amount_) public view returns (uint256) {
         if (amount_ == 0) revert InvalidAmount(amount_);
@@ -144,7 +160,7 @@ contract Stonks is IStonks, AssetRecoverer {
      * @notice Estimates trade output based on current input token balance.
      * @dev Uses current balance for output estimation via `estimateTradeOutput`.
      */
-    function estimateOutputFromCurrentBalance() external view returns (uint256) {
+    function estimateTradeOutputFromCurrentBalance() external view returns (uint256) {
         uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
         return estimateTradeOutput(balance);
     }

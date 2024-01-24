@@ -141,16 +141,29 @@ contract Order is IERC1271, AssetRecoverer {
         /// The price tolerance mechanism is crucial for ensuring that the order remains valid only within a specific price range.
         /// This is a safeguard against market volatility and drastic price changes, which could otherwise lead to unfavorable trades.
         /// If the price deviates beyond the tolerance level, the order is invalidated to protect against executing a trade at an undesirable rate.
+        ///
+        /// |           buyAmount                 maxToleratedAmount        currentCalculatedBuyAmount
+        /// |  --------------*-----------------------------*-----------------------------*-----------------> amount
+        /// |                 <-------- tolerance -------->
+        /// |                 <-------------------- differenceAmount ------------------->
+        /// 
+        /// where:
+        ///     buyAmount - amount received from the Stonks contract, which is the minimum accepted result amount of the trade.
+        ///     tolerance - the maximum accepted deviation of the buyAmount.
+        ///     currentCalculatedBuyAmount - the currently calculated purchase amount based on real-time market conditions taken from Stonks contract.
+        ///     differenceAmount - the difference between the buyAmount and the currentCalculatedBuyAmount.
+        ///     maxToleratedAmount - the maximum tolerated deviation of the purchase amount. Represents the threshold beyond which the order is 
+        ///                          considered invalid due to excessive deviation from the expected purchase amount.
 
-        uint256 currentCalculatedPurchaseAmount = IStonks(stonks).estimateTradeOutput(sellAmount);
+        uint256 currentCalculatedBuyAmount = IStonks(stonks).estimateTradeOutput(sellAmount);
 
-        if (currentCalculatedPurchaseAmount <= buyAmount) return ERC1271_MAGIC_VALUE;
+        if (currentCalculatedBuyAmount <= buyAmount) return ERC1271_MAGIC_VALUE;
 
-        uint256 differenceAmount = currentCalculatedPurchaseAmount - buyAmount;
+        uint256 differenceAmount = currentCalculatedBuyAmount - buyAmount;
         uint256 maxToleratedAmountDeviation = buyAmount * orderParameters.priceToleranceInBasisPoints / MAX_BASIS_POINTS;
 
         if (differenceAmount > maxToleratedAmountDeviation) {
-            revert PriceConditionChanged(buyAmount + maxToleratedAmountDeviation, currentCalculatedPurchaseAmount);
+            revert PriceConditionChanged(buyAmount + maxToleratedAmountDeviation, currentCalculatedBuyAmount);
         }
 
         return ERC1271_MAGIC_VALUE;

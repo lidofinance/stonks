@@ -81,7 +81,7 @@ describe('Unsuccessful path', function () {
     })
 
     it('should place order', async () => {
-      expectedBuyAmount = await subject.estimateOutputFromCurrentBalance()
+      expectedBuyAmount = await subject.estimateTradeOutputFromCurrentBalance()
       const orderTx = await subject.placeOrder(expectedBuyAmount)
 
       orderReceipt = (await orderTx.wait())!
@@ -130,7 +130,8 @@ describe('Unsuccessful path', function () {
     })
 
     it('should re-place order', async () => {
-      const expectedBuyAmount = await subject.estimateOutputFromCurrentBalance()
+      const expectedBuyAmount =
+        await subject.estimateTradeOutputFromCurrentBalance()
       const orderTx = await subject.placeOrder(expectedBuyAmount)
 
       orderReceipt = (await orderTx.wait())!

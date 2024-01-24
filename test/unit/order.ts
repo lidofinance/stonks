@@ -85,7 +85,7 @@ describe('Order', async function () {
       address: await stonks.getAddress(),
     })
 
-    expectedBuyAmount = await stonks.estimateOutputFromCurrentBalance()
+    expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
     const placeOrderTx = await stonks.placeOrder(expectedBuyAmount)
     const placeOrderTxReceipt = await placeOrderTx.wait()
 
@@ -130,7 +130,7 @@ describe('Order', async function () {
         await token.balanceOf(subject)
       )
       const buyAmountFromBalance =
-        await stonks.estimateOutputFromCurrentBalance()
+        await stonks.estimateTradeOutputFromCurrentBalance()
       expect(orderData.order.buyAmount).to.equal(
         buyAmountFromBalance > expectedBuyAmount
           ? buyAmountFromBalance

@@ -323,7 +323,7 @@ describe('Stonks', function () {
     })
   })
 
-  describe('estimateOutputFromCurrentBalance:', function () {
+  describe('estimateTradeOutputFromCurrentBalance:', function () {
     it('should return correct amount with margin included', async function () {
       const localSnapshotId = await network.provider.send('evm_snapshot')
       await fillUpERC20FromTreasury({
@@ -343,14 +343,14 @@ describe('Stonks', function () {
         (expectedOut * (MAX_BASIS_POINTS - BigInt(marginInBps))) /
         MAX_BASIS_POINTS
 
-      expect(await subject.estimateOutputFromCurrentBalance()).to.equal(
+      expect(await subject.estimateTradeOutputFromCurrentBalance()).to.equal(
         expectedOutWithMargin
       )
       await network.provider.send('evm_revert', [localSnapshotId])
     })
     it('should revert if balance is zero', async () => {
       await expect(
-        subject.estimateOutputFromCurrentBalance()
+        subject.estimateTradeOutputFromCurrentBalance()
       ).to.be.revertedWithCustomError(subject, 'InvalidAmount')
     })
   })
@@ -374,7 +374,8 @@ describe('Stonks', function () {
       expect(isClose(await steth.balanceOf(await subject.getAddress()), amount))
         .to.be.true
 
-      const expectedBuyAmount = await subject.estimateOutputFromCurrentBalance()
+      const expectedBuyAmount =
+        await subject.estimateTradeOutputFromCurrentBalance()
       const tx = await subject.placeOrder(expectedBuyAmount)
       await tx.wait()
     })

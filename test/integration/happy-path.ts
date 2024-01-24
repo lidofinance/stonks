@@ -80,7 +80,7 @@ describe('Happy path', function () {
     })
 
     it('should place order', async () => {
-      expectedBuyAmount = await subject.estimateOutputFromCurrentBalance()
+      expectedBuyAmount = await subject.estimateTradeOutputFromCurrentBalance()
       const orderTx = await subject.placeOrder(expectedBuyAmount)
 
       orderReceipt = (await orderTx.wait())!
