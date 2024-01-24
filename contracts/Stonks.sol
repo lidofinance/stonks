@@ -39,6 +39,10 @@ contract Stonks is IStonks, AssetRecoverer {
 
     OrderParameters public orderParameters;
 
+    event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
+    event AmountConverterSet(address amountConverter);
+    event OrderSampleSet(address orderSample);
+
     error InvalidManagerAddress(address manager);
     error InvalidTokenFromAddress(address tokenFrom);
     error InvalidTokenToAddress(address tokenTo);
@@ -50,10 +54,6 @@ contract Stonks is IStonks, AssetRecoverer {
     error PriceToleranceOverflowsAllowedLimit(uint256 limit, uint256 recieved);
     error MinimumPossibleBalanceNotMet(uint256 min, uint256 recieved);
     error InvalidAmount(uint256 amount);
-
-    event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
-    event AmountConverterSet(address amountConverter);
-    event OrderSampleSet(address orderSample);
 
     /**
      * @notice Initializes the Stonks contract with key trading parameters.
@@ -114,6 +114,7 @@ contract Stonks is IStonks, AssetRecoverer {
      * @notice Initiates a new trading order by creating an Order contract clone with the current token balance.
      * @dev Transfers the tokenFrom balance to the new Order instance and initializes it with the Stonks' manager settings for execution.
      * @param minBuyAmount_ Minimum amount of tokenTo to be received as a result of the trade.
+     * @return Address of the newly created Order contract.
      */
     function placeOrder(uint256 minBuyAmount_) external onlyAgentOrManager returns (address) {
         if (minBuyAmount_ == 0) revert InvalidAmount(minBuyAmount_);
@@ -136,6 +137,7 @@ contract Stonks is IStonks, AssetRecoverer {
      * @notice Estimates output amount for a given trade input amount.
      * @param amount_ Input token amount for trade.
      * @dev Uses token amount converter for output estimation.
+     * @return Estimated trade output amount.
      * Subtracts the amount that corresponds to the margin parameter from the result obtained from the amount converter.
      * 
      * |       estimatedTradeOutput       expectedPurchaseAmount
@@ -159,6 +161,7 @@ contract Stonks is IStonks, AssetRecoverer {
     /**
      * @notice Estimates trade output based on current input token balance.
      * @dev Uses current balance for output estimation via `estimateTradeOutput`.
+     * @return Estimated trade output amount.
      */
     function estimateTradeOutputFromCurrentBalance() external view returns (uint256) {
         uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
@@ -168,7 +171,7 @@ contract Stonks is IStonks, AssetRecoverer {
     /**
      * @notice Returns trading parameters from Stonks for use in the Order contract.
      * @dev Facilitates gas efficiency by allowing Order to access existing parameters in Stonks without redundant storage.
-     * @return Tuple of tokenFrom, tokenTo, orderDurationInSeconds, marginInBasisPoints, and priceToleranceInBasisPoints.
+     * @return Struct of order parameters (tokenFrom, tokenTo, orderDurationInSeconds, marginInBasisPoints, priceToleranceInBasisPoints).
      */
     function getOrderParameters() external view returns (OrderParameters memory) {
         return orderParameters;

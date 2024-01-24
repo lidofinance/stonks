@@ -126,6 +126,7 @@ contract Order is IERC1271, AssetRecoverer {
     /**
      * @notice Validates the order's signature and ensures compliance with price and timing constraints.
      * @param hash_ The hash of the order for validation.
+     * @return magicValue The magic value of ERC1271.
      * @dev Checks include:
      *      - Matching the provided hash with the stored order hash.
      *      - Confirming order validity within the specified timeframe (`validTo`).
@@ -171,6 +172,12 @@ contract Order is IERC1271, AssetRecoverer {
 
     /**
      * @notice Retrieves the details of the placed order.
+     * @return hash_ The hash of the order.
+     * @return tokenFrom_ The address of the token being sold.
+     * @return tokenTo_ The address of the token being bought.
+     * @return sellAmount_ The amount of `tokenFrom_` that is being sold.
+     * @return buyAmount_ The amount of `tokenTo_` that is expected to be bought.
+     * @return validTo_ The timestamp until which the order remains valid.
      */
     function getOrderDetails()
         external

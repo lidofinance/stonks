@@ -12,27 +12,19 @@ contract Ownable {
     address public immutable AGENT;
     address public manager;
 
+    event ManagerSet(address manager);
+    event AgentSet(address agent);
+
     error InvalidAgentAddress(address agent_);
     error NotAgentOrManager(address sender);
     error NotAgent(address sender);
 
-    event ManagerSet(address indexed manager);
-
     /**
-     * @dev Initializes the contract setting the agent.
+     * @dev Modifier to restrict function access from the agent.
      */
-    constructor(address agent_) {
-        if (agent_ == address(0)) revert InvalidAgentAddress(agent_);
-        AGENT = agent_;
-    }
-
-    /**
-     * @dev Sets the manager address.
-     * @param manager_ The address of the new manager.
-     */
-    function setManager(address manager_) external onlyAgent {
-        manager = manager_;
-        emit ManagerSet(manager_);
+    modifier onlyAgent() {
+        if (msg.sender != AGENT) revert NotAgent(msg.sender);
+        _;
     }
 
     /**
@@ -44,10 +36,21 @@ contract Ownable {
     }
 
     /**
-     * @dev Modifier to restrict function access from the agent.
+     * @dev Initializes the contract setting the agent.
+     * @param agent_ The address of the agent.
      */
-    modifier onlyAgent() {
-        if (msg.sender != AGENT) revert NotAgent(msg.sender);
-        _;
+    constructor(address agent_) {
+        if (agent_ == address(0)) revert InvalidAgentAddress(agent_);
+        AGENT = agent_;
+        emit AgentSet(agent_);
+    }
+
+    /**
+     * @dev Sets the manager address.
+     * @param manager_ The address of the new manager.
+     */
+    function setManager(address manager_) external onlyAgent {
+        manager = manager_;
+        emit ManagerSet(manager_);
     }
 }

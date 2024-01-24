@@ -13,7 +13,7 @@ import {Ownable} from "./Ownable.sol";
  * @title AssetRecoverer
  * @dev Abstract contract providing mechanisms for recovering various asset types (ETH, ERC20, ERC721, ERC1155) from a contract.
  * This contract is designed to allow asset recovery by an authorized agent or a manager.
- * Assets can be sent only to the agent address.
+ * @notice Assets can be sent only to the agent address.
  */
 abstract contract AssetRecoverer is Ownable {
     using SafeERC20 for IERC20;

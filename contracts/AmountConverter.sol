@@ -14,12 +14,15 @@ import {IFeedRegistry} from "./interfaces/IFeedRegistry.sol";
 contract AmountConverter is IAmountConverter {
     // Conversion targets: https://github.com/smartcontractkit/chainlink/blob/develop/contracts/src/v0.8/Denominations.sol
     address public immutable CONVERSION_TARGET;
-
     IFeedRegistry public immutable FEED_REGISTRY;
 
     mapping(address tokenToSell => bool allowed) public allowedTokensToSell;
     mapping(address tokenToBuy => bool allowed) public allowedTokensToBuy;
     mapping(address priceFeedAddress => uint256 priceFeedTimeout) public priceFeedsHeartbeatTimeouts;
+
+    event AllowedTokenToSellAdded(address tokenAddress);
+    event AllowedTokenToBuyAdded(address tokenAddress);
+    event PriceFeedHeartbeatTimeoutSet(address tokenAddress, uint256 timeout);
 
     error InvalidFeedRegistryAddress(address feedRegistryAddress);
     error InvalidConversionTargetAddress(address conversionTargetAddress);
@@ -36,10 +39,6 @@ contract AmountConverter is IAmountConverter {
     error UnexpectedPriceFeedAnswer();
     error InvalidExpectedOutAmount(uint256 amount);
     error PriceFeedNotUpdated(uint256 updatedAt);
-
-    event AllowedTokenToSellAdded(address tokenAddress);
-    event AllowedTokenToBuyAdded(address tokenAddress);
-    event PriceFeedHeartbeatTimeoutSet(address tokenAddress, uint256 timeout);
 
     /**
      * @param feedRegistry_ Chainlink Price Feed Registry

@@ -12,8 +12,6 @@ import {AmountConverter} from "../AmountConverter.sol";
 contract AmountConverterFactory {
     address public immutable FEED_REGISTRY;
 
-    error InvalidFeedRegistryAddress();
-
     event FeedRegistrySet(address feedRegistry);
     event AmountConverterDeployed(
         address indexed amountConverterAddress,
@@ -23,6 +21,8 @@ contract AmountConverterFactory {
         address[] allowedStableTokensToBuy,
         uint256[] priceFeedsHeartbeatTimeouts
     );
+
+    error InvalidFeedRegistryAddress();
 
     /**
      *
