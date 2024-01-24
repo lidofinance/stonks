@@ -137,8 +137,6 @@ contract Order is IERC1271, AssetRecoverer {
         if (hash_ != orderHash) revert InvalidOrderHash(orderHash, hash_);
         if (validTo < block.timestamp) revert OrderExpired(validTo);
 
-        uint256 priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
-
         /// The price tolerance mechanism is crucial for ensuring that the order remains valid only within a specific price range.
         /// This is a safeguard against market volatility and drastic price changes, which could otherwise lead to unfavorable trades.
         /// If the price deviates beyond the tolerance level, the order is invalidated to protect against executing a trade at an undesirable rate.
@@ -160,6 +158,7 @@ contract Order is IERC1271, AssetRecoverer {
 
         if (currentCalculatedBuyAmount <= buyAmount) return ERC1271_MAGIC_VALUE;
 
+        uint256 priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
         uint256 differenceAmount = currentCalculatedBuyAmount - buyAmount;
         uint256 maxToleratedAmountDeviation = buyAmount * priceToleranceInBasisPoints / MAX_BASIS_POINTS;
 
