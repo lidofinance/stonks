@@ -30,9 +30,9 @@ contract StonksFactory {
         uint256 priceToleranceInBasisPoints
     );
 
-    error InvalidAgentAddress();
-    error InvalidSettlementAddress();
-    error InvalidRelayerAddress();
+    error InvalidAgentAddress(address agent);
+    error InvalidSettlementAddress(address settlement);
+    error InvalidRelayerAddress(address relayer);
 
     /**
      * @param agent_ Address of the Lido DAO agent
@@ -40,9 +40,9 @@ contract StonksFactory {
      * @param relayer_ Address of the Cow Protocol relayer contract
      */
     constructor(address agent_, address settlement_, address relayer_) {
-        if (agent_ == address(0)) revert InvalidAgentAddress();
-        if (relayer_ == address(0)) revert InvalidRelayerAddress();
-        if (settlement_ == address(0)) revert InvalidSettlementAddress();
+        if (agent_ == address(0)) revert InvalidAgentAddress(agent_);
+        if (relayer_ == address(0)) revert InvalidRelayerAddress(relayer_);
+        if (settlement_ == address(0)) revert InvalidSettlementAddress(settlement_);
 
         AGENT = agent_;
         ORDER_SAMPLE = address(new Order(agent_, relayer_, ICoWSwapSettlement(settlement_).domainSeparator()));

@@ -22,14 +22,14 @@ contract AmountConverterFactory {
         uint256[] priceFeedsHeartbeatTimeouts
     );
 
-    error InvalidFeedRegistryAddress();
+    error InvalidFeedRegistryAddress(address feedRegistry);
 
     /**
      *
      * @param feedRegistry_ The address of the Chainlink Feed Registry (https://docs.chain.link/data-feeds/feed-registry)
      */
     constructor(address feedRegistry_) {
-        if (feedRegistry_ == address(0)) revert InvalidFeedRegistryAddress();
+        if (feedRegistry_ == address(0)) revert InvalidFeedRegistryAddress(feedRegistry_);
         FEED_REGISTRY = feedRegistry_;
         emit FeedRegistrySet(feedRegistry_);
     }
