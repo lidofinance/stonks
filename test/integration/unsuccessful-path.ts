@@ -13,6 +13,7 @@ import {
 } from '../../utils/gpv2-helpers'
 
 describe('Unsuccessful path', function () {
+  const marginInBps = 100
   let signer: Signer
   let subject: Stonks
   let orderReceipt: TransactionReceipt
@@ -36,7 +37,7 @@ describe('Unsuccessful path', function () {
         tokenFrom: mainnet.STETH,
         tokenTo: mainnet.DAI,
         manager: await signer.getAddress(),
-        marginInBps: 100,
+        marginInBps: marginInBps,
         orderDuration: orderDuration,
         priceToleranceInBps: 100,
       },
@@ -101,7 +102,8 @@ describe('Unsuccessful path', function () {
       const orderHash = await formOrderHashFromTxReceipt(
         orderReceipt,
         subject,
-        expectedBuyAmount
+        expectedBuyAmount,
+        BigInt(marginInBps)
       )
 
       expect(await order.isValidSignature(orderHash, '0x')).to.equal(

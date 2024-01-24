@@ -92,15 +92,15 @@ contract Order is IERC1271, AssetRecoverer {
         stonks = msg.sender;
         manager = manager_;
 
-        IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
+        (address tokenFrom, address tokenTo, uint256 orderDurationInSeconds) = IStonks(stonks).getOrderParameters();
 
-        validTo = uint32(block.timestamp + orderParameters.orderDurationInSeconds);
-        sellAmount = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
+        validTo = uint32(block.timestamp + orderDurationInSeconds);
+        sellAmount = IERC20(tokenFrom).balanceOf(address(this));
         buyAmount = Math.max(IStonks(stonks).estimateTradeOutput(sellAmount), minBuyAmount_);
 
         GPv2Order.Data memory order = GPv2Order.Data({
-            sellToken: IERC20Metadata(orderParameters.tokenFrom),
-            buyToken: IERC20Metadata(orderParameters.tokenTo),
+            sellToken: IERC20Metadata(tokenFrom),
+            buyToken: IERC20Metadata(tokenTo),
             receiver: AGENT,
             sellAmount: sellAmount,
             buyAmount: buyAmount,
@@ -118,7 +118,7 @@ contract Order is IERC1271, AssetRecoverer {
 
         // Approval is set to the maximum value of uint256 as the contract is intended for single-use only.
         // This eliminates the need for subsequent approval calls, optimizing for gas efficiency in one-time transactions.
-        IERC20(orderParameters.tokenFrom).approve(RELAYER, type(uint256).max);
+        IERC20(tokenFrom).approve(RELAYER, type(uint256).max);
 
         emit OrderCreated(address(this), orderHash, order);
     }
@@ -137,7 +137,7 @@ contract Order is IERC1271, AssetRecoverer {
         if (hash_ != orderHash) revert InvalidOrderHash(orderHash, hash_);
         if (validTo < block.timestamp) revert OrderExpired(validTo);
 
-        IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
+        uint256 priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
 
         /// The price tolerance mechanism is crucial for ensuring that the order remains valid only within a specific price range.
         /// This is a safeguard against market volatility and drastic price changes, which could otherwise lead to unfavorable trades.
@@ -147,13 +147,13 @@ contract Order is IERC1271, AssetRecoverer {
         /// |  --------------*-----------------------------*-----------------------------*-----------------> amount
         /// |                 <-------- tolerance -------->
         /// |                 <-------------------- differenceAmount ------------------->
-        /// 
+        ///
         /// where:
         ///     buyAmount - amount received from the Stonks contract, which is the minimum accepted result amount of the trade.
         ///     tolerance - the maximum accepted deviation of the buyAmount.
         ///     currentCalculatedBuyAmount - the currently calculated purchase amount based on real-time market conditions taken from Stonks contract.
         ///     differenceAmount - the difference between the buyAmount and the currentCalculatedBuyAmount.
-        ///     maxToleratedAmount - the maximum tolerated deviation of the purchase amount. Represents the threshold beyond which the order is 
+        ///     maxToleratedAmount - the maximum tolerated deviation of the purchase amount. Represents the threshold beyond which the order is
         ///                          considered invalid due to excessive deviation from the expected purchase amount.
 
         uint256 currentCalculatedBuyAmount = IStonks(stonks).estimateTradeOutput(sellAmount);
@@ -161,7 +161,7 @@ contract Order is IERC1271, AssetRecoverer {
         if (currentCalculatedBuyAmount <= buyAmount) return ERC1271_MAGIC_VALUE;
 
         uint256 differenceAmount = currentCalculatedBuyAmount - buyAmount;
-        uint256 maxToleratedAmountDeviation = buyAmount * orderParameters.priceToleranceInBasisPoints / MAX_BASIS_POINTS;
+        uint256 maxToleratedAmountDeviation = buyAmount * priceToleranceInBasisPoints / MAX_BASIS_POINTS;
 
         if (differenceAmount > maxToleratedAmountDeviation) {
             revert PriceConditionChanged(buyAmount + maxToleratedAmountDeviation, currentCalculatedBuyAmount);
@@ -191,8 +191,8 @@ contract Order is IERC1271, AssetRecoverer {
             uint32 validTo_
         )
     {
-        IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
-        return (orderHash, orderParameters.tokenFrom, orderParameters.tokenTo, sellAmount, buyAmount, validTo);
+        (address tokenFrom, address tokenTo,) = IStonks(stonks).getOrderParameters();
+        return (orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo);
     }
 
     /**
@@ -201,11 +201,11 @@ contract Order is IERC1271, AssetRecoverer {
      */
     function recoverTokenFrom() external {
         if (validTo >= block.timestamp) revert OrderNotExpired(validTo, block.timestamp);
-        IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
-        uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
+        (address tokenFrom,,) = IStonks(stonks).getOrderParameters();
+        uint256 balance = IERC20(tokenFrom).balanceOf(address(this));
         // Prevents dust transfers to avoid rounding issues for rebasable tokens like stETH.
         if (balance <= MIN_POSSIBLE_BALANCE) revert InvalidAmountToRecover(balance);
-        IERC20(orderParameters.tokenFrom).safeTransfer(stonks, balance);
+        IERC20(tokenFrom).safeTransfer(stonks, balance);
     }
 
     /**
@@ -215,8 +215,8 @@ contract Order is IERC1271, AssetRecoverer {
      * @dev Can only be called by the agent or manager of the contract. This is a safety feature to prevent accidental token loss.
      */
     function recoverERC20(address token_, uint256 amount_) public override onlyAgentOrManager {
-        IStonks.OrderParameters memory orderParameters = IStonks(stonks).getOrderParameters();
-        if (token_ == orderParameters.tokenFrom) revert CannotRecoverTokenFrom(orderParameters.tokenFrom);
+        (address tokenFrom,,) = IStonks(stonks).getOrderParameters();
+        if (token_ == tokenFrom) revert CannotRecoverTokenFrom(tokenFrom);
         AssetRecoverer.recoverERC20(token_, amount_);
     }
 }

@@ -106,13 +106,18 @@ describe('Stonks', function () {
         validParams.priceToleranceInBasisPoints
       )
 
-      const params = await stonks.getOrderParameters()
+      const [tokenFrom, tokenTo, orderDurationInSeconds] =
+        await stonks.getOrderParameters()
+      const priceToleranceInBasisPoints = await stonks.getPriceTolerance()
 
-      expect(params[0]).to.be.equal(validParams.tokenFrom)
-      expect(params[1]).to.be.equal(validParams.tokenTo)
-      expect(params[2]).to.be.equal(validParams.orderDurationInSeconds)
-      expect(params[3]).to.be.equal(validParams.marginInBasisPoints)
-      expect(params[4]).to.be.equal(validParams.priceToleranceInBasisPoints)
+      expect(tokenFrom).to.be.equal(validParams.tokenFrom)
+      expect(tokenTo).to.be.equal(validParams.tokenTo)
+      expect(orderDurationInSeconds).to.be.equal(
+        validParams.orderDurationInSeconds
+      )
+      expect(priceToleranceInBasisPoints).to.be.equal(
+        validParams.priceToleranceInBasisPoints
+      )
     })
 
     it('should not initialize with agent zero address', async function () {

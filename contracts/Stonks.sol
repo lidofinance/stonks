@@ -36,12 +36,19 @@ contract Stonks is IStonks, AssetRecoverer {
 
     address public immutable AMOUNT_CONVERTER;
     address public immutable ORDER_SAMPLE;
+    address public immutable TOKEN_FROM;
+    address public immutable TOKEN_TO;
+    uint256 public immutable ORDER_DURATION_IN_SECONDS;
+    uint256 public immutable MARGIN_IN_BASIS_POINTS;
+    uint256 public immutable PRICE_TOLERANCE_IN_BASIS_POINTS;
 
-    OrderParameters public orderParameters;
-
-    event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
     event AmountConverterSet(address amountConverter);
     event OrderSampleSet(address orderSample);
+    event TokenFromSet(address tokenFrom);
+    event TokenToSet(address tokenTo);
+    event OrderDurationInSecondsSet(uint256 orderDurationInSeconds);
+    event MarginInBasisPointsSet(uint256 marginInBasisPoints);
+    event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
 
     error InvalidManagerAddress(address manager);
     error InvalidTokenFromAddress(address tokenFrom);
@@ -96,18 +103,19 @@ contract Stonks is IStonks, AssetRecoverer {
         manager = manager_;
         ORDER_SAMPLE = orderSample_;
         AMOUNT_CONVERTER = amountConverter_;
-
-        orderParameters = OrderParameters({
-            tokenFrom: tokenFrom_,
-            tokenTo: tokenTo_,
-            orderDurationInSeconds: orderDurationInSeconds_.toUint32(),
-            marginInBasisPoints: marginInBasisPoints_.toUint16(),
-            priceToleranceInBasisPoints: priceToleranceInBasisPoints_.toUint16()
-        });
+        TOKEN_FROM = tokenFrom_;
+        TOKEN_TO = tokenTo_;
+        ORDER_DURATION_IN_SECONDS = orderDurationInSeconds_;
+        MARGIN_IN_BASIS_POINTS = marginInBasisPoints_;
+        PRICE_TOLERANCE_IN_BASIS_POINTS = priceToleranceInBasisPoints_;
 
         emit ManagerSet(manager_);
         emit AmountConverterSet(amountConverter_);
         emit OrderSampleSet(orderSample_);
+        emit TokenFromSet(tokenFrom_);
+        emit TokenToSet(tokenTo_);
+        emit OrderDurationInSecondsSet(orderDurationInSeconds_);
+        emit MarginInBasisPointsSet(marginInBasisPoints_);
     }
 
     /**
@@ -119,13 +127,13 @@ contract Stonks is IStonks, AssetRecoverer {
     function placeOrder(uint256 minBuyAmount_) external onlyAgentOrManager returns (address) {
         if (minBuyAmount_ == 0) revert InvalidAmount(minBuyAmount_);
 
-        uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
+        uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
 
         // Prevents dust trades to avoid rounding issues for rebasable tokens like stETH.
         if (balance <= MIN_POSSIBLE_BALANCE) revert MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, balance);
 
         Order orderCopy = Order(Clones.clone(ORDER_SAMPLE));
-        IERC20(orderParameters.tokenFrom).safeTransfer(address(orderCopy), balance);
+        IERC20(TOKEN_FROM).safeTransfer(address(orderCopy), balance);
         orderCopy.initialize(minBuyAmount_, manager);
 
         emit OrderContractCreated(address(orderCopy), minBuyAmount_);
@@ -139,23 +147,22 @@ contract Stonks is IStonks, AssetRecoverer {
      * @dev Uses token amount converter for output estimation.
      * @return Estimated trade output amount.
      * Subtracts the amount that corresponds to the margin parameter from the result obtained from the amount converter.
-     * 
+     *
      * |       estimatedTradeOutput       expectedPurchaseAmount
      * |  --------------*--------------------------*-----------------> amount
      * |                 <-------- margin -------->
-     * 
+     *
      * where:
      *      expectedPurchaseAmount - amount received from the amountConverter based on Chainlink price feed.
-     *      margin - % taken from the expectedPurchaseAmount includes CoW Protocol fees and maximum accepted losses 
+     *      margin - % taken from the expectedPurchaseAmount includes CoW Protocol fees and maximum accepted losses
      *               to handle market volatility.
      *      estimatedTradeOutput - expectedPurchaseAmount subtracted by the margin that is expected to be result of the trade.
      */
     function estimateTradeOutput(uint256 amount_) public view returns (uint256) {
         if (amount_ == 0) revert InvalidAmount(amount_);
-        uint256 expectedPurchaseAmount = IAmountConverter(AMOUNT_CONVERTER).getExpectedOut(
-            orderParameters.tokenFrom, orderParameters.tokenTo, amount_
-        );
-        return (expectedPurchaseAmount * (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) / MAX_BASIS_POINTS;
+        uint256 expectedPurchaseAmount =
+            IAmountConverter(AMOUNT_CONVERTER).getExpectedOut(TOKEN_FROM, TOKEN_TO, amount_);
+        return (expectedPurchaseAmount * (MAX_BASIS_POINTS - MARGIN_IN_BASIS_POINTS)) / MAX_BASIS_POINTS;
     }
 
     /**
@@ -164,16 +171,25 @@ contract Stonks is IStonks, AssetRecoverer {
      * @return Estimated trade output amount.
      */
     function estimateTradeOutputFromCurrentBalance() external view returns (uint256) {
-        uint256 balance = IERC20(orderParameters.tokenFrom).balanceOf(address(this));
+        uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
         return estimateTradeOutput(balance);
     }
 
     /**
      * @notice Returns trading parameters from Stonks for use in the Order contract.
      * @dev Facilitates gas efficiency by allowing Order to access existing parameters in Stonks without redundant storage.
-     * @return Struct of order parameters (tokenFrom, tokenTo, orderDurationInSeconds, marginInBasisPoints, priceToleranceInBasisPoints).
+     * @return Tuple of order parameters (tokenFrom, tokenTo, orderDurationInSeconds).
      */
-    function getOrderParameters() external view returns (OrderParameters memory) {
-        return orderParameters;
+    function getOrderParameters() external view returns (address, address, uint256) {
+        return (TOKEN_FROM, TOKEN_TO, ORDER_DURATION_IN_SECONDS);
+    }
+
+    /**
+     * @notice Returns price tolerance parameter from Stonks for use in the Order contract.
+     * @dev Facilitates gas efficiency by allowing Order to access existing parameters in Stonks without redundant storage.
+     * @return Price tolerance in basis points.
+     */
+    function getPriceTolerance() external view returns (uint256) {
+        return PRICE_TOLERANCE_IN_BASIS_POINTS;
     }
 }
