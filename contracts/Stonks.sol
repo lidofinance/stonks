@@ -148,7 +148,7 @@ contract Stonks is IStonks, AssetRecoverer {
      * @return Estimated trade output amount.
      * Subtracts the amount that corresponds to the margin parameter from the result obtained from the amount converter.
      *
-     * |       estimatedTradeOutput       expectedPurchaseAmount
+     * |       estimatedTradeOutput        expectedBuyAmount
      * |  --------------*--------------------------*-----------------> amount
      * |                 <-------- margin -------->
      *
@@ -160,9 +160,8 @@ contract Stonks is IStonks, AssetRecoverer {
      */
     function estimateTradeOutput(uint256 amount_) public view returns (uint256) {
         if (amount_ == 0) revert InvalidAmount(amount_);
-        uint256 expectedPurchaseAmount =
-            IAmountConverter(AMOUNT_CONVERTER).getExpectedOut(TOKEN_FROM, TOKEN_TO, amount_);
-        return (expectedPurchaseAmount * (MAX_BASIS_POINTS - MARGIN_IN_BASIS_POINTS)) / MAX_BASIS_POINTS;
+        uint256 expectedBuyAmount = IAmountConverter(AMOUNT_CONVERTER).getExpectedOut(TOKEN_FROM, TOKEN_TO, amount_);
+        return (expectedBuyAmount * (MAX_BASIS_POINTS - MARGIN_IN_BASIS_POINTS)) / MAX_BASIS_POINTS;
     }
 
     /**
