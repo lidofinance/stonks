@@ -11,3 +11,10 @@ cache
 build
 artifacts
 
+
+.wake
+pytypes
+__pycache__/
+*.py[cod]
+.hypothesis/
+wake-coverage.cov
