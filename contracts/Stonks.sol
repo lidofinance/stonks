@@ -5,7 +5,6 @@ pragma solidity 0.8.23;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {Order} from "./Order.sol";
 import {AssetRecoverer} from "./AssetRecoverer.sol";
@@ -17,7 +16,7 @@ import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
  * @dev Centralizes the management of CoW Swap trading orders, interfacing with the Order contract.
  *
  * Features:
- *  - Stores key trading parameters: token pair, margin, price tokerance and order duration in immutable variables.
+ *  - Stores key trading parameters: token pair, margin, price tolerance and order duration in immutable variables.
  *  - Creates a minimum proxy from the Order contract and passes params for individual trades.
  *  - Provides asset recovery functionality.
  *
@@ -25,7 +24,6 @@ import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
  */
 contract Stonks is IStonks, AssetRecoverer {
     using SafeERC20 for IERC20;
-    using SafeCast for uint256;
 
     uint16 private constant MAX_BASIS_POINTS = 10_000;
     uint16 private constant BASIS_POINTS_PARAMETERS_LIMIT = 1_000;
@@ -48,6 +46,7 @@ contract Stonks is IStonks, AssetRecoverer {
     event TokenToSet(address tokenTo);
     event OrderDurationInSecondsSet(uint256 orderDurationInSeconds);
     event MarginInBasisPointsSet(uint256 marginInBasisPoints);
+    event PriceToleranceInBasisPointsSet(uint256 priceToleranceInBasisPoints);
     event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
 
     error InvalidManagerAddress(address manager);
@@ -56,10 +55,10 @@ contract Stonks is IStonks, AssetRecoverer {
     error InvalidAmountConverterAddress(address amountConverter);
     error InvalidOrderSampleAddress(address orderSample);
     error TokensCannotBeSame();
-    error InvalidOrderDuration(uint256 min, uint256 max, uint256 recieved);
-    error MarginOverflowsAllowedLimit(uint256 limit, uint256 recieved);
-    error PriceToleranceOverflowsAllowedLimit(uint256 limit, uint256 recieved);
-    error MinimumPossibleBalanceNotMet(uint256 min, uint256 recieved);
+    error InvalidOrderDuration(uint256 min, uint256 max, uint256 received);
+    error MarginOverflowsAllowedLimit(uint256 limit, uint256 received);
+    error PriceToleranceOverflowsAllowedLimit(uint256 limit, uint256 received);
+    error MinimumPossibleBalanceNotMet(uint256 min, uint256 received);
     error InvalidAmount(uint256 amount);
 
     /**
@@ -83,12 +82,10 @@ contract Stonks is IStonks, AssetRecoverer {
         if (tokenFrom_ == tokenTo_) revert TokensCannotBeSame();
         if (amountConverter_ == address(0)) revert InvalidAmountConverterAddress(amountConverter_);
         if (orderSample_ == address(0)) revert InvalidOrderSampleAddress(orderSample_);
-        if (orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS) {
-            revert InvalidOrderDuration(
-                MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS, MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS, orderDurationInSeconds_
-            );
-        }
-        if (orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS) {
+        if (
+            orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS
+                || orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS
+        ) {
             revert InvalidOrderDuration(
                 MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS, MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS, orderDurationInSeconds_
             );
@@ -116,6 +113,7 @@ contract Stonks is IStonks, AssetRecoverer {
         emit TokenToSet(tokenTo_);
         emit OrderDurationInSecondsSet(orderDurationInSeconds_);
         emit MarginInBasisPointsSet(marginInBasisPoints_);
+        emit PriceToleranceInBasisPointsSet(priceToleranceInBasisPoints_);
     }
 
     /**
@@ -130,7 +128,7 @@ contract Stonks is IStonks, AssetRecoverer {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
 
         // Prevents dust trades to avoid rounding issues for rebasable tokens like stETH.
-        if (balance <= MIN_POSSIBLE_BALANCE) revert MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, balance);
+        if (balance < MIN_POSSIBLE_BALANCE) revert MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, balance);
 
         Order orderCopy = Order(Clones.clone(ORDER_SAMPLE));
         IERC20(TOKEN_FROM).safeTransfer(address(orderCopy), balance);
@@ -145,7 +143,7 @@ contract Stonks is IStonks, AssetRecoverer {
      * @notice Estimates output amount for a given trade input amount.
      * @param amount_ Input token amount for trade.
      * @dev Uses token amount converter for output estimation.
-     * @return Estimated trade output amount.
+     * @return estimatedTradeOutput Estimated trade output amount.
      * Subtracts the amount that corresponds to the margin parameter from the result obtained from the amount converter.
      *
      * |       estimatedTradeOutput        expectedBuyAmount
@@ -153,15 +151,16 @@ contract Stonks is IStonks, AssetRecoverer {
      * |                 <-------- margin -------->
      *
      * where:
-     *      expectedPurchaseAmount - amount received from the amountConverter based on Chainlink price feed.
-     *      margin - % taken from the expectedPurchaseAmount includes CoW Protocol fees and maximum accepted losses
+     *      expectedBuyAmount - amount received from the amountConverter based on Chainlink price feed.
+     *      margin - % taken from the expectedBuyAmount includes CoW Protocol fees and maximum accepted losses
      *               to handle market volatility.
-     *      estimatedTradeOutput - expectedPurchaseAmount subtracted by the margin that is expected to be result of the trade.
+     *      estimatedTradeOutput - expectedBuyAmount subtracted by the margin that is expected to be result of the trade.
      */
-    function estimateTradeOutput(uint256 amount_) public view returns (uint256) {
+    function estimateTradeOutput(uint256 amount_) public view returns (uint256 estimatedTradeOutput) {
         if (amount_ == 0) revert InvalidAmount(amount_);
+
         uint256 expectedBuyAmount = IAmountConverter(AMOUNT_CONVERTER).getExpectedOut(TOKEN_FROM, TOKEN_TO, amount_);
-        return (expectedBuyAmount * (MAX_BASIS_POINTS - MARGIN_IN_BASIS_POINTS)) / MAX_BASIS_POINTS;
+        estimatedTradeOutput = (expectedBuyAmount * (MAX_BASIS_POINTS - MARGIN_IN_BASIS_POINTS)) / MAX_BASIS_POINTS;
     }
 
     /**

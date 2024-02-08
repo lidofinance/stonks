@@ -32,12 +32,10 @@ contract AmountConverter is IAmountConverter {
     error InvalidHeartbeatArrayLength();
     error InvalidTokensToSellArrayLength();
     error InvalidTokensToBuyArrayLength();
-    error NoPriceFeedFound(address tokenFrom, address tokenTo);
     error SellTokenNotAllowed(address tokenFrom);
     error BuyTokenNotAllowed(address tokenTo);
     error SameTokensConversion();
     error UnexpectedPriceFeedAnswer();
-    error InvalidExpectedOutAmount(uint256 amount);
     error PriceFeedNotUpdated(uint256 updatedAt);
 
     /**
@@ -112,8 +110,6 @@ contract AmountConverter is IAmountConverter {
         } else {
             expectedOutputAmount = (amountFrom_ * currentPrice) * 10 ** uint256(-effectiveDecimalDifference);
         }
-
-        if (expectedOutputAmount == 0) revert InvalidExpectedOutAmount(expectedOutputAmount);
     }
 
     /**

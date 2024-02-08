@@ -118,7 +118,7 @@ contract Order is IERC1271, AssetRecoverer {
 
         // Approval is set to the maximum value of uint256 as the contract is intended for single-use only.
         // This eliminates the need for subsequent approval calls, optimizing for gas efficiency in one-time transactions.
-        IERC20(tokenFrom).approve(RELAYER, type(uint256).max);
+        IERC20(tokenFrom).forceApprove(RELAYER, type(uint256).max);
 
         emit OrderCreated(address(this), orderHash, order);
     }
@@ -203,7 +203,7 @@ contract Order is IERC1271, AssetRecoverer {
         (address tokenFrom,,) = IStonks(stonks).getOrderParameters();
         uint256 balance = IERC20(tokenFrom).balanceOf(address(this));
         // Prevents dust transfers to avoid rounding issues for rebasable tokens like stETH.
-        if (balance <= MIN_POSSIBLE_BALANCE) revert InvalidAmountToRecover(balance);
+        if (balance < MIN_POSSIBLE_BALANCE) revert InvalidAmountToRecover(balance);
         IERC20(tokenFrom).safeTransfer(stonks, balance);
     }
 
