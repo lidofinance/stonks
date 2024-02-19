@@ -1,14 +1,18 @@
-// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
+// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.19;
+pragma solidity 0.8.23;
 
 import {AmountConverter} from "../AmountConverter.sol";
 
+/**
+ * @title AmountConverterFactory
+ * @notice Deploys new instances of the AmountConverter contract.
+ */
+
 contract AmountConverterFactory {
-    address public immutable feedRegistry;
+    address public immutable FEED_REGISTRY;
 
-    error ZeroAddress();
-
+    event FeedRegistrySet(address feedRegistry);
     event AmountConverterDeployed(
         address indexed amountConverterAddress,
         address feedRegistryAddress,
@@ -18,11 +22,26 @@ contract AmountConverterFactory {
         uint256[] priceFeedsHeartbeatTimeouts
     );
 
+    error InvalidFeedRegistryAddress(address feedRegistry);
+
+    /**
+     *
+     * @param feedRegistry_ The address of the Chainlink Feed Registry (https://docs.chain.link/data-feeds/feed-registry)
+     */
     constructor(address feedRegistry_) {
-        if (feedRegistry_ == address(0)) revert ZeroAddress();
-        feedRegistry = feedRegistry_;
+        if (feedRegistry_ == address(0)) revert InvalidFeedRegistryAddress(feedRegistry_);
+        FEED_REGISTRY = feedRegistry_;
+        emit FeedRegistrySet(feedRegistry_);
     }
 
+    /**
+     * @notice Deploys a new AmountConverter contract with specified parameters
+     * @param conversionTarget_ The target currency for conversions
+     * @param allowedTokensToSell_ Array of addresses of tokens allowed to be sold
+     * @param allowedStableTokensToBuy_ Array of addresses of stable tokens allowed to be bought
+     * @param priceFeedsHeartbeatTimeouts_ Array of timeouts for the price feeds
+     * @return tokenAmountConverter The address of the newly deployed AmountConverter contract
+     */
     function deployAmountConverter(
         address conversionTarget_,
         address[] memory allowedTokensToSell_,
@@ -31,7 +50,7 @@ contract AmountConverterFactory {
     ) public returns (address tokenAmountConverter) {
         tokenAmountConverter = address(
             new AmountConverter(
-                feedRegistry,
+                FEED_REGISTRY,
                 conversionTarget_,
                 allowedTokensToSell_,
                 allowedStableTokensToBuy_,
@@ -40,7 +59,7 @@ contract AmountConverterFactory {
         );
         emit AmountConverterDeployed(
             tokenAmountConverter,
-            feedRegistry,
+            FEED_REGISTRY,
             conversionTarget_,
             allowedTokensToSell_,
             allowedStableTokensToBuy_,

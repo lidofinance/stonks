@@ -2,7 +2,7 @@ import { ethers } from 'hardhat'
 import { TransactionReceipt } from 'ethers'
 import { getPlaceOrderData } from './get-events'
 import { mainnet } from './contracts'
-import { Stonks } from '../typechain-types'
+import { Stonks, StonksTest } from '../typechain-types'
 
 export const MAX_BASIS_POINTS = BigInt(10000)
 export const MAGIC_VALUE = '0x1626ba7e'
@@ -20,39 +20,41 @@ export const orderPartials = {
 
 export const formOrderHashFromTxReceipt = async (
   receipt: TransactionReceipt,
-  stonks: Stonks
+  stonks: Stonks | StonksTest,
+  minBuyAmount: bigint = 0n,
+  marginInBasisPoints: bigint = 0n
 ) => {
   const blockNumber = receipt.blockNumber
   const blockTimestamp = (await ethers.provider.getBlock(blockNumber))
     ?.timestamp
 
   if (!blockTimestamp) throw Error('blockTimestamp is null')
-  const { address: orderInstanceAddress, order } = await getPlaceOrderData(receipt)
-  const orderParameters = await stonks.getOrderParameters()
-  const validTo =
-    blockTimestamp + Number(orderParameters.orderDurationInSeconds) // 1 hour
+  const { address: orderInstanceAddress, order } =
+    await getPlaceOrderData(receipt)
+  const [tokenFrom, tokenTo, orderDurationInSeconds] =
+    await stonks.getOrderParameters()
+  const validTo = blockTimestamp + Number(orderDurationInSeconds) // 1 hour
   const tokenConverter = await ethers.getContractAt(
     'AmountConverter',
-    await stonks.amountConverter()
+    await stonks.AMOUNT_CONVERTER()
   )
-  const token = await ethers.getContractAt('IERC20', orderParameters.tokenFrom)
+  const token = await ethers.getContractAt('IERC20', tokenFrom)
   const sellAmount = await token.balanceOf(orderInstanceAddress)
   const buyAmountWithoutMargin = await tokenConverter.getExpectedOut(
-    orderParameters.tokenFrom,
-    orderParameters.tokenTo,
+    tokenFrom,
+    tokenTo,
     sellAmount
   )
   const buyAmount =
-    (buyAmountWithoutMargin *
-      (MAX_BASIS_POINTS - orderParameters.marginInBasisPoints)) /
+    (buyAmountWithoutMargin * (MAX_BASIS_POINTS - marginInBasisPoints)) /
     MAX_BASIS_POINTS
 
   const orderData = {
-    sellToken: orderParameters.tokenFrom,
-    buyToken: orderParameters.tokenTo,
+    sellToken: tokenFrom,
+    buyToken: tokenTo,
     receiver: mainnet.AGENT,
     sellAmount: sellAmount,
-    buyAmount: buyAmount,
+    buyAmount: buyAmount > minBuyAmount ? buyAmount : minBuyAmount,
     validTo: validTo,
     appData: orderPartials.appData,
     feeAmount: 0,

@@ -55,7 +55,7 @@ describe('Stonks', function () {
         conversionTarget: '0x0000000000000000000000000000000000000348', // USD
         allowedTokensToSell: [mainnet.STETH],
         allowedStableTokensToBuy: [mainnet.DAI],
-        priceFeedsHeartbeatTimeouts: [3600]
+        priceFeedsHeartbeatTimeouts: [3600],
       },
     })
 
@@ -63,21 +63,20 @@ describe('Stonks', function () {
     subjectTokenConverter = tokenConverter
   })
 
-
   describe('initialization:', function () {
     const notZeroAddress = '0x0000000000000000000000000000000000000999'
     type ContractFactory = Parameters<typeof ContractFactory.deploy>
 
     let validParams: {
       agent: ContractFactory[0]
-      manager: ContractFactory[1],
-      tokenFrom: ContractFactory[2],
-      tokenTo: ContractFactory[3],
-      amountConverter: ContractFactory[4],
-      orderSample: ContractFactory[5],
-      orderDurationInSeconds: ContractFactory[6],
-      marginInBasisPoints: ContractFactory[7],
-      priceToleranceInBasisPoints: ContractFactory[8],
+      manager: ContractFactory[1]
+      tokenFrom: ContractFactory[2]
+      tokenTo: ContractFactory[3]
+      amountConverter: ContractFactory[4]
+      orderSample: ContractFactory[5]
+      orderDurationInSeconds: ContractFactory[6]
+      marginInBasisPoints: ContractFactory[7]
+      priceToleranceInBasisPoints: ContractFactory[8]
     }
 
     this.beforeAll(async function () {
@@ -107,13 +106,18 @@ describe('Stonks', function () {
         validParams.priceToleranceInBasisPoints
       )
 
-      const params = await stonks.getOrderParameters()
+      const [tokenFrom, tokenTo, orderDurationInSeconds] =
+        await stonks.getOrderParameters()
+      const priceToleranceInBasisPoints = await stonks.getPriceTolerance()
 
-      expect(params[0]).to.be.equal(validParams.tokenFrom)
-      expect(params[1]).to.be.equal(validParams.tokenTo)
-      expect(params[2]).to.be.equal(validParams.orderDurationInSeconds)
-      expect(params[3]).to.be.equal(validParams.marginInBasisPoints)
-      expect(params[4]).to.be.equal(validParams.priceToleranceInBasisPoints)
+      expect(tokenFrom).to.be.equal(validParams.tokenFrom)
+      expect(tokenTo).to.be.equal(validParams.tokenTo)
+      expect(orderDurationInSeconds).to.be.equal(
+        validParams.orderDurationInSeconds
+      )
+      expect(priceToleranceInBasisPoints).to.be.equal(
+        validParams.priceToleranceInBasisPoints
+      )
     })
 
     it('should not initialize with agent zero address', async function () {
@@ -147,7 +151,7 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidManagerAddress')
     })
     it('should not initialize with tokenFrom zero address', async function () {
       await expect(
@@ -162,7 +166,10 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidTokenFromAddress'
+      )
     })
     it('should not initialize with tokenTo zero address', async function () {
       await expect(
@@ -177,7 +184,7 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidTokenToAddress')
     })
     it('should not initialize with same tokens address', async function () {
       await expect(
@@ -207,7 +214,10 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidAmountConverterAddress'
+      )
     })
     it('should not initialize with orderSample zero address', async function () {
       await expect(
@@ -222,7 +232,10 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidOrderSampleAddress'
+      )
     })
     it('should not initialize with orderDurationInSeconds less than 60', async function () {
       await expect(
@@ -315,7 +328,7 @@ describe('Stonks', function () {
     })
   })
 
-  describe('estimateOutputFromCurrentBalance:', function () {
+  describe('estimateTradeOutputFromCurrentBalance:', function () {
     it('should return correct amount with margin included', async function () {
       const localSnapshotId = await network.provider.send('evm_snapshot')
       await fillUpERC20FromTreasury({
@@ -335,21 +348,21 @@ describe('Stonks', function () {
         (expectedOut * (MAX_BASIS_POINTS - BigInt(marginInBps))) /
         MAX_BASIS_POINTS
 
-      expect(await subject.estimateOutputFromCurrentBalance()).to.equal(
+      expect(await subject.estimateTradeOutputFromCurrentBalance()).to.equal(
         expectedOutWithMargin
       )
       await network.provider.send('evm_revert', [localSnapshotId])
     })
     it('should revert if balance is zero', async () => {
       await expect(
-        subject.estimateOutputFromCurrentBalance()
+        subject.estimateTradeOutputFromCurrentBalance()
       ).to.be.revertedWithCustomError(subject, 'InvalidAmount')
     })
   })
 
   describe('order placement:', function () {
     it('should revert when balance is zero', async function () {
-      await expect(subject.placeOrder()).to.be.revertedWithCustomError(
+      await expect(subject.placeOrder(100)).to.be.revertedWithCustomError(
         subject,
         'MinimumPossibleBalanceNotMet'
       )
@@ -366,7 +379,9 @@ describe('Stonks', function () {
       expect(isClose(await steth.balanceOf(await subject.getAddress()), amount))
         .to.be.true
 
-      const tx = await subject.placeOrder()
+      const expectedBuyAmount =
+        await subject.estimateTradeOutputFromCurrentBalance()
+      const tx = await subject.placeOrder(expectedBuyAmount)
       await tx.wait()
     })
   })

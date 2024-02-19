@@ -9,7 +9,7 @@
     "typescript": "^5.2.2"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^4.9.3",
+    "@openzeppelin/contracts": "4.9.3",
     "consola": "^3.2.3",
     "dotenv": "^16.3.1"
   },
