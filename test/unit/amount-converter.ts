@@ -35,7 +35,10 @@ describe('AmountConverter', function () {
           [mainnet.DAI, mainnet.USDC, mainnet.USDT],
           [3600, 3600, 86400, 86400]
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidFeedRegistryAddress'
+      )
     })
 
     it('should not initialize with conversion target zero address', async function () {
@@ -49,7 +52,44 @@ describe('AmountConverter', function () {
           [mainnet.DAI, mainnet.USDC, mainnet.USDT],
           [3600, 3600, 86400, 86400]
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidConversionTargetAddress'
+      )
+    })
+
+    it('should not initialize with empty allowedTokensToSell', async function () {
+      const ContractFactory = await ethers.getContractFactory('AmountConverter')
+
+      await expect(
+        ContractFactory.deploy(
+          mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+          mainnet.CHAINLINK_USD_QUOTE,
+          [],
+          [mainnet.DAI, mainnet.USDC, mainnet.USDT],
+          [3600, 3600, 86400, 86400]
+        )
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidTokensToSellArrayLength'
+      )
+    })
+
+    it('should not initialize with empty allowedTokensToBuy', async function () {
+      const ContractFactory = await ethers.getContractFactory('AmountConverter')
+
+      await expect(
+        ContractFactory.deploy(
+          mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+          mainnet.CHAINLINK_USD_QUOTE,
+          [mainnet.STETH, mainnet.DAI, mainnet.USDC, mainnet.USDT],
+          [],
+          [3600, 3600, 86400, 86400]
+        )
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidTokensToBuyArrayLength'
+      )
     })
 
     it('should not initialize with zero address in allowedTokensToSell', async function () {
@@ -63,7 +103,10 @@ describe('AmountConverter', function () {
           [mainnet.DAI, mainnet.USDC, mainnet.USDT],
           [3600, 3600]
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidAllowedTokenToSell'
+      )
     })
 
     it('should not initialize with zero address in allowedTokensToBuy', async function () {
@@ -77,7 +120,10 @@ describe('AmountConverter', function () {
           [ethers.ZeroAddress, mainnet.DAI, mainnet.USDC, mainnet.USDT],
           [3600]
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(
+        ContractFactory,
+        'InvalidAllowedTokenToBuy'
+      )
     })
 
     it('should not initialize with wrong length priceFeedsHeartbeatTimeouts', async function () {
@@ -102,7 +148,7 @@ describe('AmountConverter', function () {
     it('should revert if amount is zero', async function () {
       await expect(
         subject.getExpectedOut(mainnet.STETH, mainnet.DAI, 0)
-      ).to.be.revertedWithCustomError(subject, 'ZeroAmount')
+      ).to.be.revertedWithCustomError(subject, 'InvalidAmount')
     })
     it('should revert if tokenFrom is not allowed', async function () {
       await expect(
@@ -195,6 +241,30 @@ describe('AmountConverter', function () {
       await expect(
         localSubject.getExpectedOut(mainnet.STETH, mainnet.DAI, amountToSell)
       ).to.be.revertedWithCustomError(localSubject, 'PriceFeedNotUpdated')
+    })
+  })
+
+  describe('events:', async function () {
+    it('constructor should emits event about added tokens', async function () {
+      const ContractFactory = await ethers.getContractFactory('AmountConverter')
+      const localSubject = await ContractFactory.deploy(
+        mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+        '0x0000000000000000000000000000000000000348', // USD
+        [mainnet.STETH],
+        [mainnet.DAI],
+        [3600]
+      )
+      const tx = localSubject.waitForDeployment()
+
+      await expect(localSubject.deploymentTransaction())
+        .to.emit(localSubject, 'AllowedTokenToSellAdded')
+        .withArgs(mainnet.STETH)
+      await expect(localSubject.deploymentTransaction())
+        .to.emit(localSubject, 'AllowedTokenToBuyAdded')
+        .withArgs(mainnet.DAI)
+      await expect(localSubject.deploymentTransaction())
+        .to.emit(localSubject, 'PriceFeedHeartbeatTimeoutSet')
+        .withArgs(mainnet.STETH, 3600)
     })
   })
 

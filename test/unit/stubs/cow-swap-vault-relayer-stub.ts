@@ -8,15 +8,18 @@ import {
   setBalance,
   takeSnapshot,
 } from '@nomicfoundation/hardhat-network-helpers'
-import { CoWSwapVaultRelayerStub__factory } from '../../../typechain-types/factories/contracts/stubs/CoWSwapVaultRelayerStub.sol'
-import { AmountConverter__factory, Order__factory, Stonks } from '../../../typechain-types'
 import {
+  AmountConverter__factory,
+  Order__factory,
+  Stonks,
+  Stonks__factory,
+  IERC20__factory,
+  CoWSwapVaultRelayerStub__factory,
   ChainlinkFeedRegistryStub__factory,
   CoWSwapSettlementStub__factory,
-} from '../../../typechain-types/factories/contracts/stubs'
-import { Stonks__factory } from '../../../typechain-types/factories/artifacts/contracts'
-import { IERC20__factory } from '../../../typechain-types/factories/artifacts/@openzeppelin/contracts/token/ERC20'
+} from '../../../typechain-types'
 import { OrderCreatedEvent } from '../../../typechain-types/contracts/Order'
+import { domainSeparator } from '../../../utils/gpv2-helpers'
 
 type HardhatEthersSigner = Awaited<ReturnType<(typeof ethers)['getSigners']>>[number]
 
@@ -66,8 +69,8 @@ describe('CoWSwapVaultRelayerStub', async () => {
 
     const orderSample = await new Order__factory(deployer).deploy(
       mainnet.AGENT,
-      settlement,
-      relayer
+      await relayer.getAddress(),
+      domainSeparator
     )
     await orderSample.waitForDeployment()
 
@@ -111,7 +114,9 @@ describe('CoWSwapVaultRelayerStub', async () => {
     const stETH = IERC20__factory.connect(mainnet.STETH, ethers.provider)
     await stETH.connect(agentUnlocked).transfer(stonks, 10n ** 18n)
 
-    const tx = await stonks.connect(manager).placeOrder()
+    const tx = await stonks
+      .connect(manager)
+      .placeOrder(await stonks.estimateTradeOutputFromCurrentBalance())
     const receipt = await tx.wait()
 
     const iOrder = Order__factory.createInterface()

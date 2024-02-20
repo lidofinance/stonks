@@ -21,7 +21,8 @@ import { PlaceOrderDataEvent } from '../../utils/types'
 const PRICE_TOLERANCE_IN_BP = 1000
 
 describe('Order', async function () {
-  let operator: Signer
+  const marginInBps = 500
+  let manager: Signer
   let stonks: Stonks
   let hashHelper: HashHelper
   let amountConverter: AmountConverter
@@ -29,10 +30,11 @@ describe('Order', async function () {
   let subject: Order
   let orderHash: string
   let orderData: PlaceOrderDataEvent
+  let expectedBuyAmount: bigint
 
   this.beforeAll(async function () {
     snapshotId = await network.provider.send('evm_snapshot')
-    operator = (await ethers.getSigners())[0]
+    manager = (await ethers.getSigners())[0]
 
     const amountConverterTestFactory = await ethers.getContractFactory(
       'AmountConverterTest'
@@ -57,8 +59,8 @@ describe('Order', async function () {
         stonksParams: {
           tokenFrom: mainnet.STETH,
           tokenTo: mainnet.DAI,
-          manager: await operator.getAddress(),
-          marginInBps: 500,
+          manager: await manager.getAddress(),
+          marginInBps: marginInBps,
           orderDuration: 3600,
           priceToleranceInBps: PRICE_TOLERANCE_IN_BP,
           amountConverterAddress: await amountConverterTest.getAddress(),
@@ -67,7 +69,7 @@ describe('Order', async function () {
           conversionTarget: mainnet.CHAINLINK_USD_QUOTE, // USD
           allowedTokensToSell: [mainnet.STETH],
           allowedStableTokensToBuy: [mainnet.DAI],
-          priceFeedsHeartbeatTimeouts: [3600]
+          priceFeedsHeartbeatTimeouts: [3600],
         },
       })
     const HashHelperFactory = await ethers.getContractFactory('HashHelper')
@@ -84,7 +86,8 @@ describe('Order', async function () {
       address: await stonks.getAddress(),
     })
 
-    const placeOrderTx = await stonks.placeOrder()
+    expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
+    const placeOrderTx = await stonks.placeOrder(expectedBuyAmount)
     const placeOrderTxReceipt = await placeOrderTx.wait()
 
     if (!placeOrderTxReceipt) throw Error('placeOrderTxReceipt is null')
@@ -92,57 +95,67 @@ describe('Order', async function () {
     const decodedOrderTx = await getPlaceOrderData(placeOrderTxReceipt)
 
     orderData = decodedOrderTx
-    subject = await ethers.getContractAt('Order', orderData.address, operator)
+    subject = await ethers.getContractAt('Order', orderData.address, manager)
 
-    orderHash = await formOrderHashFromTxReceipt(placeOrderTxReceipt, stonks)
+    orderHash = await formOrderHashFromTxReceipt(
+      placeOrderTxReceipt,
+      stonks,
+      expectedBuyAmount,
+      BigInt(marginInBps)
+    )
   })
 
   describe('initialization (direct):', function () {
     it('sample instance should be initialized by default', async () => {
       const subject = await ethers.getContractAt(
         'Order',
-        await stonks.orderSample()
+        await stonks.ORDER_SAMPLE()
       )
       await expect(
-        subject.initialize(ethers.ZeroAddress)
+        subject.initialize(expectedBuyAmount, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(subject, 'OrderAlreadyInitialized')
     })
   })
 
   describe('initialization (from Stonks):', function () {
     it('should have correct order parameters', async () => {
-      const orderParams = await stonks.getOrderParameters()
-      const token = await ethers.getContractAt(
-        'IERC20',
-        orderParams['tokenFrom']
-      )
+      const [tokenFrom, tokenTo, orderDurationInSeconds] =
+        await stonks.getOrderParameters()
+      const token = await ethers.getContractAt('IERC20', tokenFrom)
 
       expect(await subject.stonks()).to.equal(await stonks.getAddress())
-      expect(orderData.order.sellToken).to.equal(orderParams['tokenFrom'])
-      expect(orderData.order.buyToken).to.equal(orderParams['tokenTo'])
+      expect(orderData.order.sellToken).to.equal(tokenFrom)
+      expect(orderData.order.buyToken).to.equal(tokenTo)
       expect(orderData.order.sellAmount).to.equal(
         await token.balanceOf(subject)
       )
+      const buyAmountFromBalance =
+        await stonks.estimateTradeOutputFromCurrentBalance()
       expect(orderData.order.buyAmount).to.equal(
-        await stonks.estimateTradeOutput(orderData.order.sellAmount)
+        buyAmountFromBalance > expectedBuyAmount
+          ? buyAmountFromBalance
+          : expectedBuyAmount
       )
       expect(orderData.order.receiver).to.be.equal(mainnet.AGENT)
       expect(BigInt(orderData.order.feeAmount)).to.be.equal(BigInt(0))
       expect(BigInt(orderData.order.validTo)).to.be.equal(
-        BigInt(orderData.timestamp) + orderParams.orderDurationInSeconds
+        BigInt(orderData.timestamp) + orderDurationInSeconds
       )
     })
     it('should return correct params from getOrderDetails', async () => {
-      const orderParams = await stonks.getOrderParameters()
+      const [tokenFromParam, tokenToParam, orderDurationInSeconds] =
+        await stonks.getOrderParameters()
       const [orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo] =
         await subject.getOrderDetails()
 
       expect(orderHash).to.equal(orderData.hash)
-      expect(tokenFrom).to.equal(orderParams['tokenFrom'])
-      expect(tokenTo).to.equal(orderParams['tokenTo'])
+      expect(tokenFrom).to.equal(tokenFromParam)
+      expect(tokenTo).to.equal(tokenToParam)
       expect(sellAmount).to.equal(orderData.order.sellAmount)
       expect(buyAmount).to.equal(orderData.order.buyAmount)
-      expect(validTo).to.equal(BigInt(orderData.timestamp) + BigInt(orderParams.orderDurationInSeconds))
+      expect(validTo).to.equal(
+        BigInt(orderData.timestamp) + BigInt(orderDurationInSeconds)
+      )
     })
   })
 
@@ -208,7 +221,7 @@ describe('Order', async function () {
       localSnapshotId = await network.provider.send('evm_snapshot')
     })
     it('should succesfully recover token from', async () => {
-      const orderParams = await stonks.getOrderParameters()
+      const [tokenFrom] = await stonks.getOrderParameters()
       const stranger = (await ethers.getSigners())[4]
       const subjectWithStranger = await ethers.getContractAt(
         'Order',
@@ -218,10 +231,7 @@ describe('Order', async function () {
 
       await network.provider.send('evm_increaseTime', [60 * 60 + 1])
 
-      const token = await ethers.getContractAt(
-        'IERC20',
-        orderParams['tokenFrom']
-      )
+      const token = await ethers.getContractAt('IERC20', tokenFrom)
       const stonksBalanceBefore = await token.balanceOf(
         await stonks.getAddress()
       )
@@ -250,6 +260,15 @@ describe('Order', async function () {
         'OrderNotExpired'
       )
     })
+    it('should revert if nothing to recover', async () => {
+      await network.provider.send('evm_increaseTime', [60 * 60 + 1])
+
+      await subject.recoverTokenFrom()
+      await expect(subject.recoverTokenFrom()).to.be.revertedWithCustomError(
+        subject,
+        'InvalidAmountToRecover'
+      )
+    })
     this.afterEach(async function () {
       await network.provider.send('evm_revert', [localSnapshotId])
     })
@@ -257,10 +276,10 @@ describe('Order', async function () {
 
   describe('recoverERC20:', async function () {
     it('should revert if recover a token from', async () => {
-      const orderParams = await stonks.getOrderParameters()
-      await expect(
-        subject.recoverERC20(orderParams['tokenFrom'], BigInt(1))
-      ).revertedWithCustomError(subject, 'CannotRecoverTokenFrom')
+      const [tokenFrom] = await stonks.getOrderParameters()
+      await expect(subject.recoverERC20(tokenFrom, BigInt(1)))
+        .revertedWithCustomError(subject, 'CannotRecoverTokenFrom')
+        .withArgs(tokenFrom)
     })
     it('should revert if called by stranger', async () => {
       const amount = ethers.parseEther('1')
@@ -269,14 +288,15 @@ describe('Order', async function () {
         amount: amount,
         address: await subject.getAddress(),
       })
+      const signer = (await ethers.getSigners())[4]
       const localSubject = await ethers.getContractAt(
         'Order',
         await subject.getAddress(),
-        (await ethers.getSigners())[4]
+        signer
       )
-      await expect(
-        localSubject.recoverERC20(mainnet.DAI, BigInt(1))
-      ).revertedWithCustomError(subject, 'NotAgentOrManager')
+      await expect(localSubject.recoverERC20(mainnet.DAI, BigInt(1)))
+        .revertedWithCustomError(subject, 'NotAgentOrManager')
+        .withArgs(await signer.getAddress())
     })
     it('should successfully recover a token', async () => {
       const amount = ethers.parseEther('1')

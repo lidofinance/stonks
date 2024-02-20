@@ -1,5 +1,5 @@
 import { ethers } from 'hardhat'
-import { TransactionReceipt } from 'ethers'
+import type { TransactionReceipt, Log } from 'ethers'
 import {
   StonksFactory__factory,
   AmountConverterFactory__factory,
@@ -7,15 +7,13 @@ import {
 } from '../typechain-types'
 import { PlaceOrderDataEvent } from './types'
 
-
-
 export const getPlaceOrderData = async (
   receipt: TransactionReceipt
 ): Promise<PlaceOrderDataEvent> => {
   const orderInterface = Order__factory.createInterface()
-  const orderEvent = orderInterface.parseLog(
-    (receipt as any).logs[receipt.logs.length - 1]
-  )
+  const orderEvent = (receipt as TransactionReceipt).logs
+    .map((log: Log) => orderInterface.parseLog(log as any))
+    .find((log) => log?.name === 'OrderCreated')
   const blockNumber = receipt.blockNumber
   const blockTimestamp = (await ethers.provider.getBlock(blockNumber))
     ?.timestamp
@@ -50,7 +48,7 @@ export const getStonksDeployment = (
   tokenFrom: string
   tokenTo: string
   tokenConverter: string
-  operator: string
+  manager: string
   order: string
 } => {
   const stonksFactoryInterface = StonksFactory__factory.createInterface()
@@ -64,7 +62,7 @@ export const getStonksDeployment = (
     tokenFrom: data[1],
     tokenTo: data[2],
     tokenConverter: data[3],
-    operator: data[4],
+    manager: data[4],
     order: data[5],
   }
 }

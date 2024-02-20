@@ -18,7 +18,7 @@ export const postCowOrder = async (orderPayload: Order, contract: string) => {
   while (timesToRetry > 0) {
     try {
       const orderRequest = await fetch(
-        'https://barn.api.cow.fi/goerli/api/v1/orders',
+        'https://api.cow.fi/mainnet/api/v1/orders',
         {
           method: 'POST',
           headers: {

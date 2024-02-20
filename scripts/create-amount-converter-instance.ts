@@ -88,7 +88,7 @@ async function main() {
     await verify(
       amountConverterAddress,
       [
-        await factory.feedRegistry(),
+        await factory.FEED_REGISTRY(),
         CONVERSION_TARGET,
         ALLOWED_TOKENS_TO_SELL,
         ALLOWED_TOKENS_TO_BUY,

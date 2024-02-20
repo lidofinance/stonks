@@ -1,7 +1,7 @@
-// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
+// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity 0.8.23;
 
 /// @title Management and ownership extension for the contracts
 /// @notice Allows the owner of the contract to set the manager. When the manager is set

@@ -1,7 +1,7 @@
-// SPDX-FileCopyrightText: 2023 Lido <info@lido.fi>
+// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity 0.8.23;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -9,7 +9,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ManageableStub} from "./ManageableStub.sol";
 
 interface IOrder {
-    function agent() external view returns (address);
+    function AGENT() external view returns (address);
 
     function isValidSignature(
         bytes32 hash,
@@ -42,7 +42,7 @@ contract CoWSwapVaultRelayerStub is ManageableStub {
             revert InvalidSignature();
         }
 
-        IERC20(tokenFrom).safeTransferFrom(address(order), order.agent(), sellAmount);
+        IERC20(tokenFrom).safeTransferFrom(address(order), order.AGENT(), sellAmount);
     }
 }
 

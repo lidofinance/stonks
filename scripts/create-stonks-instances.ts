@@ -50,7 +50,7 @@ async function main() {
   await confirmOrAbort()
 
   const factory = StonksFactory__factory.connect(STONKS_FACTORY, deployer)
-  const orderSample = await factory.orderSample()
+  const orderSample = await factory.ORDER_SAMPLE()
 
   for (let i = 0; i < entries.length; ++i) {
     const [pair, config] = entries[i]
@@ -77,13 +77,13 @@ async function main() {
     const {
       stonksAddress,
       agent,
-      operator,
+      manager,
       tokenFrom,
       tokenTo,
       amountConverter,
       order,
       orderDurationInSeconds,
-      marginBasisPoints,
+      marginInBasisPoints,
       priceToleranceInBasisPoints,
     } = stonksDeployedLog.args
 
@@ -98,13 +98,13 @@ async function main() {
         stonksAddress,
         [
           agent,
-          operator,
+          manager,
           tokenFrom,
           tokenTo,
           amountConverter,
           orderSample,
           orderDurationInSeconds,
-          marginBasisPoints,
+          marginInBasisPoints,
           priceToleranceInBasisPoints,
         ],
         receipt
@@ -114,13 +114,13 @@ async function main() {
     }
 
     assert.equal(agent.toLowerCase(), AGENT.toLowerCase())
-    assert.equal(operator.toLowerCase(), MANAGER_ADDRESS.toLowerCase())
+    assert.equal(manager.toLowerCase(), MANAGER_ADDRESS.toLowerCase())
     assert.equal(tokenFrom.toLowerCase(), config.tokenFrom.toLowerCase())
     assert.equal(tokenTo.toLowerCase(), config.tokenTo.toLowerCase())
     assert.equal(amountConverter.toLowerCase(), AMOUNT_CONVERTER.toLowerCase())
     assert.equal(order.toLowerCase(), orderSample.toLowerCase())
     assert.equal(orderDurationInSeconds, config.orderDurationInSeconds)
-    assert.equal(marginBasisPoints, config.marginBasisPoints)
+    assert.equal(marginInBasisPoints, config.marginBasisPoints)
     assert.equal(priceToleranceInBasisPoints, config.priceToleranceInBasisPoints)
 
     console.log()
