@@ -34,7 +34,7 @@ export const setup = async ({ pair, deployedContract }: SetupParams) => {
 
   if (!deployedContract) {
     manager = (await ethers.getSigners())[0]
-    pair = defaultPair
+    pair = pair || defaultPair
     
     const result = await deployStonks({
       factoryParams: {
