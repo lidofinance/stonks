@@ -1,50 +1,34 @@
 import { ethers, network } from 'hardhat'
 import { expect } from 'chai'
 import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
-import { AmountConverterFactory } from '../../typechain-types'
+import { AmountConverterFactory, AmountConverterFactory__factory } from '../../typechain-types'
 
 import { mainnet } from '../../utils/contracts'
 
 describe('AmountConverterFactory', function () {
   let subject: AmountConverterFactory
+  let contractFactory: AmountConverterFactory__factory
   let snapshotId: string
 
   this.beforeAll(async function () {
     snapshotId = await network.provider.send('evm_snapshot')
 
-    const ContractFactory = await ethers.getContractFactory(
-      'AmountConverterFactory'
-    )
-    subject = await ContractFactory.deploy(
-      mainnet.CHAINLINK_PRICE_FEED_REGISTRY
-    )
+    contractFactory = await ethers.getContractFactory('AmountConverterFactory')
+    subject = await contractFactory.deploy(mainnet.CHAINLINK_PRICE_FEED_REGISTRY)
     await subject.waitForDeployment()
   })
 
   describe('initialization:', async function () {
-    it('should have right treasury address', async function () {
-      expect(await subject.FEED_REGISTRY()).to.equal(
-        mainnet.CHAINLINK_PRICE_FEED_REGISTRY
-      )
+    it('should have right treasury address after deploy', async function () {
+      expect(await subject.FEED_REGISTRY()).to.equal(mainnet.CHAINLINK_PRICE_FEED_REGISTRY)
     })
-    it('should revert with zero address', async function () {
-      const ContractFactory = await ethers.getContractFactory(
-        'AmountConverterFactory'
-      )
-      await expect(
-        ContractFactory.deploy(ethers.ZeroAddress)
-      ).to.be.revertedWithCustomError(
-        ContractFactory,
-        'InvalidFeedRegistryAddress'
-      )
+    it('should revert with zero feed registry address', async function () {
+      await expect(contractFactory.deploy(ethers.ZeroAddress))
+        .to.be.revertedWithCustomError(contractFactory, 'InvalidFeedRegistryAddress')
+        .withArgs(ethers.ZeroAddress)
     })
-    it('should emit events on deployment', async function () {
-      const ContractFactory = await ethers.getContractFactory(
-        'AmountConverterFactory'
-      )
-      const subject = await ContractFactory.deploy(
-        mainnet.CHAINLINK_PRICE_FEED_REGISTRY
-      )
+    it('should emit FeedRegistrySet event on deployment', async function () {
+      const subject = await contractFactory.deploy(mainnet.CHAINLINK_PRICE_FEED_REGISTRY)
       const tx = subject.deploymentTransaction()
       await expect(tx)
         .to.emit(subject, 'FeedRegistrySet')
@@ -52,7 +36,7 @@ describe('AmountConverterFactory', function () {
     })
   })
   describe('amount converter deployment:', async function () {
-    it('should deploy stonks with correct params', async function () {
+    it('should emit AmountConverterDeployed event with correct params at Stonks deploy', async function () {
       const conversionTarget = mainnet.CHAINLINK_USD_QUOTE
       const tokensFrom = [mainnet.STETH]
       const tokensTo = [mainnet.DAI]

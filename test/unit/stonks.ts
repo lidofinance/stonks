@@ -136,7 +136,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(
         AssetRecovererFactory,
         'InvalidAgentAddress'
-      )
+      ).withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with manager zero address', async function () {
       await expect(
@@ -151,7 +151,7 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidManagerAddress')
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidManagerAddress').withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with tokenFrom zero address', async function () {
       await expect(
@@ -169,7 +169,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(
         ContractFactory,
         'InvalidTokenFromAddress'
-      )
+      ).withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with tokenTo zero address', async function () {
       await expect(
@@ -184,7 +184,7 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidTokenToAddress')
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidTokenToAddress').withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with same tokens address', async function () {
       await expect(
@@ -217,7 +217,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(
         ContractFactory,
         'InvalidAmountConverterAddress'
-      )
+      ).withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with orderSample zero address', async function () {
       await expect(
@@ -235,7 +235,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(
         ContractFactory,
         'InvalidOrderSampleAddress'
-      )
+      ).withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with orderDurationInSeconds less than 60', async function () {
       await expect(
@@ -250,7 +250,7 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration').withArgs(60, 86400, 59)
     })
     it('should not initialize with orderDurationInSeconds more than day', async function () {
       await expect(
@@ -265,7 +265,7 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
+      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration').withArgs(60, 86400, 86401)
     })
     it('should not initialize with marginInBasisPoints_ less or equal 1000', async function () {
       await expect(
@@ -283,7 +283,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(
         ContractFactory,
         'MarginOverflowsAllowedLimit'
-      )
+      ).withArgs(1000, 1001)
     })
     it('should not initialize with priceToleranceInBasisPoints_ less or equal 1000', async function () {
       await expect(
@@ -301,7 +301,7 @@ describe('Stonks', function () {
       ).to.be.revertedWithCustomError(
         ContractFactory,
         'PriceToleranceOverflowsAllowedLimit'
-      )
+      ).withArgs(1000, 1001)
     })
   })
 
@@ -376,7 +376,7 @@ describe('Stonks', function () {
         amount,
         address: await subject.getAddress(),
       })
-      expect(isClose(await steth.balanceOf(await subject.getAddress()), amount))
+      expect(isClose(await steth.balanceOf(await subject.getAddress()), amount, 1n))
         .to.be.true
 
       const expectedBuyAmount =

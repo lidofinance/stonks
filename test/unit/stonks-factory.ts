@@ -9,15 +9,12 @@ describe('StonksFactory', function () {
   let subject: StonksFactory
   let snapshotId: string
   let ContractFactory: StonksFactory__factory
+
   this.beforeAll(async function () {
     snapshotId = await network.provider.send('evm_snapshot')
     ContractFactory = await ethers.getContractFactory('StonksFactory')
 
-    subject = await ContractFactory.deploy(
-      mainnet.AGENT,
-      mainnet.SETTLEMENT,
-      mainnet.VAULT_RELAYER
-    )
+    subject = await ContractFactory.deploy(mainnet.AGENT, mainnet.SETTLEMENT, mainnet.VAULT_RELAYER)
     await subject.waitForDeployment()
   })
 
@@ -30,33 +27,20 @@ describe('StonksFactory', function () {
     })
     it('should not initialize with agent zero address', async function () {
       await expect(
-        ContractFactory.deploy(
-          ethers.ZeroAddress,
-          mainnet.SETTLEMENT,
-          mainnet.VAULT_RELAYER
-        )
-      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidAgentAddress')
+        ContractFactory.deploy(ethers.ZeroAddress, mainnet.SETTLEMENT, mainnet.VAULT_RELAYER)
+      )
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidAgentAddress')
+        .withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with settlement zero address', async function () {
-      await expect(
-        ContractFactory.deploy(
-          mainnet.AGENT,
-          ethers.ZeroAddress,
-          mainnet.VAULT_RELAYER
-        )
-      ).to.be.revertedWithCustomError(
-        ContractFactory,
-        'InvalidSettlementAddress'
-      )
+      await expect(ContractFactory.deploy(mainnet.AGENT, ethers.ZeroAddress, mainnet.VAULT_RELAYER))
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidSettlementAddress')
+        .withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with relayer zero address', async function () {
-      await expect(
-        ContractFactory.deploy(
-          mainnet.AGENT,
-          mainnet.SETTLEMENT,
-          ethers.ZeroAddress
-        )
-      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidRelayerAddress')
+      await expect(ContractFactory.deploy(mainnet.AGENT, mainnet.SETTLEMENT, ethers.ZeroAddress))
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidRelayerAddress')
+        .withArgs(ethers.ZeroAddress)
     })
     it('should emit events on deployment', async function () {
       const tx = subject.deploymentTransaction()
