@@ -1,35 +1,34 @@
 import { ethers, network } from 'hardhat'
 import { expect } from 'chai'
 import { parseEther, Signer, TransactionReceipt } from 'ethers'
-import { setup, pairs, TokenPair } from './setup'
+import {
+  setBalance,
+  impersonateAccount,
+  setCode,
+  takeSnapshot,
+  SnapshotRestorer,
+  time,
+} from '@nomicfoundation/hardhat-network-helpers'
+import { setup, setupOverDeployedContracts, pairs, TokenPair, Setup } from './setup'
 import { isClose } from '../../utils/assert'
 import { mainnet } from '../../utils/contracts'
-import { AmountConverter, IERC20, Stonks, Order } from '../../typechain-types'
-import {
-  MAGIC_VALUE,
-  formOrderHashFromTxReceipt,
-} from '../../utils/gpv2-helpers'
+import { IERC20, Stonks, Order } from '../../typechain-types'
+import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
 import { getPlaceOrderData } from '../../utils/get-events'
-import { fillUpBalance } from '../../utils/fill-up-balance'
 
 const deployedContracts: string[] = []
-const testItems: Array<TokenPair | string> = deployedContracts.length
-  ? deployedContracts
-  : pairs
+const testItems: Array<TokenPair | string> = deployedContracts.length ? deployedContracts : pairs
 
 describe('Scenario test multi-pair', function () {
   testItems.forEach((item) => {
     const isStonksDeployed = typeof item === 'string'
 
-    describe(`${
-      isStonksDeployed ? item : (item as TokenPair).name
-    }`, function () {
-      let snapshotId: string
-      let orderPlacedSnapshodId: string
+    describe(`${isStonksDeployed ? item : (item as TokenPair).name}`, function () {
+      let snapshot: SnapshotRestorer
+      let snapshotOrderPlaced: SnapshotRestorer
       let value: bigint
       let stonks: Stonks
       let manager: Signer
-      let amountConverter: AmountConverter
       let tokenFrom: IERC20
       let expectedBuyAmount: bigint
       let orderReceipt: TransactionReceipt
@@ -37,55 +36,46 @@ describe('Scenario test multi-pair', function () {
       let orderHash: string
 
       this.beforeAll(async () => {
-        snapshotId = await network.provider.send('evm_snapshot')
+        snapshot = await takeSnapshot()
 
-        const result = await setup({
-          pair: isStonksDeployed ? undefined : (item as TokenPair),
-          deployedContract: isStonksDeployed ? (item as string) : undefined,
-        })
+        let result: Setup
+
+        if (isStonksDeployed) {
+          result = await setupOverDeployedContracts(item as string)
+        } else {
+          result = await setup(item as TokenPair)
+        }
 
         stonks = result.stonks
-        amountConverter = result.amountConverter
         value = result.value
         manager = result.manager
 
-        tokenFrom = await ethers.getContractAt(
-          'IERC20',
-          await stonks.TOKEN_FROM()
-        )
+        tokenFrom = await ethers.getContractAt('IERC20', await stonks.TOKEN_FROM())
 
-        await fillUpBalance(mainnet.AGENT, parseEther('100'))
+        await setBalance(mainnet.AGENT, parseEther('100'))
       })
 
       context('Setup', () => {
-        it('agent should fill up a stonks with tokenFrom', async function () {
+        it('agent should fill up a stonks with tokenFrom (EasyTrack imitation)', async function () {
           const treasurySigner = await ethers.provider.getSigner(mainnet.AGENT)
           const token = tokenFrom.connect(treasurySigner)
-          const currentBalance = await token.balanceOf(
-            await stonks.getAddress()
-          )
+          const currentBalance = await token.balanceOf(stonks)
 
           if (currentBalance > 0) {
+            value = currentBalance
             this.skip()
           }
 
-          await network.provider.request({
-            method: 'hardhat_impersonateAccount',
-            params: [mainnet.AGENT],
-          })
+          await impersonateAccount(mainnet.AGENT)
 
-          const subjectAddress = await stonks.getAddress()
-
-          const transferTx = await token.transfer(subjectAddress, value)
+          const transferTx = await token.transfer(stonks, value)
           await transferTx.wait()
 
-          expect(isClose(await token.balanceOf(subjectAddress), value)).to.be
-            .true
+          expect(isClose(await token.balanceOf(stonks), value, 1n)).to.be.true
         })
 
-        it('manager should place order', async () => {
-          expectedBuyAmount =
-            await stonks.estimateTradeOutputFromCurrentBalance()
+        it('manager should successfully place an order', async () => {
+          expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
           const orderTx = await stonks.placeOrder(expectedBuyAmount)
 
           orderReceipt = (await orderTx.wait())!
@@ -94,10 +84,8 @@ describe('Scenario test multi-pair', function () {
           const { address } = await getPlaceOrderData(orderReceipt)
 
           order = await ethers.getContractAt('Order', address)
-          expect(isClose(await tokenFrom.balanceOf(address), value)).to.be.true
-          expect(
-            isClose(await tokenFrom.balanceOf(stonks.getAddress()), BigInt(0))
-          ).to.be.true
+          expect(isClose(await tokenFrom.balanceOf(address), value, 2n)).to.be.true
+          expect(isClose(await tokenFrom.balanceOf(stonks), BigInt(0), 2n)).to.be.true
 
           orderHash = await formOrderHashFromTxReceipt(
             orderReceipt,
@@ -111,57 +99,47 @@ describe('Scenario test multi-pair', function () {
         })
 
         after(async () => {
-          orderPlacedSnapshodId = await network.provider.send('evm_snapshot')
+          snapshotOrderPlaced = await takeSnapshot()
         })
       })
 
       context('Successful trade', () => {
-        it('settlement should successfully check hash', async () => {
-          expect(await order.isValidSignature(orderHash, '0x')).to.equal(
-            MAGIC_VALUE
-          )
-          await expect(
-            order.isValidSignature(ethers.ZeroHash, '0x')
-          ).to.be.revertedWithCustomError(order, 'InvalidOrderHash')
+        it('settlement should successfully check hash (isValidSignature)', async () => {
+          expect(await order.isValidSignature(orderHash, '0x')).to.equal(MAGIC_VALUE)
+          await expect(order.isValidSignature(ethers.ZeroHash, '0x'))
+            .to.be.revertedWithCustomError(order, 'InvalidOrderHash')
+            .withArgs(orderHash, ethers.ZeroHash)
         })
 
-        it('settlement should pull off assets from order contract', async () => {
-          await network.provider.send('hardhat_setCode', [
-            mainnet.VAULT_RELAYER,
-            '0x',
-          ])
-          await fillUpBalance(mainnet.VAULT_RELAYER, ethers.parseEther('100'))
-          await network.provider.request({
-            method: 'hardhat_impersonateAccount',
-            params: [mainnet.VAULT_RELAYER],
-          })
-          const relayerSigner = await ethers.provider.getSigner(
-            mainnet.VAULT_RELAYER
-          )
-          const stethRelayer = await tokenFrom.connect(relayerSigner)
-          const orderAddress = await order.getAddress()
+        it('settlement should pull off assets from order contract (swap imitation)', async () => {
+          await setCode(mainnet.VAULT_RELAYER, ethers.ZeroHash)
+          await setBalance(mainnet.VAULT_RELAYER, ethers.parseEther('100'))
+          await impersonateAccount(mainnet.VAULT_RELAYER)
 
-          await stethRelayer.transferFrom(
-            orderAddress,
+          const relayerSigner = await ethers.provider.getSigner(mainnet.VAULT_RELAYER)
+          const stethWithRelayerSigner = tokenFrom.connect(relayerSigner)
+
+          await stethWithRelayerSigner.transferFrom(
+            order,
             mainnet.VAULT_RELAYER,
-            await stethRelayer.balanceOf(await order.getAddress())
+            await stethWithRelayerSigner.balanceOf(order)
           )
 
-          expect(isClose(await stethRelayer.balanceOf(orderAddress), BigInt(0)))
-            .to.be.true
+          expect(isClose(await stethWithRelayerSigner.balanceOf(order), BigInt(0), 1n)).to.be.true
         })
       })
 
       context('Order expired', () => {
         before(async () => {
-          await network.provider.send('evm_revert', [orderPlacedSnapshodId])
-          orderPlacedSnapshodId = await network.provider.send('evm_snapshot')
+          await snapshotOrderPlaced.restore()
         })
         it('should not be possible to cancel order due to expiration time', async () => {
-          await expect(order.recoverTokenFrom()).to.be.revertedWithCustomError(
-            order,
-            'OrderNotExpired'
-          )
+          const orderDetails = await order.getOrderDetails()
+          const block = await ethers.provider.getBlockNumber()
+          const timestamp = (await ethers.provider.getBlock(block))?.timestamp!
+          await expect(order.recoverTokenFrom())
+            .to.be.revertedWithCustomError(order, 'OrderNotExpired')
+            .withArgs(orderDetails[5], timestamp + 1)
         })
         it('should be possible to recover tokenFrom after expiration time', async () => {
           await network.provider.send('evm_increaseTime', [
@@ -169,90 +147,88 @@ describe('Scenario test multi-pair', function () {
           ])
           await order.recoverTokenFrom()
 
-          expect(
-            isClose(
-              await tokenFrom.balanceOf(await order.getAddress()),
-              BigInt(0)
-            )
-          ).to.be.true
+          expect(isClose(await tokenFrom.balanceOf(order), BigInt(0), 1n)).to.be.true
         })
         it('should be invalid after order expiration', async () => {
-          await expect(
-            order.isValidSignature(orderHash, '0x')
-          ).to.be.revertedWithCustomError(order, 'OrderExpired')
+          const orderDetails = await order.getOrderDetails()
+          await expect(order.isValidSignature(orderHash, '0x'))
+            .to.be.revertedWithCustomError(order, 'OrderExpired')
+            .withArgs(orderDetails[5])
         })
       })
 
       context('Market price spike', () => {
         before(async () => {
-          await network.provider.send('evm_revert', [orderPlacedSnapshodId])
-          orderPlacedSnapshodId = await network.provider.send('evm_snapshot')
+          await snapshotOrderPlaced.restore()
         })
         it('settlement should successfully check hash', async () => {
-          expect(await order.isValidSignature(orderHash, '0x')).to.equal(
-            MAGIC_VALUE
-          )
-          await expect(
-            order.isValidSignature(ethers.ZeroHash, '0x')
-          ).to.be.revertedWithCustomError(order, 'InvalidOrderHash')
+          expect(await order.isValidSignature(orderHash, '0x')).to.equal(MAGIC_VALUE)
+          await expect(order.isValidSignature(ethers.ZeroHash, '0x'))
+            .to.be.revertedWithCustomError(order, 'InvalidOrderHash')
+            .withArgs(orderHash, ethers.ZeroHash)
         })
         it('should change stonks amount converter address', async () => {
-          const heartbeat = await amountConverter.priceFeedsHeartbeatTimeouts(
-            await stonks.TOKEN_FROM()
+          const feedRegistryStubFactory = await ethers.getContractFactory(
+            'ChainlinkFeedRegistryStub'
           )
-          const AmountConverterTestFactory = await ethers.getContractFactory(
-            'AmountConverterTest'
+          const feedRegistryStub = await feedRegistryStubFactory.deploy(manager, manager)
+          const feedRegistry = await ethers.getContractAt(
+            'IFeedRegistry',
+            mainnet.CHAINLINK_PRICE_FEED_REGISTRY
           )
-          const amountConverterTest = await AmountConverterTestFactory.deploy(
+          const decimals = await feedRegistry.decimals(
+            await stonks.TOKEN_FROM(),
+            mainnet.CHAINLINK_USD_QUOTE
+          )
+          const latestRoundData = await feedRegistry.latestRoundData(
+            await stonks.TOKEN_FROM(),
+            mainnet.CHAINLINK_USD_QUOTE
+          )
+
+          await setCode(
             mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+            await ethers.provider.getCode(feedRegistryStub)
+          )
+
+          const feedRegistryStubReplaced = await ethers.getContractAt(
+            'ChainlinkFeedRegistryStub',
+            mainnet.CHAINLINK_PRICE_FEED_REGISTRY
+          )
+
+          await feedRegistryStubReplaced.setFeed(
+            await stonks.TOKEN_FROM(),
             mainnet.CHAINLINK_USD_QUOTE,
-            [await stonks.TOKEN_FROM()],
-            [await stonks.TOKEN_TO()],
-            [heartbeat]
-          )
-          const stonksBytecode = await ethers.provider.getCode(
-            await stonks.getAddress()
-          )
-          const amountConverterAddress = (await amountConverter.getAddress())
-            .toLowerCase()
-            .slice(2)
-          const amountConverterTestAddress = (
-            await amountConverterTest.getAddress()
-          )
-            .toLowerCase()
-            .slice(2)
-
-          await network.provider.send('hardhat_setCode', [
-            await stonks.getAddress(),
-            stonksBytecode.replace(
-              new RegExp(amountConverterAddress, 'g'),
-              amountConverterTestAddress
-            ),
-          ])
-          await amountConverterTest.multiplyAnswer(
-            10000 + Number(await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS()) + 1
+            {
+              answer: BigInt(
+                latestRoundData.answer *
+                  (10000n + (await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS()) / 10000n)
+              ),
+              updatedAt: latestRoundData.updatedAt,
+              startedAt: latestRoundData.startedAt,
+              answeredInRound: latestRoundData.answeredInRound,
+              roundId: latestRoundData.roundId,
+              decimals: decimals,
+            }
           )
 
-          await expect(
-            order.isValidSignature(orderHash, '0x')
-          ).to.be.revertedWithCustomError(order, 'PriceConditionChanged')
+          const orderDetails = await order.getOrderDetails()
+          const sellAmount = orderDetails[3]
+          const buyAmount = orderDetails[4]
+          const maxToleratedAmount =
+            buyAmount + (buyAmount * (await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS())) / 10000n
+
+          await expect(order.isValidSignature(orderHash, '0x'))
+            .to.be.revertedWithCustomError(order, 'PriceConditionChanged')
+            .withArgs(maxToleratedAmount, await stonks.estimateTradeOutput(sellAmount))
         })
         it('should be possible to recover tokenFrom after price spike', async () => {
-          await network.provider.send('evm_increaseTime', [
-            Number(await stonks.ORDER_DURATION_IN_SECONDS()) + 1,
-          ])
+          await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
           await order.recoverTokenFrom()
 
-          expect(
-            isClose(
-              await tokenFrom.balanceOf(await order.getAddress()),
-              BigInt(0)
-            )
-          ).to.be.true
+          expect(isClose(await tokenFrom.balanceOf(order), BigInt(0), 1n)).to.be.true
         })
         it('should create a new order for new market conditions', async () => {
-          const expectedBuyAmount =
-            await stonks.estimateTradeOutputFromCurrentBalance()
+          const expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
           const orderTx = await stonks.placeOrder(expectedBuyAmount)
 
           const orderReceipt = (await orderTx.wait())!
@@ -261,10 +237,8 @@ describe('Scenario test multi-pair', function () {
           const { address } = await getPlaceOrderData(orderReceipt)
 
           const newOrder = await ethers.getContractAt('Order', address)
-          expect(isClose(await tokenFrom.balanceOf(address), value)).to.be.true
-          expect(
-            isClose(await tokenFrom.balanceOf(stonks.getAddress()), BigInt(0))
-          ).to.be.true
+          expect(isClose(await tokenFrom.balanceOf(address), value, 3n)).to.be.true
+          expect(isClose(await tokenFrom.balanceOf(stonks), BigInt(0), 3n)).to.be.true
 
           const orderHash = await formOrderHashFromTxReceipt(
             orderReceipt,
@@ -275,15 +249,12 @@ describe('Scenario test multi-pair', function () {
 
           const [orderHashFromContract] = await newOrder.getOrderDetails()
           expect(orderHash).to.be.equal(orderHashFromContract)
-          expect(await newOrder.getAddress()).to.not.be.equal(
-            await order.getAddress()
-          )
+          expect(await newOrder.getAddress()).to.not.be.equal(await order.getAddress())
         })
       })
       context('Manager change', () => {
         before(async () => {
-          await network.provider.send('evm_revert', [orderPlacedSnapshodId])
-          orderPlacedSnapshodId = await network.provider.send('evm_snapshot')
+          await snapshotOrderPlaced.restore()
         })
         it('agent should change a manager', async () => {
           const agent = await ethers.getSigner(mainnet.AGENT)
@@ -291,74 +262,50 @@ describe('Scenario test multi-pair', function () {
           expect(await stonks.manager()).to.be.equal(ethers.ZeroAddress)
         })
         it('manager should not be allowed to interact', async () => {
-          await expect(stonks.placeOrder(1)).to.be.revertedWithCustomError(
-            stonks,
-            'NotAgentOrManager'
-          )
+          await expect(stonks.placeOrder(1))
+            .to.be.revertedWithCustomError(stonks, 'NotAgentOrManager')
+            .withArgs(await manager.getAddress())
         })
       })
       context('Unexpected tokens', () => {
         let ldo: IERC20
         before(async () => {
-          await network.provider.send('evm_revert', [orderPlacedSnapshodId])
-          orderPlacedSnapshodId = await network.provider.send('evm_snapshot')
+          await snapshotOrderPlaced.restore()
         })
         it('should fill up stonks with unexpected token', async () => {
           const agent = await ethers.getSigner(mainnet.AGENT)
           const value = parseEther('1')
 
           ldo = await ethers.getContractAt('IERC20', mainnet.LDO)
-          await ldo.connect(agent).transfer(await stonks.getAddress(), value)
+          await ldo.connect(agent).transfer(stonks, value)
 
-          expect(isClose(await ldo.balanceOf(await stonks.getAddress()), value))
+          expect(await ldo.balanceOf(stonks)).to.equal(value)
         })
         it('manager should recover unexpected token', async () => {
           const agentBalanceBefore = await ldo.balanceOf(mainnet.AGENT)
-          await stonks
-            .connect(manager)
-            .recoverERC20(
-              await ldo.getAddress(),
-              await ldo.balanceOf(await stonks.getAddress())
-            )
-          expect(
-            isClose(await ldo.balanceOf(await stonks.getAddress()), BigInt(0))
-          )
-          expect(
-            isClose(
-              await ldo.balanceOf(mainnet.AGENT),
-              agentBalanceBefore + value
-            )
-          )
+          const value = await ldo.balanceOf(stonks)
+          await stonks.connect(manager).recoverERC20(ldo, value)
+          expect(await ldo.balanceOf(stonks)).to.equal(0)
+          expect(await ldo.balanceOf(mainnet.AGENT)).to.equal(agentBalanceBefore + value)
         })
         it('should fill up order contract with unexpected token', async () => {
           const value = parseEther('1')
           const agent = await ethers.getSigner(mainnet.AGENT)
-          await ldo.connect(agent).transfer(await order.getAddress(), value)
+          await ldo.connect(agent).transfer(order, value)
 
-          expect(isClose(await ldo.balanceOf(await order.getAddress()), value))
+          expect(isClose(await ldo.balanceOf(order), value, 1n))
         })
         it('manager should recover unexpected token from order contract', async () => {
           const agentBalanceBefore = await ldo.balanceOf(mainnet.AGENT)
-          await order
-            .connect(manager)
-            .recoverERC20(
-              await ldo.getAddress(),
-              await ldo.balanceOf(await order.getAddress())
-            )
-          expect(
-            isClose(await ldo.balanceOf(await order.getAddress()), BigInt(0))
-          )
-          expect(
-            isClose(
-              await ldo.balanceOf(mainnet.AGENT),
-              agentBalanceBefore + value
-            )
-          )
+          const value = await ldo.balanceOf(order)
+          await order.connect(manager).recoverERC20(ldo, value)
+          expect(await ldo.balanceOf(stonks)).to.equal(0)
+          expect(await ldo.balanceOf(mainnet.AGENT)).to.equal(agentBalanceBefore + value)
         })
       })
 
       this.afterAll(async () => {
-        await network.provider.send('evm_revert', [snapshotId])
+        await snapshot.restore()
       })
     })
   })

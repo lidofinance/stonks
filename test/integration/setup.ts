@@ -1,5 +1,6 @@
 import { ethers, network } from 'hardhat'
 import { Signer } from 'ethers'
+import { impersonateAccount } from '@nomicfoundation/hardhat-network-helpers'
 import { mainnet } from '../../utils/contracts'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { AmountConverter, AmountConverterTest, Stonks } from '../../typechain-types'
@@ -27,59 +28,61 @@ const defaultPair = {
   priceFeedHeartbeatTimeout: 3600,
 }
 
-export const setup = async ({ pair, deployedContract }: SetupParams) => {
-  let manager: Signer
-	let stonks: Stonks
-	let amountConverter: AmountConverter
+export const setupOverDeployedContracts = async (deployedContract: string): Promise<Setup> => {
+  const stonks = await ethers.getContractAt('Stonks', deployedContract)
+  const amountConverter = await ethers.getContractAt(
+    'AmountConverter',
+    await stonks.AMOUNT_CONVERTER()
+  )
+  const managerAddress = await stonks.manager()
+  const manager = await ethers.getSigner(managerAddress)
+  const tokenFrom = await ethers.getContractAt('IERC20Metadata', await stonks.TOKEN_FROM())
 
-  if (!deployedContract) {
-    manager = (await ethers.getSigners())[0]
-    pair = defaultPair
-    
-    const result = await deployStonks({
-      factoryParams: {
-        agent: mainnet.AGENT,
-        relayer: mainnet.VAULT_RELAYER,
-        settlement: mainnet.SETTLEMENT,
-        priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
-      },
-      stonksParams: {
-        tokenFrom: pair.tokenFrom,
-        tokenTo: pair.tokenTo,
-        manager: await manager.getAddress(),
-        marginInBps: 100,
-        orderDuration: 300,
-        priceToleranceInBps: 100,
-      },
-      amountConverterParams: {
-        conversionTarget: mainnet.CHAINLINK_USD_QUOTE,
-        allowedTokensToSell: [pair.tokenFrom],
-        allowedStableTokensToBuy: [pair.tokenTo],
-        priceFeedsHeartbeatTimeouts: [86400],
-      },
-    })
+  await impersonateAccount(managerAddress)
 
-		stonks = result.stonks
-		amountConverter = result.amountConverter as AmountConverter
-
-  } else {
-    stonks = await ethers.getContractAt('Stonks', deployedContract)
-    amountConverter = await ethers.getContractAt(
-      'AmountConverter',
-      await stonks.AMOUNT_CONVERTER()
-    )
-    manager = await ethers.getSigner(await stonks.manager())
+  return {
+    manager,
+    stonks: stonks.connect(manager),
+    amountConverter,
+    value: BigInt(10) ** (await tokenFrom.decimals()),
   }
+}
 
-  stonks = stonks.connect(manager)
-  await network.provider.request({
-    method: 'hardhat_impersonateAccount',
-    params: [await manager.getAddress()],
+export const setup = async (pair: TokenPair): Promise<Setup> => {
+  const manager = (await ethers.getSigners())[0]
+  pair = pair || defaultPair
+
+  const result = await deployStonks({
+    factoryParams: {
+      agent: mainnet.AGENT,
+      relayer: mainnet.VAULT_RELAYER,
+      settlement: mainnet.SETTLEMENT,
+      priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+    },
+    stonksParams: {
+      tokenFrom: pair.tokenFrom,
+      tokenTo: pair.tokenTo,
+      manager: await manager.getAddress(),
+      marginInBps: 100,
+      orderDuration: 300,
+      priceToleranceInBps: 100,
+    },
+    amountConverterParams: {
+      conversionTarget: mainnet.CHAINLINK_USD_QUOTE,
+      allowedTokensToSell: [pair.tokenFrom],
+      allowedStableTokensToBuy: [pair.tokenTo],
+      priceFeedsHeartbeatTimeouts: [86400],
+    },
   })
 
-	const tokenFrom = await ethers.getContractAt('IERC20Metadata', pair.tokenFrom)
+  const tokenFrom = await ethers.getContractAt('IERC20Metadata', pair.tokenFrom)
 
-  return { manager, stonks, amountConverter, value: BigInt(10) ** (await tokenFrom.decimals()) }
+  return {
+    manager,
+    stonks: result.stonks,
+    amountConverter: result.amountConverter,
+    value: BigInt(10) ** (await tokenFrom.decimals()),
+  }
 }
 
 export const pairs = [

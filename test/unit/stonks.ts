@@ -1,6 +1,7 @@
-import { ethers, network } from 'hardhat'
+import { ethers } from 'hardhat'
 import { Signer } from 'ethers'
 import { expect } from 'chai'
+import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import { isClose } from '../../utils/assert'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import {
@@ -18,7 +19,7 @@ describe('Stonks', function () {
   let signer: Signer
   let subject: Stonks
   let subjectTokenConverter: AmountConverter
-  let snapshotId: string
+  let snapshot: SnapshotRestorer
 
   const amount = ethers.parseEther('1')
   const marginInBps = 100
@@ -29,11 +30,10 @@ describe('Stonks', function () {
 
   this.beforeAll(async function () {
     signer = (await ethers.getSigners())[0]
-    snapshotId = await network.provider.send('evm_snapshot')
+    snapshot = await takeSnapshot()
 
     ContractFactory = await ethers.getContractFactory('Stonks')
-    AssetRecovererFactory =
-      await ethers.getContractFactory('AssetRecovererTest')
+    AssetRecovererFactory = await ethers.getContractFactory('AssetRecovererTest')
     managerAddress = await signer.getAddress()
 
     const { stonks, amountConverter: tokenConverter } = await deployStonks({
@@ -106,18 +106,13 @@ describe('Stonks', function () {
         validParams.priceToleranceInBasisPoints
       )
 
-      const [tokenFrom, tokenTo, orderDurationInSeconds] =
-        await stonks.getOrderParameters()
+      const [tokenFrom, tokenTo, orderDurationInSeconds] = await stonks.getOrderParameters()
       const priceToleranceInBasisPoints = await stonks.getPriceTolerance()
 
       expect(tokenFrom).to.be.equal(validParams.tokenFrom)
       expect(tokenTo).to.be.equal(validParams.tokenTo)
-      expect(orderDurationInSeconds).to.be.equal(
-        validParams.orderDurationInSeconds
-      )
-      expect(priceToleranceInBasisPoints).to.be.equal(
-        validParams.priceToleranceInBasisPoints
-      )
+      expect(orderDurationInSeconds).to.be.equal(validParams.orderDurationInSeconds)
+      expect(priceToleranceInBasisPoints).to.be.equal(validParams.priceToleranceInBasisPoints)
     })
 
     it('should not initialize with agent zero address', async function () {
@@ -133,10 +128,9 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(
-        AssetRecovererFactory,
-        'InvalidAgentAddress'
       )
+        .to.be.revertedWithCustomError(AssetRecovererFactory, 'InvalidAgentAddress')
+        .withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with manager zero address', async function () {
       await expect(
@@ -151,7 +145,9 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidManagerAddress')
+      )
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidManagerAddress')
+        .withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with tokenFrom zero address', async function () {
       await expect(
@@ -166,10 +162,9 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(
-        ContractFactory,
-        'InvalidTokenFromAddress'
       )
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidTokenFromAddress')
+        .withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with tokenTo zero address', async function () {
       await expect(
@@ -184,7 +179,9 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidTokenToAddress')
+      )
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidTokenToAddress')
+        .withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with same tokens address', async function () {
       await expect(
@@ -214,10 +211,9 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(
-        ContractFactory,
-        'InvalidAmountConverterAddress'
       )
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidAmountConverterAddress')
+        .withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with orderSample zero address', async function () {
       await expect(
@@ -232,10 +228,9 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(
-        ContractFactory,
-        'InvalidOrderSampleAddress'
       )
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderSampleAddress')
+        .withArgs(ethers.ZeroAddress)
     })
     it('should not initialize with orderDurationInSeconds less than 60', async function () {
       await expect(
@@ -250,7 +245,9 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
+      )
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
+        .withArgs(60, 86400, 59)
     })
     it('should not initialize with orderDurationInSeconds more than day', async function () {
       await expect(
@@ -265,7 +262,9 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
+      )
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
+        .withArgs(60, 86400, 86401)
     })
     it('should not initialize with marginInBasisPoints_ less or equal 1000', async function () {
       await expect(
@@ -280,10 +279,9 @@ describe('Stonks', function () {
           1001,
           validParams.priceToleranceInBasisPoints
         )
-      ).to.be.revertedWithCustomError(
-        ContractFactory,
-        'MarginOverflowsAllowedLimit'
       )
+        .to.be.revertedWithCustomError(ContractFactory, 'MarginOverflowsAllowedLimit')
+        .withArgs(1000, 1001)
     })
     it('should not initialize with priceToleranceInBasisPoints_ less or equal 1000', async function () {
       await expect(
@@ -298,39 +296,32 @@ describe('Stonks', function () {
           validParams.marginInBasisPoints,
           1001
         )
-      ).to.be.revertedWithCustomError(
-        ContractFactory,
-        'PriceToleranceOverflowsAllowedLimit'
       )
+        .to.be.revertedWithCustomError(ContractFactory, 'PriceToleranceOverflowsAllowedLimit')
+        .withArgs(1000, 1001)
     })
   })
 
   describe('estimateTradeOutput:', function () {
     it('should revert if amount is zero', async function () {
-      await expect(
-        subject.estimateTradeOutput(0)
-      ).to.be.revertedWithCustomError(subject, 'InvalidAmount')
+      await expect(subject.estimateTradeOutput(0)).to.be.revertedWithCustomError(
+        subject,
+        'InvalidAmount'
+      )
     })
     it('should return correct amount with margin included', async function () {
       const amount = ethers.parseEther('1')
-      const expectedOut = await getExpectedOut(
-        mainnet.STETH,
-        mainnet.DAI,
-        amount
-      )
+      const expectedOut = await getExpectedOut(mainnet.STETH, mainnet.DAI, amount)
       const expectedOutWithMargin =
-        (expectedOut * (MAX_BASIS_POINTS - BigInt(marginInBps))) /
-        MAX_BASIS_POINTS
+        (expectedOut * (MAX_BASIS_POINTS - BigInt(marginInBps))) / MAX_BASIS_POINTS
 
-      expect(await subject.estimateTradeOutput(amount)).to.equal(
-        expectedOutWithMargin
-      )
+      expect(await subject.estimateTradeOutput(amount)).to.equal(expectedOutWithMargin)
     })
   })
 
   describe('estimateTradeOutputFromCurrentBalance:', function () {
     it('should return correct amount with margin included', async function () {
-      const localSnapshotId = await network.provider.send('evm_snapshot')
+      const localSnapshot = await takeSnapshot()
       await fillUpERC20FromTreasury({
         token: mainnet.STETH,
         amount: ethers.parseEther('1'),
@@ -338,25 +329,19 @@ describe('Stonks', function () {
       })
       const amount = await (
         await ethers.getContractAt('IERC20', mainnet.STETH, signer)
-      ).balanceOf(await subject.getAddress())
-      const expectedOut = await getExpectedOut(
-        mainnet.STETH,
-        mainnet.DAI,
-        amount
-      )
+      ).balanceOf(subject)
+      const expectedOut = await getExpectedOut(mainnet.STETH, mainnet.DAI, amount)
       const expectedOutWithMargin =
-        (expectedOut * (MAX_BASIS_POINTS - BigInt(marginInBps))) /
-        MAX_BASIS_POINTS
+        (expectedOut * (MAX_BASIS_POINTS - BigInt(marginInBps))) / MAX_BASIS_POINTS
 
-      expect(await subject.estimateTradeOutputFromCurrentBalance()).to.equal(
-        expectedOutWithMargin
-      )
-      await network.provider.send('evm_revert', [localSnapshotId])
+      expect(await subject.estimateTradeOutputFromCurrentBalance()).to.equal(expectedOutWithMargin)
+      await localSnapshot.restore()
     })
     it('should revert if balance is zero', async () => {
-      await expect(
-        subject.estimateTradeOutputFromCurrentBalance()
-      ).to.be.revertedWithCustomError(subject, 'InvalidAmount')
+      await expect(subject.estimateTradeOutputFromCurrentBalance()).to.be.revertedWithCustomError(
+        subject,
+        'InvalidAmount'
+      )
     })
   })
 
@@ -376,17 +361,15 @@ describe('Stonks', function () {
         amount,
         address: await subject.getAddress(),
       })
-      expect(isClose(await steth.balanceOf(await subject.getAddress()), amount))
-        .to.be.true
+      expect(isClose(await steth.balanceOf(subject), amount, 1n)).to.be.true
 
-      const expectedBuyAmount =
-        await subject.estimateTradeOutputFromCurrentBalance()
+      const expectedBuyAmount = await subject.estimateTradeOutputFromCurrentBalance()
       const tx = await subject.placeOrder(expectedBuyAmount)
       await tx.wait()
     })
   })
 
   this.afterAll(async function () {
-    await network.provider.send('evm_revert', [snapshotId])
+    await snapshot.restore()
   })
 })
