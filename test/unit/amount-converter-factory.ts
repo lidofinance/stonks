@@ -1,6 +1,7 @@
-import { ethers, network } from 'hardhat'
+import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
+import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import { AmountConverterFactory, AmountConverterFactory__factory } from '../../typechain-types'
 
 import { mainnet } from '../../utils/contracts'
@@ -8,10 +9,10 @@ import { mainnet } from '../../utils/contracts'
 describe('AmountConverterFactory', function () {
   let subject: AmountConverterFactory
   let contractFactory: AmountConverterFactory__factory
-  let snapshotId: string
+  let snapshot: SnapshotRestorer
 
   this.beforeAll(async function () {
-    snapshotId = await network.provider.send('evm_snapshot')
+    snapshot = await takeSnapshot()
 
     contractFactory = await ethers.getContractFactory('AmountConverterFactory')
     subject = await contractFactory.deploy(mainnet.CHAINLINK_PRICE_FEED_REGISTRY)
@@ -63,6 +64,6 @@ describe('AmountConverterFactory', function () {
   })
 
   this.afterAll(async function () {
-    await network.provider.send('evm_revert', [snapshotId])
+    await snapshot.restore()
   })
 })

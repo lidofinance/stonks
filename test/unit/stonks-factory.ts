@@ -1,5 +1,6 @@
-import { ethers, network } from 'hardhat'
+import { ethers } from 'hardhat'
 import { expect } from 'chai'
+import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
 import { StonksFactory, StonksFactory__factory } from '../../typechain-types'
 
@@ -7,11 +8,11 @@ import { mainnet } from '../../utils/contracts'
 
 describe('StonksFactory', function () {
   let subject: StonksFactory
-  let snapshotId: string
+  let snapshot: SnapshotRestorer
   let ContractFactory: StonksFactory__factory
 
   this.beforeAll(async function () {
-    snapshotId = await network.provider.send('evm_snapshot')
+    snapshot = await takeSnapshot()
     ContractFactory = await ethers.getContractFactory('StonksFactory')
 
     subject = await ContractFactory.deploy(mainnet.AGENT, mainnet.SETTLEMENT, mainnet.VAULT_RELAYER)
@@ -87,6 +88,6 @@ describe('StonksFactory', function () {
   })
 
   this.afterAll(async function () {
-    await network.provider.send('evm_revert', [snapshotId])
+    await snapshot.restore()
   })
 })

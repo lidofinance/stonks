@@ -1,6 +1,12 @@
-import { ethers, network } from 'hardhat'
+import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { Signer } from 'ethers'
+import {
+  takeSnapshot,
+  SnapshotRestorer,
+  time,
+  mine,
+} from '@nomicfoundation/hardhat-network-helpers'
 import { Order, Stonks, HashHelper, AmountConverterTest } from '../../typechain-types'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { mainnet } from '../../utils/contracts'
@@ -18,14 +24,14 @@ describe('Order', async function () {
   let stonks: Stonks
   let hashHelper: HashHelper
   let amountConverterTest: AmountConverterTest
-  let snapshotId: string
+  let snapshot: SnapshotRestorer
   let subject: Order
   let orderHash: string
   let orderData: PlaceOrderDataEvent
   let expectedBuyAmount: bigint
 
   this.beforeAll(async function () {
-    snapshotId = await network.provider.send('evm_snapshot')
+    snapshot = await takeSnapshot()
     manager = (await ethers.getSigners())[0]
 
     const amountConverterTestFactory = await ethers.getContractFactory('AmountConverterTest')
@@ -139,10 +145,10 @@ describe('Order', async function () {
   })
 
   describe('isValidSignature:', function () {
-    let localSnapshotId: string
+    let localSnapshot: SnapshotRestorer
 
     this.beforeEach(async function () {
-      localSnapshotId = await network.provider.send('evm_snapshot')
+      localSnapshot = await takeSnapshot()
     })
 
     it('should return magic value if order hash is valid', async () => {
@@ -155,8 +161,8 @@ describe('Order', async function () {
       )
     })
     it('should revert if order is expired', async () => {
-      await network.provider.send('evm_increaseTime', [60 * 60 + 1])
-      await network.provider.send('evm_mine')
+      await time.increase(60 * 60 + 1)
+      await mine()
 
       await expect(subject.isValidSignature(orderHash, '0x')).to.be.revertedWithCustomError(
         subject,
@@ -180,31 +186,31 @@ describe('Order', async function () {
     })
 
     this.afterEach(async function () {
-      await network.provider.send('evm_revert', [localSnapshotId])
+      await localSnapshot.restore()
     })
   })
 
   describe('recoverTokenFrom:', function () {
-    let localSnapshotId: string
+    let localSnapshot: SnapshotRestorer
 
     this.beforeEach(async function () {
-      localSnapshotId = await network.provider.send('evm_snapshot')
+      localSnapshot = await takeSnapshot()
     })
     it('should succesfully recover token from', async () => {
       const [tokenFrom] = await stonks.getOrderParameters()
       const subjectWithStranger = subject.connect((await ethers.getSigners())[4])
 
-      await network.provider.send('evm_increaseTime', [60 * 60 + 1])
+      await time.increase(60 * 60 + 1)
 
       const token = await ethers.getContractAt('IERC20', tokenFrom)
-      const stonksBalanceBefore = await token.balanceOf(await stonks.getAddress())
-      const orderBalanceBefore = await token.balanceOf(await subjectWithStranger.getAddress())
+      const stonksBalanceBefore = await token.balanceOf(stonks)
+      const orderBalanceBefore = await token.balanceOf(subjectWithStranger)
 
       const cancelTx = await subjectWithStranger.recoverTokenFrom()
       await cancelTx.wait()
 
-      const stonksBalanceAfter = await token.balanceOf(await stonks.getAddress())
-      const orderBalanceAfter = await token.balanceOf(await subjectWithStranger.getAddress())
+      const stonksBalanceAfter = await token.balanceOf(stonks)
+      const orderBalanceAfter = await token.balanceOf(subjectWithStranger)
 
       expect(isClose(stonksBalanceBefore + orderBalanceBefore, stonksBalanceAfter, 1n)).to.be.true
       expect(isClose(orderBalanceAfter, BigInt(0), 1n)).to.be.true
@@ -219,7 +225,7 @@ describe('Order', async function () {
         .withArgs(orderDetails[5], timestamp + 1)
     })
     it('should revert if nothing to recover', async () => {
-      await network.provider.send('evm_increaseTime', [60 * 60 + 1])
+      await time.increase(60 * 60 + 1)
 
       await subject.recoverTokenFrom()
       await expect(subject.recoverTokenFrom()).to.be.revertedWithCustomError(
@@ -228,7 +234,7 @@ describe('Order', async function () {
       )
     })
     this.afterEach(async function () {
-      await network.provider.send('evm_revert', [localSnapshotId])
+      await localSnapshot.restore()
     })
   })
 
@@ -263,19 +269,19 @@ describe('Order', async function () {
         address: subjectAddress,
       })
 
-      const balanceBefore = await token.balanceOf(subjectAddress)
+      const balanceBefore = await token.balanceOf(subject)
 
       await expect(subject.recoverERC20(mainnet.DAI, amount))
         .to.emit(subject, 'ERC20Recovered')
         .withArgs(mainnet.DAI, mainnet.AGENT, amount)
 
-      const balanceAfter = await token.balanceOf(subjectAddress)
+      const balanceAfter = await token.balanceOf(subject)
 
       expect(balanceBefore - amount).to.equal(balanceAfter)
     })
   })
 
   this.afterAll(async function () {
-    await network.provider.send('evm_revert', [snapshotId])
+    await snapshot.restore()
   })
 })

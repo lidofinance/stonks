@@ -1,17 +1,18 @@
-import { ethers, network } from 'hardhat'
+import { ethers } from 'hardhat'
+import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
+import { expect } from 'chai'
 
 import { AmountConverter__factory, IAmountConverter } from '../../typechain-types'
 import { mainnet } from '../../utils/contracts'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
-import { expect } from 'chai'
 
 describe('AmountConverter', function () {
   let subject: IAmountConverter
   let contractFactory: AmountConverter__factory
-  let snapshotId: string
+  let snapshot: SnapshotRestorer
 
   this.beforeAll(async function () {
-    snapshotId = await network.provider.send('evm_snapshot')
+    snapshot = await takeSnapshot()
     contractFactory = await ethers.getContractFactory('AmountConverter')
     subject = await contractFactory.deploy(
       mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
@@ -168,7 +169,7 @@ describe('AmountConverter', function () {
       await feedRegistryTest.waitForDeployment()
 
       const localSubject = await contractFactory.deploy(
-        await feedRegistryTest.getAddress(),
+        feedRegistryTest,
         '0x0000000000000000000000000000000000000348', // USD
         [mainnet.STETH],
         [mainnet.DAI],
@@ -207,7 +208,7 @@ describe('AmountConverter', function () {
         [mainnet.DAI],
         [3600]
       )
-      localSubject.waitForDeployment()
+      await localSubject.waitForDeployment()
 
       await expect(localSubject.deploymentTransaction())
         .to.emit(localSubject, 'AllowedTokenToSellAdded')
@@ -222,6 +223,6 @@ describe('AmountConverter', function () {
   })
 
   this.afterAll(async function () {
-    await network.provider.send('evm_revert', [snapshotId])
+    await snapshot.restore()
   })
 })
