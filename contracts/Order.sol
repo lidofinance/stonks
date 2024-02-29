@@ -45,7 +45,7 @@ contract Order is IERC1271, AssetRecoverer {
     bool private initialized;
 
     event RelayerSet(address relayer);
-    event DomainSeparatorSet(address manager);
+    event DomainSeparatorSet(bytes32 domainSeparator);
     event OrderCreated(address indexed order, bytes32 orderHash, GPv2Order.Data orderData);
 
     error OrderAlreadyInitialized();
@@ -76,7 +76,7 @@ contract Order is IERC1271, AssetRecoverer {
         initialized = true;
 
         emit RelayerSet(relayer_);
-        emit DomainSeparatorSet(agent_);
+        emit DomainSeparatorSet(domainSeparator_);
     }
 
     /**
