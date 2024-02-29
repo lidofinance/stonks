@@ -106,6 +106,21 @@ describe('Order', async function () {
   })
 
   describe('initialization (direct):', function () {
+    it('sample deployment should emit RelayerSet and DomainSeparatorSet events', async () => {
+      const contractFactory = await ethers.getContractFactory('Order')
+
+      const contract = await contractFactory.deploy(
+        mainnet.AGENT,
+        mainnet.VAULT_RELAYER,
+        mainnet.DOMAIN_SEPARATOR
+      )
+
+      await expect(contract.deploymentTransaction())
+        .to.emit(contract, 'RelayerSet')
+        .withArgs(mainnet.VAULT_RELAYER)
+        .to.emit(contract, 'DomainSeparatorSet')
+        .withArgs(mainnet.DOMAIN_SEPARATOR)
+    })
     it('sample instance should be initialized by default', async () => {
       const subject = await ethers.getContractAt(
         'Order',

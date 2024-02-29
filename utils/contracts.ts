@@ -11,6 +11,7 @@ export const mainnet = {
   AGENT: '0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c' as const,
   SETTLEMENT: '0x9008D19f58AAbD9eD0D60971565AA8510560ab41' as const,
   VAULT_RELAYER: '0xC92E8bdf79f0507f65a392b0ab4667716BFE0110' as const,
+  DOMAIN_SEPARATOR: '0xc078f884a2676e1345748b1feace7b0abee5d00ecadb6e574dcdd109a63e8943' as const,
 }
 
 export const goerli = {
