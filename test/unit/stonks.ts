@@ -115,6 +115,38 @@ describe('Stonks', function () {
       expect(priceToleranceInBasisPoints).to.be.equal(validParams.priceToleranceInBasisPoints)
     })
 
+    it('should emit events for every parameter', async () => {
+      const stonksLocal = await ContractFactory.deploy(
+        validParams.agent,
+        validParams.manager,
+        validParams.tokenFrom,
+        validParams.tokenTo,
+        validParams.amountConverter,
+        validParams.orderSample,
+        validParams.orderDurationInSeconds,
+        validParams.marginInBasisPoints,
+        validParams.priceToleranceInBasisPoints
+      )
+
+      await expect(stonksLocal.deploymentTransaction())
+        .to.emit(stonksLocal, 'ManagerSet')
+        .withArgs(validParams.manager)
+        .and.to.emit(stonksLocal, 'AmountConverterSet')
+        .withArgs(await (validParams.amountConverter as AmountConverter).getAddress())
+        .and.to.emit(stonksLocal, 'OrderSampleSet')
+        .withArgs(validParams.orderSample)
+        .and.to.emit(stonksLocal, 'TokenFromSet')
+        .withArgs(validParams.tokenFrom)
+        .and.to.emit(stonksLocal, 'TokenToSet')
+        .withArgs(validParams.tokenTo)
+        .and.to.emit(stonksLocal, 'OrderDurationInSecondsSet')
+        .withArgs(validParams.orderDurationInSeconds)
+        .and.to.emit(stonksLocal, 'MarginInBasisPointsSet')
+        .withArgs(validParams.marginInBasisPoints)
+        .and.to.emit(stonksLocal, 'PriceToleranceInBasisPointsSet')
+        .withArgs(validParams.priceToleranceInBasisPoints)
+    })
+
     it('should not initialize with agent zero address', async function () {
       await expect(
         ContractFactory.deploy(
