@@ -1,34 +1,17 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
+import { getTokensToBuy, getTokensToSell, getPriceFeedTimeouts } from './configuration'
+import { getContracts } from '../../utils/contracts'
 
-const AMOUNT_CONVERTER_ADDRESS = ''
-
-const tokensToSell = [
-  "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84", // STETH
-  "0x6B175474E89094C44Da98b954EedeAC495271d0F", // DAI
-  "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT
-  "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
-]
-const tokensToBuy = [
-  "0x6B175474E89094C44Da98b954EedeAC495271d0F", // DAI
-  "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT
-  "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
-]
-
-// https://docs.chain.link/data-feeds/price-feeds/addresses?network=ethereum&page=1
-const priceFeedTimeouts = [
-  3600, // STETH
-  3600, // DAI
-  86400, // USDT
-  86400, // USDC
-]
-
-// Conversion targets: https://github.com/smartcontractkit/chainlink/blob/develop/contracts/src/v0.8/Denominations.sol
-const conversionTarget = "0x0000000000000000000000000000000000000348"
+const AMOUNT_CONVERTER_ADDRESS: string = ''
 
 describe('AmountConverter: acceptance', async function () {
   it('should have correct params', async function () {
     if (AMOUNT_CONVERTER_ADDRESS === '') this.skip()
+    const contracts = await getContracts();
+    const tokensToSell = await getTokensToSell()
+    const tokensToBuy = await getTokensToBuy()
+    const priceFeedTimeouts = await getPriceFeedTimeouts()
 
     const amountConverter = await ethers.getContractAt('AmountConverter', AMOUNT_CONVERTER_ADDRESS)
 
@@ -44,6 +27,34 @@ describe('AmountConverter: acceptance', async function () {
       expect(await amountConverter.priceFeedsHeartbeatTimeouts(tokensToSell[i])).to.equal(priceFeedTimeouts[i])
     }
 
-    expect(await amountConverter.CONVERSION_TARGET()).to.equal(conversionTarget)
+    const allowedTokenToBuyAddedFilter = amountConverter.filters['AllowedTokenToBuyAdded(address)']
+    const allowedTokenToSellAddedFilter = amountConverter.filters['AllowedTokenToSellAdded(address)']
+    const priceFeedHeartbeatTimeoutSetFilter = amountConverter.filters['PriceFeedHeartbeatTimeoutSet(address,uint256)']
+
+    const addTokenToSellEvents = await amountConverter.queryFilter(allowedTokenToSellAddedFilter)
+    const addTokenToBuyEvents = await amountConverter.queryFilter(allowedTokenToBuyAddedFilter)
+    const priceFeedHeartbeatTimeoutSetEvents = await amountConverter.queryFilter(priceFeedHeartbeatTimeoutSetFilter)
+
+    expect(addTokenToSellEvents.length).to.equal(tokensToSell.length)
+    expect(addTokenToBuyEvents.length).to.equal(tokensToBuy.length)
+
+    for (const event of addTokenToSellEvents) {
+      expect(tokensToSell).to.include(event.args[0])
+    }
+
+    for (const event of addTokenToBuyEvents) {
+      expect(tokensToBuy).to.include(event.args[0])
+    }
+
+    for (const event of priceFeedHeartbeatTimeoutSetEvents) {
+      const token = event.args[0]
+      const timeout = event.args[1]
+
+      const index = tokensToSell.indexOf(token)
+      expect(timeout).to.equal(priceFeedTimeouts[index])
+    }
+
+    expect(await amountConverter.CONVERSION_TARGET()).to.equal(contracts.CHAINLINK_USD_QUOTE)
+    expect(await amountConverter.FEED_REGISTRY()).to.equal(contracts.CHAINLINK_PRICE_FEED_REGISTRY)
   })
 })
