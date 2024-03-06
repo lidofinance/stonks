@@ -84,27 +84,22 @@ describe('Stonks: acceptance', async function () {
       const order = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
 
       expect(await order.AGENT()).to.equal(contracts.AGENT)
-      expect(await order.manager()).to.equal(contracts.MANAGER)
       expect(await order.RELAYER()).to.equal(contracts.VAULT_RELAYER)
       expect(await order.DOMAIN_SEPARATOR()).to.equal(contracts.DOMAIN_SEPARATOR)
 
       const agentSetFilterOrder = order.filters['AgentSet(address)']
-      const managerSetFilterOrder = order.filters['ManagerSet(address)']
       const relayerSetFilterOrder = order.filters['RelayerSet(address)']
       const domainSeparatorSetFilterOrder = order.filters['DomainSeparatorSet(bytes32)']
 
       const agentSetEventsOrder = await order.queryFilter(agentSetFilterOrder)
-      const managerSetEventsOrder = await order.queryFilter(managerSetFilterOrder)
       const relayerSetEventsOrder = await order.queryFilter(relayerSetFilterOrder)
       const domainSeparatorSetEventsOrder = await order.queryFilter(domainSeparatorSetFilterOrder)
 
       expect(agentSetEventsOrder.length).to.equal(1)
-      expect(managerSetEventsOrder.length).to.equal(1)
       expect(relayerSetEventsOrder.length).to.equal(1)
       expect(domainSeparatorSetEventsOrder.length).to.equal(1)
 
       expect(agentSetEventsOrder[0].args[0]).to.equal(contracts.AGENT)
-      expect(managerSetEventsOrder[0].args[0]).to.equal(contracts.MANAGER)
       expect(relayerSetEventsOrder[0].args[0]).to.equal(contracts.VAULT_RELAYER)
       expect(domainSeparatorSetEventsOrder[0].args[0]).to.equal(contracts.DOMAIN_SEPARATOR)
     })
