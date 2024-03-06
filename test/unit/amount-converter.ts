@@ -126,14 +126,14 @@ describe('AmountConverter', function () {
         .withArgs(0)
     })
     it('should revert if tokenFrom is not allowed', async function () {
-      await expect(subject.getExpectedOut(mainnet.WETH, mainnet.DAI, 1))
+      await expect(subject.getExpectedOut(mainnet.LDO, mainnet.DAI, 1))
         .to.be.revertedWithCustomError(subject, 'SellTokenNotAllowed')
-        .withArgs(mainnet.WETH)
+        .withArgs(mainnet.LDO)
     })
     it('should revert if tokenTo is not allowed', async function () {
-      await expect(subject.getExpectedOut(mainnet.STETH, mainnet.WETH, 1))
+      await expect(subject.getExpectedOut(mainnet.STETH, mainnet.LDO, 1))
         .to.be.revertedWithCustomError(subject, 'BuyTokenNotAllowed')
-        .withArgs(mainnet.WETH)
+        .withArgs(mainnet.LDO)
     })
     it('should revert if tokenFrom is the same as tokenTo', async function () {
       await expect(

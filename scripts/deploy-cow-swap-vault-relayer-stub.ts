@@ -33,7 +33,7 @@ async function main() {
 
   console.log(`${fmt.name('CoWSwapVaultRelayerStub')} deployed at ${fmt.address(relayerAddress)}`)
 
-  if (network.name !== 'hardhat') {
+  if (!['localhost', 'hardhat'].includes(network.name)) {
     await verify(relayerAddress, [OWNER, MANAGER], receipt)
   } else {
     console.log(`Run on developer network, verification is skipped`)

@@ -34,7 +34,7 @@ async function main() {
     `${fmt.name('ChainlinkFeedRegistryStub')} deployed at ${fmt.address(registryAddress)}`
   )
 
-  if (network.name !== 'hardhat') {
+  if (!['localhost', 'hardhat'].includes(network.name)) {
     await verify(registryAddress, [OWNER, MANAGER], receipt)
   } else {
     console.log(`Run on developer network, verification is skipped`)

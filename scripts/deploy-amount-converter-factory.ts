@@ -37,7 +37,7 @@ async function main() {
     `The ${fmt.name('AmountConverterFactory')} was deployed successfully: ${fmt.address(address)}`
   )
 
-  if (network.name !== 'hardhat') {
+  if (!['localhost', 'hardhat'].includes(network.name)) {
     await verify(address, [CHAINLINK_PRICE_FEED_REGISTRY], receipt)
   } else {
     console.log(`Deployed on the local hardhat network, verification is skipped.`)

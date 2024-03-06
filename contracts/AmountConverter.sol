@@ -18,7 +18,7 @@ contract AmountConverter is IAmountConverter {
 
     mapping(address tokenToSell => bool allowed) public allowedTokensToSell;
     mapping(address tokenToBuy => bool allowed) public allowedTokensToBuy;
-    mapping(address priceFeedAddress => uint256 priceFeedTimeout) public priceFeedsHeartbeatTimeouts;
+    mapping(address tokenToSell => uint256 priceFeedTimeout) public priceFeedsHeartbeatTimeouts;
 
     event AllowedTokenToSellAdded(address tokenAddress);
     event AllowedTokenToBuyAdded(address tokenAddress);

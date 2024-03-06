@@ -6,10 +6,9 @@ import './utils/assert'
 dotenv.config()
 
 const MAINNET_RPC_URL = process.env.RPC_URL
-const GOERLI_RPC_URL = process.env.GOERLI_RPC_URL
 const HOLESKY_RPC_URL = process.env.HOLESKY_RPC_URL
 
-if (!MAINNET_RPC_URL && !GOERLI_RPC_URL && !HOLESKY_RPC_URL) {
+if (!MAINNET_RPC_URL && !HOLESKY_RPC_URL) {
   throw new Error(`RPC url was not provided. Please, ensure the .env file is filled correctly.`)
 }
 
@@ -62,13 +61,6 @@ if (MAINNET_RPC_URL) {
       url: MAINNET_RPC_URL,
       blockNumber: 18720000,
     },
-  }
-}
-
-if (GOERLI_RPC_URL) {
-  config.networks!.goerli = {
-    url: GOERLI_RPC_URL,
-    accounts: WALLET_PRIVATE_KEY ? [WALLET_PRIVATE_KEY] : undefined,
   }
 }
 

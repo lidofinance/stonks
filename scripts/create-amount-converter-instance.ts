@@ -84,7 +84,7 @@ async function main() {
     `The ${fmt.name('AmountConverter')} instance was deployed successfully: ${fmt.address(amountConverterAddress)}\n`
   )
 
-  if (network.name !== 'hardhat') {
+  if (!['localhost', 'hardhat'].includes(network.name)) {
     await verify(
       amountConverterAddress,
       [

@@ -23,7 +23,7 @@ async function main() {
     `${fmt.name('CoWSwapSettlementStub')} deployed at ${fmt.address(settlementAddress)}\n`
   )
 
-  if (network.name !== 'hardhat') {
+  if (!['localhost', 'hardhat'].includes(network.name)) {
     await verify(settlementAddress, [], receipt)
   } else {
     console.log(`Run on developer network, verification is skipped`)
