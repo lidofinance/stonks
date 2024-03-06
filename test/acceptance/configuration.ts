@@ -2,34 +2,20 @@ import { network } from 'hardhat'
 import { mainnet, holesky } from '../../utils/contracts'
 
 export const getTokensToSell = async () => {
-  if (network.name === 'holesky') {
-    return [holesky.STETH]
-  }
-
-  return [
-    mainnet.STETH,
-    mainnet.DAI,
-    mainnet.USDT,
-    mainnet.USDC,
-  ]
+  const chain = network.name === 'holesky' ? holesky : mainnet
+  return [chain.STETH, chain.DAI, chain.USDT, chain.USDC]
 }
 
 export const getTokensToBuy = async () => {
-  if (network.name === 'holesky') {
-    return [holesky.LDO]
-  }
-
-  return [
-    mainnet.DAI,
-    mainnet.USDT,
-    mainnet.USDC,
-  ]
+  const chain = network.name === 'holesky' ? holesky : mainnet
+  return [chain.DAI, chain.USDT, chain.USDC]
 }
 
 // https://docs.chain.link/data-feeds/price-feeds/addresses?network=ethereum&page=1
 export const getPriceFeedTimeouts = async () => {
   if (network.name === 'holesky') {
-    return [60 * 60 * 24 * 365] // 1 year for stub
+    const year = 60 * 60 * 24 * 365
+    return [year, year, year, year] // 1 year for stub
   }
 
   return [
