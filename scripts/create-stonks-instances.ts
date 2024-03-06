@@ -93,7 +93,7 @@ async function main() {
         `was deployed successfully: ${fmt.address(stonksAddress)}\n`,
       ].join(' ')
     )
-    if (network.name !== 'hardhat') {
+    if (!['localhost', 'hardhat'].includes(network.name)) {
       await verify(
         stonksAddress,
         [

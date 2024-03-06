@@ -66,9 +66,8 @@ async function main() {
   console.log(
     `Sample of the ${fmt.name('Order')} contract was deployed at ${fmt.address(orderAddress)}\n`
   )
-  if (network.name !== 'hardhat') {
+  if (!['localhost', 'hardhat'].includes(network.name)) {
     await verify(stonksFactoryAddress, [AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER], receipt)
-    await verify(orderAddress, [AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER], receipt)
   } else {
     console.log(`Deployed on the local hardhat network, verification is skipped.`)
   }
