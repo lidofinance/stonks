@@ -33,7 +33,7 @@ export const holesky = {
 
 export const getContracts = async () => {
   if (network.name === 'holesky') return holesky
-  else if (network.name == 'mainnet' || network.name == 'hardhat') return mainnet
+  else if (['hardhat', 'mainnet', 'localhost'].includes(network.name)) return mainnet
 
   throw new Error('Unknown Network')
 }
