@@ -19,8 +19,8 @@ describe('StonksFactory: acceptance', async function () {
     expect(agentSetEvents.length).to.equal(1)
     expect(orderSampleDeployedEvents.length).to.equal(1)
 
-    expect(agentSetEvents[0].args[0]).to.equal(contracts.AGENT)
+    expect(agentSetEvents[0].args[0]).to.equal(ethers.getAddress(contracts.AGENT))
 
-    expect(await stonksFactory.AGENT()).to.equal(contracts.AGENT)
+    expect(await stonksFactory.AGENT()).to.equal(ethers.getAddress(contracts.AGENT))
   })
 })
