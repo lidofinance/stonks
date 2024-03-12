@@ -1,7 +1,7 @@
 import { ethers, network } from 'hardhat'
 import { Signer } from 'ethers'
 import { impersonateAccount } from '@nomicfoundation/hardhat-network-helpers'
-import { mainnet } from '../../utils/contracts'
+import { getContracts } from '../../utils/contracts'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { AmountConverter, AmountConverterTest, Stonks } from '../../typechain-types'
 
@@ -22,11 +22,7 @@ export type SetupParams = {
   deployedContract?: string
 }
 
-const defaultPair = {
-  tokenFrom: mainnet.STETH,
-  tokenTo: mainnet.USDT,
-  priceFeedHeartbeatTimeout: 3600,
-}
+const contracts = getContracts()
 
 export const setupOverDeployedContracts = async (deployedContract: string): Promise<Setup> => {
   const stonks = await ethers.getContractAt('Stonks', deployedContract)
@@ -50,14 +46,18 @@ export const setupOverDeployedContracts = async (deployedContract: string): Prom
 
 export const setup = async (pair: TokenPair): Promise<Setup> => {
   const manager = (await ethers.getSigners())[0]
-  pair = pair || defaultPair
+  pair = pair || {
+    tokenFrom: contracts.STETH,
+    tokenTo: contracts.USDT,
+    priceFeedHeartbeatTimeout: 3600,
+  }
 
   const result = await deployStonks({
     factoryParams: {
-      agent: mainnet.AGENT,
-      relayer: mainnet.VAULT_RELAYER,
-      settlement: mainnet.SETTLEMENT,
-      priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+      agent: contracts.AGENT,
+      relayer: contracts.VAULT_RELAYER,
+      settlement: contracts.SETTLEMENT,
+      priceFeedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
     },
     stonksParams: {
       tokenFrom: pair.tokenFrom,
@@ -68,7 +68,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
       priceToleranceInBps: 100,
     },
     amountConverterParams: {
-      conversionTarget: mainnet.CHAINLINK_USD_QUOTE,
+      conversionTarget: contracts.CHAINLINK_USD_QUOTE,
       allowedTokensToSell: [pair.tokenFrom],
       allowedStableTokensToBuy: [pair.tokenTo],
       priceFeedsHeartbeatTimeouts: [86400],
@@ -87,56 +87,56 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
 
 export const pairs = [
   {
-    tokenFrom: mainnet.STETH,
-    tokenTo: mainnet.DAI,
+    tokenFrom: contracts.STETH,
+    tokenTo: contracts.DAI,
     name: 'STETH->DAI',
     priceFeedHeartbeatTimeout: 3600,
   },
   {
-    tokenFrom: mainnet.STETH,
-    tokenTo: mainnet.USDC,
+    tokenFrom: contracts.STETH,
+    tokenTo: contracts.USDC,
     name: 'STETH->USDC',
     priceFeedHeartbeatTimeout: 3600,
   },
   {
-    tokenFrom: mainnet.STETH,
-    tokenTo: mainnet.USDT,
+    tokenFrom: contracts.STETH,
+    tokenTo: contracts.USDT,
     name: 'STETH->USDT',
     priceFeedHeartbeatTimeout: 3600,
   },
   {
-    tokenFrom: mainnet.USDC,
-    tokenTo: mainnet.DAI,
+    tokenFrom: contracts.USDC,
+    tokenTo: contracts.DAI,
     name: 'USDC->DAI',
     priceFeedHeartbeatTimeout: 86400,
   },
   {
-    tokenFrom: mainnet.USDC,
-    tokenTo: mainnet.USDT,
+    tokenFrom: contracts.USDC,
+    tokenTo: contracts.USDT,
     name: 'USDC->USDT',
     priceFeedHeartbeatTimeout: 86400,
   },
   {
-    tokenFrom: mainnet.USDT,
-    tokenTo: mainnet.DAI,
+    tokenFrom: contracts.USDT,
+    tokenTo: contracts.DAI,
     name: 'USDT->DAI',
     priceFeedHeartbeatTimeout: 86400,
   },
   {
-    tokenFrom: mainnet.USDT,
-    tokenTo: mainnet.USDC,
+    tokenFrom: contracts.USDT,
+    tokenTo: contracts.USDC,
     name: 'USDT->USDC',
     priceFeedHeartbeatTimeout: 86400,
   },
   {
-    tokenFrom: mainnet.DAI,
-    tokenTo: mainnet.USDT,
+    tokenFrom: contracts.DAI,
+    tokenTo: contracts.USDT,
     name: 'DAI->USDT',
     priceFeedHeartbeatTimeout: 3600,
   },
   {
-    tokenFrom: mainnet.DAI,
-    tokenTo: mainnet.USDC,
+    tokenFrom: contracts.DAI,
+    tokenTo: contracts.USDC,
     name: 'DAI->USDC',
     priceFeedHeartbeatTimeout: 3600,
   },

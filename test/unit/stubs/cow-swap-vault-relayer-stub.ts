@@ -19,9 +19,11 @@ import {
   CoWSwapSettlementStub__factory,
 } from '../../../typechain-types'
 import { OrderCreatedEvent } from '../../../typechain-types/contracts/Order'
-import { domainSeparator } from '../../../utils/gpv2-helpers'
+import { getContracts } from '../../../utils/contracts'
 
 type HardhatEthersSigner = Awaited<ReturnType<(typeof ethers)['getSigners']>>[number]
+
+const contracts = getContracts()
 
 describe('CoWSwapVaultRelayerStub', async () => {
   let owner: HardhatEthersSigner
@@ -70,7 +72,7 @@ describe('CoWSwapVaultRelayerStub', async () => {
     const orderSample = await new Order__factory(deployer).deploy(
       mainnet.AGENT,
       await relayer.getAddress(),
-      domainSeparator
+      contracts.DOMAIN_SEPARATOR
     )
     await orderSample.waitForDeployment()
 

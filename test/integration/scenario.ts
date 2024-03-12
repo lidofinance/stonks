@@ -52,6 +52,7 @@ describe('Scenario test multi-pair', function () {
 
         tokenFrom = await ethers.getContractAt('IERC20', await stonks.TOKEN_FROM())
 
+        await setBalance(await manager.getAddress(), parseEther('100'))
         await setBalance(mainnet.AGENT, parseEther('100'))
       })
 

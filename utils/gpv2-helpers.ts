@@ -1,13 +1,11 @@
 import { ethers } from 'hardhat'
 import { TransactionReceipt } from 'ethers'
 import { getPlaceOrderData } from './get-events'
-import { mainnet } from './contracts'
+import { getContracts } from './contracts'
 import { Stonks, StonksTest } from '../typechain-types'
 
 export const MAX_BASIS_POINTS = BigInt(10000)
 export const MAGIC_VALUE = '0x1626ba7e'
-export const domainSeparator =
-  '0xc078f884a2676e1345748b1feace7b0abee5d00ecadb6e574dcdd109a63e8943'
 export const orderPartials = {
   appData: ethers.keccak256(ethers.toUtf8Bytes('LIDO_DOES_STONKS')),
   kind: '0xf3b277728b3fee749481eb3e0b3b48980dbbab78658fc419025cb16eee346775',
@@ -24,6 +22,7 @@ export const formOrderHashFromTxReceipt = async (
   minBuyAmount: bigint = 0n,
   marginInBasisPoints: bigint = 0n
 ) => {
+  const contracts = getContracts()
   const blockNumber = receipt.blockNumber
   const blockTimestamp = (await ethers.provider.getBlock(blockNumber))
     ?.timestamp
@@ -52,7 +51,7 @@ export const formOrderHashFromTxReceipt = async (
   const orderData = {
     sellToken: tokenFrom,
     buyToken: tokenTo,
-    receiver: mainnet.AGENT,
+    receiver: contracts.AGENT,
     sellAmount: sellAmount,
     buyAmount: buyAmount > minBuyAmount ? buyAmount : minBuyAmount,
     validTo: validTo,
@@ -68,5 +67,5 @@ export const formOrderHashFromTxReceipt = async (
   const hashHelper = await HashHelperFactory.deploy()
 
   await hashHelper.waitForDeployment()
-  return await hashHelper.hash(orderData, domainSeparator)
+  return await hashHelper.hash(orderData, contracts.DOMAIN_SEPARATOR)
 }

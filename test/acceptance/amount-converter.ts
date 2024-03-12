@@ -8,19 +8,19 @@ const AMOUNT_CONVERTER_ADDRESS: string = ''
 describe('AmountConverter: acceptance', async function () {
   it('should have correct params', async function () {
     if (AMOUNT_CONVERTER_ADDRESS === '') this.skip()
-    const contracts = await getContracts()
-    const tokensToSell = (await getTokensToSell()).map(token => ethers.getAddress(token))
-    const tokensToBuy = (await getTokensToBuy()).map(token => ethers.getAddress(token))
+    const contracts = getContracts()
+    const tokensToSell = (await getTokensToSell()).map((token) => ethers.getAddress(token))
+    const tokensToBuy = (await getTokensToBuy()).map((token) => ethers.getAddress(token))
     const priceFeedTimeouts = await getPriceFeedTimeouts()
 
     const amountConverter = await ethers.getContractAt('AmountConverter', AMOUNT_CONVERTER_ADDRESS)
 
     for (const token of tokensToSell) {
-      expect(await amountConverter.allowedTokensToSell(ethers.getAddress(token))).to.equal(true)
+      expect(await amountConverter.allowedTokensToSell(token)).to.equal(true)
     }
 
     for (const token of tokensToBuy) {
-      expect(await amountConverter.allowedTokensToBuy(ethers.getAddress(token))).to.equal(true)
+      expect(await amountConverter.allowedTokensToBuy(token)).to.equal(true)
     }
 
     for (let i = 0; i < tokensToSell.length; i++) {
@@ -60,9 +60,9 @@ describe('AmountConverter: acceptance', async function () {
       expect(timeout).to.equal(priceFeedTimeouts[index])
     }
 
-    expect(await amountConverter.CONVERSION_TARGET()).to.equal(contracts.CHAINLINK_USD_QUOTE)
-    expect(await amountConverter.FEED_REGISTRY()).to.equal(
-      ethers.getAddress(contracts.CHAINLINK_PRICE_FEED_REGISTRY)
+    expect(await amountConverter.CONVERSION_TARGET()).to.hexEqual(contracts.CHAINLINK_USD_QUOTE)
+    expect(await amountConverter.FEED_REGISTRY()).to.hexEqual(
+      contracts.CHAINLINK_PRICE_FEED_REGISTRY
     )
   })
 })
