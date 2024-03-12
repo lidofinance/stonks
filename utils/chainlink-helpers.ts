@@ -1,5 +1,7 @@
 import { ethers } from 'hardhat'
-import { mainnet } from './contracts'
+import { getContracts } from './contracts'
+
+const contracts = getContracts()
 
 export const getExpectedOut = async (
   tokenFrom: string,
@@ -8,16 +10,16 @@ export const getExpectedOut = async (
 ): Promise<bigint> => {
   const feedRegistry = await ethers.getContractAt(
     'IFeedRegistry',
-    mainnet.CHAINLINK_PRICE_FEED_REGISTRY
+    contracts.CHAINLINK_PRICE_FEED_REGISTRY
   )
 
   const feedDecimals = await feedRegistry.decimals(
     tokenFrom,
-    mainnet.CHAINLINK_USD_QUOTE
+    contracts.CHAINLINK_USD_QUOTE
   )
   const [_, price] = await feedRegistry.latestRoundData(
     tokenFrom,
-    mainnet.CHAINLINK_USD_QUOTE
+    contracts.CHAINLINK_USD_QUOTE
   )
 
   const decimalsOfSellToken = await (

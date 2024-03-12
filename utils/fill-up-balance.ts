@@ -1,12 +1,14 @@
 import { ethers, network } from 'hardhat'
 import { setBalance } from '@nomicfoundation/hardhat-network-helpers'
-import { mainnet } from '../utils/contracts'
+import { getContracts } from '../utils/contracts'
 
 type FillUpParams = {
   token?: string
   amount: string | bigint
   address: string
 }
+
+const contracts = getContracts()
 
 export const fillUpERC20FromTreasury = async ({
   token,
@@ -15,13 +17,13 @@ export const fillUpERC20FromTreasury = async ({
 }: FillUpParams) => {
   if (!token) throw new Error('Token address is not provided')
 
-  await setBalance(mainnet.AGENT, ethers.parseEther('100'))
+  await setBalance(contracts.AGENT, ethers.parseEther('100'))
   await network.provider.request({
     method: 'hardhat_impersonateAccount',
-    params: [mainnet.AGENT],
+    params: [contracts.AGENT],
   })
 
-  const treasurySigner = await ethers.provider.getSigner(mainnet.AGENT)
+  const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
   const erc20Treasury = await ethers.getContractAt(
     'IERC20',
     token,

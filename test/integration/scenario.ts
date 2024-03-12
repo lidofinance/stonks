@@ -11,13 +11,14 @@ import {
 } from '@nomicfoundation/hardhat-network-helpers'
 import { setup, setupOverDeployedContracts, pairs, TokenPair, Setup } from './setup'
 import { isClose } from '../../utils/assert'
-import { mainnet } from '../../utils/contracts'
+import { mainnet, getContracts } from '../../utils/contracts'
 import { IERC20, Stonks, Order } from '../../typechain-types'
 import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
 import { getPlaceOrderData } from '../../utils/get-events'
 
 const deployedContracts: string[] = []
 const testItems: Array<TokenPair | string> = deployedContracts.length ? deployedContracts : pairs
+const contracts = getContracts()
 
 describe('Scenario test multi-pair', function () {
   testItems.forEach((item) => {
@@ -53,12 +54,12 @@ describe('Scenario test multi-pair', function () {
         tokenFrom = await ethers.getContractAt('IERC20', await stonks.TOKEN_FROM())
 
         await setBalance(await manager.getAddress(), parseEther('100'))
-        await setBalance(mainnet.AGENT, parseEther('100'))
+        await setBalance(contracts.AGENT, parseEther('100'))
       })
 
       context('Setup', () => {
         it('agent should fill up a stonks with tokenFrom (EasyTrack imitation)', async function () {
-          const treasurySigner = await ethers.provider.getSigner(mainnet.AGENT)
+          const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
           const token = tokenFrom.connect(treasurySigner)
           const currentBalance = await token.balanceOf(stonks)
 
@@ -67,7 +68,7 @@ describe('Scenario test multi-pair', function () {
             this.skip()
           }
 
-          await impersonateAccount(mainnet.AGENT)
+          await impersonateAccount(contracts.AGENT)
 
           const transferTx = await token.transfer(stonks, value)
           await transferTx.wait()
@@ -113,16 +114,16 @@ describe('Scenario test multi-pair', function () {
         })
 
         it('settlement should pull off assets from order contract (swap imitation)', async () => {
-          await setCode(mainnet.VAULT_RELAYER, ethers.ZeroHash)
-          await setBalance(mainnet.VAULT_RELAYER, ethers.parseEther('100'))
-          await impersonateAccount(mainnet.VAULT_RELAYER)
+          await setCode(contracts.VAULT_RELAYER, ethers.ZeroHash)
+          await setBalance(contracts.VAULT_RELAYER, ethers.parseEther('100'))
+          await impersonateAccount(contracts.VAULT_RELAYER)
 
-          const relayerSigner = await ethers.provider.getSigner(mainnet.VAULT_RELAYER)
+          const relayerSigner = await ethers.provider.getSigner(contracts.VAULT_RELAYER)
           const stethWithRelayerSigner = tokenFrom.connect(relayerSigner)
 
           await stethWithRelayerSigner.transferFrom(
             order,
-            mainnet.VAULT_RELAYER,
+            contracts.VAULT_RELAYER,
             await stethWithRelayerSigner.balanceOf(order)
           )
 
@@ -175,30 +176,30 @@ describe('Scenario test multi-pair', function () {
           const feedRegistryStub = await feedRegistryStubFactory.deploy(manager, manager)
           const feedRegistry = await ethers.getContractAt(
             'IFeedRegistry',
-            mainnet.CHAINLINK_PRICE_FEED_REGISTRY
+            contracts.CHAINLINK_PRICE_FEED_REGISTRY
           )
           const decimals = await feedRegistry.decimals(
             await stonks.TOKEN_FROM(),
-            mainnet.CHAINLINK_USD_QUOTE
+            contracts.CHAINLINK_USD_QUOTE
           )
           const latestRoundData = await feedRegistry.latestRoundData(
             await stonks.TOKEN_FROM(),
-            mainnet.CHAINLINK_USD_QUOTE
+            contracts.CHAINLINK_USD_QUOTE
           )
 
           await setCode(
-            mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+            contracts.CHAINLINK_PRICE_FEED_REGISTRY,
             await ethers.provider.getCode(feedRegistryStub)
           )
 
           const feedRegistryStubReplaced = await ethers.getContractAt(
             'ChainlinkFeedRegistryStub',
-            mainnet.CHAINLINK_PRICE_FEED_REGISTRY
+            contracts.CHAINLINK_PRICE_FEED_REGISTRY
           )
 
           await feedRegistryStubReplaced.setFeed(
             await stonks.TOKEN_FROM(),
-            mainnet.CHAINLINK_USD_QUOTE,
+            contracts.CHAINLINK_USD_QUOTE,
             {
               answer: BigInt(
                 latestRoundData.answer *
@@ -258,7 +259,7 @@ describe('Scenario test multi-pair', function () {
           await snapshotOrderPlaced.restore()
         })
         it('agent should change a manager', async () => {
-          const agent = await ethers.getSigner(mainnet.AGENT)
+          const agent = await ethers.getSigner(contracts.AGENT)
           await stonks.connect(agent).setManager(ethers.ZeroAddress)
           expect(await stonks.manager()).to.be.equal(ethers.ZeroAddress)
         })
@@ -274,34 +275,34 @@ describe('Scenario test multi-pair', function () {
           await snapshotOrderPlaced.restore()
         })
         it('should fill up stonks with unexpected token', async () => {
-          const agent = await ethers.getSigner(mainnet.AGENT)
+          const agent = await ethers.getSigner(contracts.AGENT)
           const value = parseEther('1')
 
-          ldo = await ethers.getContractAt('IERC20', mainnet.LDO)
+          ldo = await ethers.getContractAt('IERC20', contracts.LDO)
           await ldo.connect(agent).transfer(stonks, value)
 
           expect(await ldo.balanceOf(stonks)).to.equal(value)
         })
         it('manager should recover unexpected token', async () => {
-          const agentBalanceBefore = await ldo.balanceOf(mainnet.AGENT)
+          const agentBalanceBefore = await ldo.balanceOf(contracts.AGENT)
           const value = await ldo.balanceOf(stonks)
           await stonks.connect(manager).recoverERC20(ldo, value)
           expect(await ldo.balanceOf(stonks)).to.equal(0)
-          expect(await ldo.balanceOf(mainnet.AGENT)).to.equal(agentBalanceBefore + value)
+          expect(await ldo.balanceOf(contracts.AGENT)).to.equal(agentBalanceBefore + value)
         })
         it('should fill up order contract with unexpected token', async () => {
           const value = parseEther('1')
-          const agent = await ethers.getSigner(mainnet.AGENT)
+          const agent = await ethers.getSigner(contracts.AGENT)
           await ldo.connect(agent).transfer(order, value)
 
           expect(isClose(await ldo.balanceOf(order), value, 1n))
         })
         it('manager should recover unexpected token from order contract', async () => {
-          const agentBalanceBefore = await ldo.balanceOf(mainnet.AGENT)
+          const agentBalanceBefore = await ldo.balanceOf(contracts.AGENT)
           const value = await ldo.balanceOf(order)
           await order.connect(manager).recoverERC20(ldo, value)
           expect(await ldo.balanceOf(stonks)).to.equal(0)
-          expect(await ldo.balanceOf(mainnet.AGENT)).to.equal(agentBalanceBefore + value)
+          expect(await ldo.balanceOf(contracts.AGENT)).to.equal(agentBalanceBefore + value)
         })
       })
 

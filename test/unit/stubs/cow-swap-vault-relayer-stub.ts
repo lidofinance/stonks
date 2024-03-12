@@ -1,6 +1,6 @@
 import { ethers } from 'hardhat'
 import { assert, expect } from 'chai'
-import { mainnet } from '../../../utils/contracts'
+import { mainnet, getContracts } from '../../../utils/contracts'
 import { CoWSwapVaultRelayerStub } from '../../../typechain-types/contracts/stubs/CoWSwapVaultRelayerStub.sol'
 import {
   SnapshotRestorer,
@@ -19,7 +19,6 @@ import {
   CoWSwapSettlementStub__factory,
 } from '../../../typechain-types'
 import { OrderCreatedEvent } from '../../../typechain-types/contracts/Order'
-import { getContracts } from '../../../utils/contracts'
 
 type HardhatEthersSigner = Awaited<ReturnType<(typeof ethers)['getSigners']>>[number]
 
@@ -51,7 +50,7 @@ describe('CoWSwapVaultRelayerStub', async () => {
     )
     await feedRegistry.waitForDeployment()
 
-    await feedRegistry.connect(manager).setFeed(mainnet.STETH, mainnet.CHAINLINK_USD_QUOTE, {
+    await feedRegistry.connect(manager).setFeed(contracts.STETH, contracts.CHAINLINK_USD_QUOTE, {
       roundId: 1n,
       answer: 1000n * 10n ** 18n,
       updatedAt: 0n,
@@ -62,25 +61,25 @@ describe('CoWSwapVaultRelayerStub', async () => {
 
     const amountConverter = await new AmountConverter__factory(deployer).deploy(
       feedRegistry,
-      mainnet.CHAINLINK_USD_QUOTE,
-      [mainnet.STETH],
-      [mainnet.DAI],
+      contracts.CHAINLINK_USD_QUOTE,
+      [contracts.STETH],
+      [contracts.DAI],
       [24 * 3600]
     )
     await amountConverter.waitForDeployment()
 
     const orderSample = await new Order__factory(deployer).deploy(
-      mainnet.AGENT,
+      contracts.AGENT,
       await relayer.getAddress(),
       contracts.DOMAIN_SEPARATOR
     )
     await orderSample.waitForDeployment()
 
     stonks = await new Stonks__factory(deployer).deploy(
-      mainnet.AGENT,
+      contracts.AGENT,
       manager,
-      mainnet.STETH,
-      mainnet.DAI,
+      contracts.STETH,
+      contracts.DAI,
       amountConverter,
       orderSample,
       3600,
@@ -108,12 +107,12 @@ describe('CoWSwapVaultRelayerStub', async () => {
   })
 
   it('fill()', async () => {
-    await impersonateAccount(mainnet.AGENT)
-    await setBalance(mainnet.AGENT, 100n * 10n ** 18n)
+    await impersonateAccount(contracts.AGENT)
+    await setBalance(contracts.AGENT, 100n * 10n ** 18n)
 
-    const agentUnlocked = await ethers.getSigner(mainnet.AGENT)
+    const agentUnlocked = await ethers.getSigner(contracts.AGENT)
 
-    const stETH = IERC20__factory.connect(mainnet.STETH, ethers.provider)
+    const stETH = IERC20__factory.connect(contracts.STETH, ethers.provider)
     await stETH.connect(agentUnlocked).transfer(stonks, 10n ** 18n)
 
     const tx = await stonks

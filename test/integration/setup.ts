@@ -1,9 +1,9 @@
-import { ethers, network } from 'hardhat'
+import { ethers } from 'hardhat'
 import { Signer } from 'ethers'
 import { impersonateAccount } from '@nomicfoundation/hardhat-network-helpers'
 import { getContracts } from '../../utils/contracts'
 import { deployStonks } from '../../scripts/deployments/stonks'
-import { AmountConverter, AmountConverterTest, Stonks } from '../../typechain-types'
+import { AmountConverter, Stonks } from '../../typechain-types'
 
 export type TokenPair = {
   tokenFrom: string

@@ -9,7 +9,7 @@ import {
 } from '@nomicfoundation/hardhat-network-helpers'
 import { Order, Stonks, HashHelper, AmountConverterTest } from '../../typechain-types'
 import { deployStonks } from '../../scripts/deployments/stonks'
-import { mainnet } from '../../utils/contracts'
+import { getContracts } from '../../utils/contracts'
 import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
 import { getPlaceOrderData } from '../../utils/get-events'
@@ -17,6 +17,7 @@ import { isClose } from '../../utils/assert'
 import { PlaceOrderDataEvent } from '../../utils/types'
 
 const PRICE_TOLERANCE_IN_BP = 1000
+const contracts = getContracts()
 
 describe('Order', async function () {
   const marginInBps = 500
@@ -36,10 +37,10 @@ describe('Order', async function () {
 
     const amountConverterTestFactory = await ethers.getContractFactory('AmountConverterTest')
     amountConverterTest = await amountConverterTestFactory.deploy(
-      mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
-      mainnet.CHAINLINK_USD_QUOTE,
-      [mainnet.STETH],
-      [mainnet.DAI],
+      contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+      contracts.CHAINLINK_USD_QUOTE,
+      [contracts.STETH],
+      [contracts.DAI],
       [3600]
     )
     await amountConverterTest.waitForDeployment()
@@ -47,14 +48,14 @@ describe('Order', async function () {
     const { stonks: stonksInstance, amountConverter: amountConverterInstance } = await deployStonks(
       {
         factoryParams: {
-          agent: mainnet.AGENT,
-          relayer: mainnet.VAULT_RELAYER,
-          settlement: mainnet.SETTLEMENT,
-          priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+          agent: contracts.AGENT,
+          relayer: contracts.VAULT_RELAYER,
+          settlement: contracts.SETTLEMENT,
+          priceFeedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
         },
         stonksParams: {
-          tokenFrom: mainnet.STETH,
-          tokenTo: mainnet.DAI,
+          tokenFrom: contracts.STETH,
+          tokenTo: contracts.DAI,
           manager: await manager.getAddress(),
           marginInBps: marginInBps,
           orderDuration: 3600,
@@ -62,9 +63,9 @@ describe('Order', async function () {
           amountConverterAddress: await amountConverterTest.getAddress(),
         },
         amountConverterParams: {
-          conversionTarget: mainnet.CHAINLINK_USD_QUOTE, // USD
-          allowedTokensToSell: [mainnet.STETH],
-          allowedStableTokensToBuy: [mainnet.DAI],
+          conversionTarget: contracts.CHAINLINK_USD_QUOTE, // USD
+          allowedTokensToSell: [contracts.STETH],
+          allowedStableTokensToBuy: [contracts.DAI],
           priceFeedsHeartbeatTimeouts: [3600],
         },
       }
@@ -77,7 +78,7 @@ describe('Order', async function () {
     stonks = stonksInstance
 
     await fillUpERC20FromTreasury({
-      token: mainnet.STETH,
+      token: contracts.STETH,
       amount: ethers.parseEther('1'),
       address: await stonks.getAddress(),
     })
@@ -106,16 +107,16 @@ describe('Order', async function () {
       const contractFactory = await ethers.getContractFactory('Order')
 
       const contract = await contractFactory.deploy(
-        mainnet.AGENT,
-        mainnet.VAULT_RELAYER,
-        mainnet.DOMAIN_SEPARATOR
+        contracts.AGENT,
+        contracts.VAULT_RELAYER,
+        contracts.DOMAIN_SEPARATOR
       )
 
       await expect(contract.deploymentTransaction())
         .to.emit(contract, 'RelayerSet')
-        .withArgs(mainnet.VAULT_RELAYER)
+        .withArgs(contracts.VAULT_RELAYER)
         .to.emit(contract, 'DomainSeparatorSet')
-        .withArgs(mainnet.DOMAIN_SEPARATOR)
+        .withArgs(contracts.DOMAIN_SEPARATOR)
     })
     it('sample instance should be initialized by default', async () => {
       const subject = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
@@ -138,7 +139,7 @@ describe('Order', async function () {
       expect(orderData.order.buyAmount).to.equal(
         buyAmountFromBalance > expectedBuyAmount ? buyAmountFromBalance : expectedBuyAmount
       )
-      expect(orderData.order.receiver).to.be.equal(mainnet.AGENT)
+      expect(orderData.order.receiver).to.be.equal(contracts.AGENT)
       expect(BigInt(orderData.order.feeAmount)).to.be.equal(BigInt(0))
       expect(BigInt(orderData.order.validTo)).to.be.equal(
         BigInt(orderData.timestamp) + orderDurationInSeconds
@@ -263,32 +264,32 @@ describe('Order', async function () {
     it('should revert if called by stranger', async () => {
       const amount = ethers.parseEther('1')
       await fillUpERC20FromTreasury({
-        token: mainnet.DAI,
+        token: contracts.DAI,
         amount: amount,
         address: await subject.getAddress(),
       })
       const signer = (await ethers.getSigners())[4]
       const localSubject = subject.connect(signer)
-      await expect(localSubject.recoverERC20(mainnet.DAI, BigInt(1)))
+      await expect(localSubject.recoverERC20(contracts.DAI, BigInt(1)))
         .revertedWithCustomError(subject, 'NotAgentOrManager')
         .withArgs(await signer.getAddress())
     })
     it('should successfully recover a token', async () => {
       const amount = ethers.parseEther('1')
-      const token = await ethers.getContractAt('IERC20', mainnet.DAI)
+      const token = await ethers.getContractAt('IERC20', contracts.DAI)
       const subjectAddress = await subject.getAddress()
 
       await fillUpERC20FromTreasury({
-        token: mainnet.DAI,
+        token: contracts.DAI,
         amount: amount,
         address: subjectAddress,
       })
 
       const balanceBefore = await token.balanceOf(subject)
 
-      await expect(subject.recoverERC20(mainnet.DAI, amount))
+      await expect(subject.recoverERC20(contracts.DAI, amount))
         .to.emit(subject, 'ERC20Recovered')
-        .withArgs(mainnet.DAI, mainnet.AGENT, amount)
+        .withArgs(contracts.DAI, contracts.AGENT, amount)
 
       const balanceAfter = await token.balanceOf(subject)
 
