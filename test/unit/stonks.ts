@@ -10,10 +10,12 @@ import {
   Stonks,
   Stonks__factory,
 } from '../../typechain-types'
-import { mainnet } from '../../utils/contracts'
+import { getContracts } from '../../utils/contracts'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
 import { MAX_BASIS_POINTS } from '../../utils/gpv2-helpers'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
+
+const contracts = getContracts()
 
 describe('Stonks', function () {
   let signer: Signer
@@ -38,14 +40,14 @@ describe('Stonks', function () {
 
     const { stonks, amountConverter: tokenConverter } = await deployStonks({
       factoryParams: {
-        agent: mainnet.AGENT,
-        relayer: mainnet.VAULT_RELAYER,
-        settlement: mainnet.SETTLEMENT,
-        priceFeedRegistry: mainnet.CHAINLINK_PRICE_FEED_REGISTRY,
+        agent: contracts.AGENT,
+        relayer: contracts.VAULT_RELAYER,
+        settlement: contracts.SETTLEMENT,
+        priceFeedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
       },
       stonksParams: {
-        tokenFrom: mainnet.STETH,
-        tokenTo: mainnet.DAI,
+        tokenFrom: contracts.STETH,
+        tokenTo: contracts.DAI,
         manager: await signer.getAddress(),
         marginInBps: marginInBps,
         orderDuration: 3600,
@@ -53,8 +55,8 @@ describe('Stonks', function () {
       },
       amountConverterParams: {
         conversionTarget: '0x0000000000000000000000000000000000000348', // USD
-        allowedTokensToSell: [mainnet.STETH],
-        allowedStableTokensToBuy: [mainnet.DAI],
+        allowedTokensToSell: [contracts.STETH],
+        allowedStableTokensToBuy: [contracts.DAI],
         priceFeedsHeartbeatTimeouts: [3600],
       },
     })
@@ -81,10 +83,10 @@ describe('Stonks', function () {
 
     this.beforeAll(async function () {
       validParams = {
-        agent: mainnet.AGENT,
+        agent: contracts.AGENT,
         manager: managerAddress,
-        tokenFrom: mainnet.STETH,
-        tokenTo: mainnet.DAI,
+        tokenFrom: contracts.STETH,
+        tokenTo: contracts.DAI,
         amountConverter: subjectTokenConverter,
         orderSample: notZeroAddress,
         orderDurationInSeconds: 60,
@@ -220,8 +222,8 @@ describe('Stonks', function () {
         ContractFactory.deploy(
           validParams.agent,
           validParams.manager,
-          mainnet.STETH,
-          mainnet.STETH,
+          contracts.STETH,
+          contracts.STETH,
           validParams.amountConverter,
           validParams.orderSample,
           validParams.orderDurationInSeconds,
@@ -343,7 +345,7 @@ describe('Stonks', function () {
     })
     it('should return correct amount with margin included', async function () {
       const amount = ethers.parseEther('1')
-      const expectedOut = await getExpectedOut(mainnet.STETH, mainnet.DAI, amount)
+      const expectedOut = await getExpectedOut(contracts.STETH, contracts.DAI, amount)
       const expectedOutWithMargin =
         (expectedOut * (MAX_BASIS_POINTS - BigInt(marginInBps))) / MAX_BASIS_POINTS
 
@@ -355,14 +357,14 @@ describe('Stonks', function () {
     it('should return correct amount with margin included', async function () {
       const localSnapshot = await takeSnapshot()
       await fillUpERC20FromTreasury({
-        token: mainnet.STETH,
+        token: contracts.STETH,
         amount: ethers.parseEther('1'),
         address: await subject.getAddress(),
       })
       const amount = await (
-        await ethers.getContractAt('IERC20', mainnet.STETH, signer)
+        await ethers.getContractAt('IERC20', contracts.STETH, signer)
       ).balanceOf(subject)
-      const expectedOut = await getExpectedOut(mainnet.STETH, mainnet.DAI, amount)
+      const expectedOut = await getExpectedOut(contracts.STETH, contracts.DAI, amount)
       const expectedOutWithMargin =
         (expectedOut * (MAX_BASIS_POINTS - BigInt(marginInBps))) / MAX_BASIS_POINTS
 
@@ -386,10 +388,10 @@ describe('Stonks', function () {
     })
 
     it('should place order', async function () {
-      const steth = await ethers.getContractAt('IERC20', mainnet.STETH, signer)
+      const steth = await ethers.getContractAt('IERC20', contracts.STETH, signer)
 
       await fillUpERC20FromTreasury({
-        token: mainnet.STETH,
+        token: contracts.STETH,
         amount,
         address: await subject.getAddress(),
       })

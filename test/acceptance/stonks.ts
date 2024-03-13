@@ -18,16 +18,16 @@ const stonksInstances: StonksParams[] = []
 describe('Stonks: acceptance', async function () {
   stonksInstances.forEach((params: StonksParams) => {
     it('should have correct params', async function () {
-      const contracts = await getContracts()
+      const contracts = getContracts()
       const stonks = await ethers.getContractAt('Stonks', params.address)
 
-      expect(await stonks.manager()).to.equal(contracts.MANAGER)
-      expect(await stonks.AGENT()).to.equal(contracts.AGENT)
+      expect(await stonks.manager()).to.hexEqual(contracts.MANAGER)
+      expect(await stonks.AGENT()).to.hexEqual(contracts.AGENT)
 
-      expect(await stonks.ORDER_SAMPLE()).to.equal(params.orderSample)
-      expect(await stonks.AMOUNT_CONVERTER()).to.equal(params.amountConverter)
-      expect(await stonks.TOKEN_FROM()).to.equal(params.tokenFrom)
-      expect(await stonks.TOKEN_TO()).to.equal(params.tokenTo)
+      expect(await stonks.ORDER_SAMPLE()).to.hexEqual(params.orderSample)
+      expect(await stonks.AMOUNT_CONVERTER()).to.hexEqual(params.amountConverter)
+      expect(await stonks.TOKEN_FROM()).to.hexEqual(params.tokenFrom)
+      expect(await stonks.TOKEN_TO()).to.hexEqual(params.tokenTo)
       expect(await stonks.ORDER_DURATION_IN_SECONDS()).to.equal(params.orderDurationInSeconds)
       expect(await stonks.MARGIN_IN_BASIS_POINTS()).to.equal(params.marginInBasisPoints)
       expect(await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS()).to.equal(
@@ -35,11 +35,12 @@ describe('Stonks: acceptance', async function () {
       )
 
       expect(await stonks.getPriceTolerance()).to.equal(params.priceToleranceInBasisPoints)
-      expect(await stonks.getOrderParameters()).to.equal([
-        params.tokenFrom,
-        params.tokenTo,
-        params.orderDurationInSeconds,
-      ])
+
+      const [tokenFrom, tokenTo, orderDurationInSeconds] = await stonks.getOrderParameters()
+
+      expect(tokenFrom).to.hexEqual(params.tokenFrom)
+      expect(tokenTo).to.hexEqual(params.tokenTo)
+      expect(orderDurationInSeconds).to.equal(params.orderDurationInSeconds)
 
       const managerSetFilter = stonks.filters['ManagerSet(address)']
       const agentSetFilter = stonks.filters['AgentSet(address)']
@@ -71,20 +72,20 @@ describe('Stonks: acceptance', async function () {
       expect(marginInBasisPointsSetEvents.length).to.equal(1)
       expect(priceToleranceInBasisPointsSetEvents.length).to.equal(1)
         
-      expect(managerSetEvents[0].args[0]).to.equal(contracts.MANAGER)
-      expect(agentSetEvents[0].args[0]).to.equal(contracts.AGENT)
-      expect(orderSampleSetEvents[0].args[0]).to.equal(params.orderSample)
-      expect(amountConverterSetEvents[0].args[0]).to.equal(params.amountConverter)
-      expect(tokenFromSetEvents[0].args[0]).to.equal(params.tokenFrom)
-      expect(tokenToSetEvents[0].args[0]).to.equal(params.tokenTo)
+      expect(managerSetEvents[0].args[0]).to.hexEqual(contracts.MANAGER)
+      expect(agentSetEvents[0].args[0]).to.hexEqual(contracts.AGENT)
+      expect(orderSampleSetEvents[0].args[0]).to.hexEqual(params.orderSample)
+      expect(amountConverterSetEvents[0].args[0]).to.hexEqual(params.amountConverter)
+      expect(tokenFromSetEvents[0].args[0]).to.hexEqual(params.tokenFrom)
+      expect(tokenToSetEvents[0].args[0]).to.hexEqual(params.tokenTo)
       expect(orderDurationInSecondsSetEvents[0].args[0]).to.equal(params.orderDurationInSeconds)
       expect(marginInBasisPointsSetEvents[0].args[0]).to.equal(params.marginInBasisPoints)
       expect(priceToleranceInBasisPointsSetEvents[0].args[0]).to.equal(params.priceToleranceInBasisPoints)
 
       const order = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
 
-      expect(await order.AGENT()).to.equal(contracts.AGENT)
-      expect(await order.RELAYER()).to.equal(contracts.VAULT_RELAYER)
+      expect(await order.AGENT()).to.hexEqual(contracts.AGENT)
+      expect(await order.RELAYER()).to.hexEqual(contracts.VAULT_RELAYER)
       expect(await order.DOMAIN_SEPARATOR()).to.equal(contracts.DOMAIN_SEPARATOR)
 
       const agentSetFilterOrder = order.filters['AgentSet(address)']
@@ -99,8 +100,8 @@ describe('Stonks: acceptance', async function () {
       expect(relayerSetEventsOrder.length).to.equal(1)
       expect(domainSeparatorSetEventsOrder.length).to.equal(1)
 
-      expect(agentSetEventsOrder[0].args[0]).to.equal(contracts.AGENT)
-      expect(relayerSetEventsOrder[0].args[0]).to.equal(contracts.VAULT_RELAYER)
+      expect(agentSetEventsOrder[0].args[0]).to.hexEqual(contracts.AGENT)
+      expect(relayerSetEventsOrder[0].args[0]).to.hexEqual(contracts.VAULT_RELAYER)
       expect(domainSeparatorSetEventsOrder[0].args[0]).to.equal(contracts.DOMAIN_SEPARATOR)
     })
   })

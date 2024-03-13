@@ -32,10 +32,10 @@ export const getPriceFeedTimeouts = async () => {
 
   if (['hardhat', 'mainnet', 'localhost'].includes(network.name)) {
     return [
-      3600, // STETH
-      3600, // DAI
-      86400, // USDT
-      86400, // USDC
+      3600n + 15n * 60n, // 1 hour 15 minutes for the stETH/USD feed
+      3600n + 15n * 60n, // 1 hour 15 minutes for the DAI/USD feed
+      24n * 3600n + 30n * 60n, // 24 hours 30 minutes for the USDC/USD feed
+      24n * 3600n + 30n * 60n, // 24 hours 30 minutes for the USDT/USD feed
     ]
   }
 
