@@ -32,7 +32,7 @@ contract Order is IERC1271, AssetRecoverer {
     bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
     uint256 private constant MIN_POSSIBLE_BALANCE = 10;
     uint256 private constant MAX_BASIS_POINTS = 10_000;
-    bytes32 private constant APP_DATA = keccak256("LIDO_DOES_STONKS");
+    bytes32 private constant APP_DATA = keccak256("{}");
 
     address public immutable RELAYER;
     bytes32 public immutable DOMAIN_SEPARATOR;
