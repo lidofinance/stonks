@@ -10,6 +10,7 @@ import {Order} from "./Order.sol";
 import {AssetRecoverer} from "./AssetRecoverer.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
 import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
+import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
 
 /**
  * @title Stonks Trading Management Contract
@@ -40,6 +41,15 @@ contract Stonks is IStonks, AssetRecoverer {
     uint256 public immutable MARGIN_IN_BASIS_POINTS;
     uint256 public immutable PRICE_TOLERANCE_IN_BASIS_POINTS;
 
+    // Router used for quotability checks
+    IOracleRouter public immutable ORACLE;
+
+    // Pair-profiled tolerance override (bps); 0 means "use global"
+    mapping(bytes32 pairId => uint256 toleranceBps) private pairToleranceBps;
+
+    // NEW: Pair-profiled margin override (bps); 0 means "use global"
+    mapping(bytes32 pairId => uint256 marginBps) private pairMarginBps;
+
     event AmountConverterSet(address amountConverter);
     event OrderSampleSet(address orderSample);
     event TokenFromSet(address tokenFrom);
@@ -48,6 +58,11 @@ contract Stonks is IStonks, AssetRecoverer {
     event MarginInBasisPointsSet(uint256 marginInBasisPoints);
     event PriceToleranceInBasisPointsSet(uint256 priceToleranceInBasisPoints);
     event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
+
+    event OracleRouterSet(address oracleRouter);
+    event PairPriceToleranceSet(address tokenFrom, address tokenTo, uint256 basisPoints);
+    // NEW
+    event PairMarginSet(address tokenFrom, address tokenTo, uint256 basisPoints);
 
     error InvalidManagerAddress(address manager);
     error InvalidTokenFromAddress(address tokenFrom);
@@ -60,6 +75,7 @@ contract Stonks is IStonks, AssetRecoverer {
     error PriceToleranceOverflowsAllowedLimit(uint256 limit, uint256 received);
     error MinimumPossibleBalanceNotMet(uint256 min, uint256 received);
     error InvalidAmount(uint256 amount);
+    error InvalidOracleRouterAddress(address oracleRouter);
 
     /**
      * @notice Initializes the Stonks contract with key trading parameters.
@@ -74,7 +90,8 @@ contract Stonks is IStonks, AssetRecoverer {
         address orderSample_,
         uint256 orderDurationInSeconds_,
         uint256 marginInBasisPoints_,
-        uint256 priceToleranceInBasisPoints_
+        uint256 priceToleranceInBasisPoints_,
+        address oracleRouter_
     ) AssetRecoverer(agent_) {
         if (manager_ == address(0)) revert InvalidManagerAddress(manager_);
         if (tokenFrom_ == address(0)) revert InvalidTokenFromAddress(tokenFrom_);
@@ -82,19 +99,25 @@ contract Stonks is IStonks, AssetRecoverer {
         if (tokenFrom_ == tokenTo_) revert TokensCannotBeSame();
         if (amountConverter_ == address(0)) revert InvalidAmountConverterAddress(amountConverter_);
         if (orderSample_ == address(0)) revert InvalidOrderSampleAddress(orderSample_);
+        if (oracleRouter_ == address(0)) revert InvalidOracleRouterAddress(oracleRouter_);
         if (
-            orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS
-                || orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS
+            orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS ||
+            orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS
         ) {
             revert InvalidOrderDuration(
-                MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS, MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS, orderDurationInSeconds_
+                MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS,
+                MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS,
+                orderDurationInSeconds_
             );
         }
         if (marginInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) {
             revert MarginOverflowsAllowedLimit(BASIS_POINTS_PARAMETERS_LIMIT, marginInBasisPoints_);
         }
         if (priceToleranceInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) {
-            revert PriceToleranceOverflowsAllowedLimit(BASIS_POINTS_PARAMETERS_LIMIT, priceToleranceInBasisPoints_);
+            revert PriceToleranceOverflowsAllowedLimit(
+                BASIS_POINTS_PARAMETERS_LIMIT,
+                priceToleranceInBasisPoints_
+            );
         }
 
         manager = manager_;
@@ -105,6 +128,7 @@ contract Stonks is IStonks, AssetRecoverer {
         ORDER_DURATION_IN_SECONDS = orderDurationInSeconds_;
         MARGIN_IN_BASIS_POINTS = marginInBasisPoints_;
         PRICE_TOLERANCE_IN_BASIS_POINTS = priceToleranceInBasisPoints_;
+        ORACLE = IOracleRouter(oracleRouter_);
 
         emit ManagerSet(manager_);
         emit AmountConverterSet(amountConverter_);
@@ -114,6 +138,7 @@ contract Stonks is IStonks, AssetRecoverer {
         emit OrderDurationInSecondsSet(orderDurationInSeconds_);
         emit MarginInBasisPointsSet(marginInBasisPoints_);
         emit PriceToleranceInBasisPointsSet(priceToleranceInBasisPoints_);
+        emit OracleRouterSet(oracleRouter_);
     }
 
     /**
@@ -128,7 +153,8 @@ contract Stonks is IStonks, AssetRecoverer {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
 
         // Prevents dust trades to avoid rounding issues for rebasable tokens like stETH.
-        if (balance < MIN_POSSIBLE_BALANCE) revert MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, balance);
+        if (balance < MIN_POSSIBLE_BALANCE)
+            revert MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, balance);
 
         Order orderCopy = Order(Clones.clone(ORDER_SAMPLE));
         IERC20(TOKEN_FROM).safeTransfer(address(orderCopy), balance);
@@ -156,11 +182,24 @@ contract Stonks is IStonks, AssetRecoverer {
      *               to handle market volatility.
      *      estimatedTradeOutput - expectedBuyAmount subtracted by the margin that is expected to be result of the trade.
      */
-    function estimateTradeOutput(uint256 amount_) public view returns (uint256 estimatedTradeOutput) {
+    function estimateTradeOutput(
+        uint256 amount_
+    ) public view returns (uint256 estimatedTradeOutput) {
         if (amount_ == 0) revert InvalidAmount(amount_);
 
-        uint256 expectedBuyAmount = IAmountConverter(AMOUNT_CONVERTER).getExpectedOut(TOKEN_FROM, TOKEN_TO, amount_);
-        estimatedTradeOutput = (expectedBuyAmount * (MAX_BASIS_POINTS - MARGIN_IN_BASIS_POINTS)) / MAX_BASIS_POINTS;
+        uint256 expectedBuyAmount = IAmountConverter(AMOUNT_CONVERTER).getExpectedOut(
+            TOKEN_FROM,
+            TOKEN_TO,
+            amount_
+        );
+
+        // Use pair-specific margin if set; fallback to global otherwise.
+        uint256 marginBpsLocal = pairMarginBps[keccak256(abi.encodePacked(TOKEN_FROM, TOKEN_TO))];
+        if (marginBpsLocal == 0) marginBpsLocal = MARGIN_IN_BASIS_POINTS;
+
+        estimatedTradeOutput =
+            (expectedBuyAmount * (MAX_BASIS_POINTS - marginBpsLocal)) /
+            MAX_BASIS_POINTS;
     }
 
     /**
@@ -189,5 +228,73 @@ contract Stonks is IStonks, AssetRecoverer {
      */
     function getPriceTolerance() external view returns (uint256) {
         return PRICE_TOLERANCE_IN_BASIS_POINTS;
+    }
+
+    /**
+     * @notice Asserts that a price path exists for the pair; used by Order to fail fast.
+     * @dev Reads via OracleRouter which reverts if a token is not configured or the bridge is missing.
+     * @param tokenFrom_ Input token address.
+     * @param tokenTo_ Output token address.
+     */
+    function assertQuotable(address tokenFrom_, address tokenTo_) external view {
+        ORACLE.getUsdPrices(tokenFrom_, tokenTo_); // reverts internally if unquotable
+    }
+
+    /**
+     * @notice Returns pair-profiled price tolerance in basis points for a specific pair.
+     * @dev Zero means "use global PRICE_TOLERANCE_IN_BASIS_POINTS" in Order.
+     * @param tokenFrom_ Input token address.
+     * @param tokenTo_ Output token address.
+     * @return Pair-specific tolerance in basis points or zero if unset.
+     */
+    function getPairPriceTolerance(
+        address tokenFrom_,
+        address tokenTo_
+    ) external view returns (uint256) {
+        bytes32 key = keccak256(abi.encodePacked(tokenFrom_, tokenTo_));
+        return pairToleranceBps[key];
+    }
+
+    /**
+     * @notice Sets pair-profiled price tolerance in basis points (0 clears override).
+     * @dev Bounded by BASIS_POINTS_PARAMETERS_LIMIT for parity with global tolerance setting.
+     * @param tokenFrom_ Input token address.
+     * @param tokenTo_ Output token address.
+     * @param toleranceBps_ New tolerance in basis points (0 to clear).
+     */
+    function setPairPriceTolerance(
+        address tokenFrom_,
+        address tokenTo_,
+        uint256 toleranceBps_
+    ) external onlyAgentOrManager {
+        if (toleranceBps_ > BASIS_POINTS_PARAMETERS_LIMIT) {
+            revert PriceToleranceOverflowsAllowedLimit(
+                BASIS_POINTS_PARAMETERS_LIMIT,
+                toleranceBps_
+            );
+        }
+        bytes32 key = keccak256(abi.encodePacked(tokenFrom_, tokenTo_));
+        pairToleranceBps[key] = toleranceBps_;
+        emit PairPriceToleranceSet(tokenFrom_, tokenTo_, toleranceBps_);
+    }
+
+    /**
+     * @notice Sets pair-profiled margin in basis points (0 clears override).
+     * @dev Bounded by BASIS_POINTS_PARAMETERS_LIMIT for parity with global margin setting.
+     * @param tokenFrom_ Input token address.
+     * @param tokenTo_ Output token address.
+     * @param marginBps_ New margin in basis points (0 to clear).
+     */
+    function setPairMargin(
+        address tokenFrom_,
+        address tokenTo_,
+        uint256 marginBps_
+    ) external onlyAgentOrManager {
+        if (marginBps_ > BASIS_POINTS_PARAMETERS_LIMIT) {
+            revert MarginOverflowsAllowedLimit(BASIS_POINTS_PARAMETERS_LIMIT, marginBps_);
+        }
+        bytes32 key = keccak256(abi.encodePacked(tokenFrom_, tokenTo_));
+        pairMarginBps[key] = marginBps_;
+        emit PairMarginSet(tokenFrom_, tokenTo_, marginBps_);
     }
 }

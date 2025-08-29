@@ -64,15 +64,12 @@ contract Order is IERC1271, AssetRecoverer {
      * @dev It also marks the contract as initialized to prevent unauthorized re-initialization.
      */
     constructor(address agent_, address relayer_, bytes32 domainSeparator_) AssetRecoverer(agent_) {
-        // Immutable variables are set at contract deployment and remain unchangeable thereafter.
-        // This ensures that even when creating new proxies via a minimal proxy,
-        // these variables retain their initial values assigned at the time of the original contract deployment.
+        // Immutable parameters are captured at deployment time. When used with minimal proxies,
+        // these retain values baked into the original implementation.
         RELAYER = relayer_;
         DOMAIN_SEPARATOR = domainSeparator_;
 
-        // This variable is stored in the contract's storage and will be overwritten
-        // when a new proxy is created via a minimal proxy. Currently, it is set to true
-        // to prevent any initialization of a transaction on 'sample' by unauthorized entities.
+        // Prevents accidental initialization on the implementation itself.
         initialized = true;
 
         emit RelayerSet(relayer_);
@@ -83,7 +80,7 @@ contract Order is IERC1271, AssetRecoverer {
      * @notice Initializes the contract for trading by defining order parameters and approving tokens.
      * @param minBuyAmount_ The minimum accepted trade outcome.
      * @param manager_ The manager's address to be set for the contract.
-     * @dev This function calculates the buy amount from ChainLink and manager input, sets the order parameters, and approves tokens for trading.
+     * @dev Pulls pair params from Stonks, asserts a quotable price path up front, computes amounts, and arms allowance.
      */
     function initialize(uint256 minBuyAmount_, address manager_) external {
         if (initialized) revert OrderAlreadyInitialized();
@@ -92,10 +89,16 @@ contract Order is IERC1271, AssetRecoverer {
         stonks = msg.sender;
         manager = manager_;
 
-        (address tokenFrom, address tokenTo, uint256 orderDurationInSeconds) = IStonks(stonks).getOrderParameters();
+        (address tokenFrom, address tokenTo, uint256 orderDurationInSeconds) = IStonks(stonks)
+            .getOrderParameters();
+
+        // Fail-fast if either side lacks a valid oracle route (prevents stranded approvals/funds).
+        IStonks(stonks).assertQuotable(tokenFrom, tokenTo);
 
         validTo = uint32(block.timestamp + orderDurationInSeconds);
         sellAmount = IERC20(tokenFrom).balanceOf(address(this));
+
+        // Floor for the CoW order; Stonks uses router-based any-to-any quoting.
         buyAmount = Math.max(IStonks(stonks).estimateTradeOutput(sellAmount), minBuyAmount_);
 
         GPv2Order.Data memory order = GPv2Order.Data({
@@ -106,8 +109,7 @@ contract Order is IERC1271, AssetRecoverer {
             buyAmount: buyAmount,
             validTo: validTo,
             appData: APP_DATA,
-            // Fee amount is set to 0 for creating limit order
-            // https://docs.cow.fi/tutorials/submit-limit-orders-via-api/general-overview
+            // Zero-fee → limit order semantics per CoW; solver pays gas via surplus.
             feeAmount: 0,
             kind: GPv2Order.KIND_SELL,
             partiallyFillable: false,
@@ -116,8 +118,7 @@ contract Order is IERC1271, AssetRecoverer {
         });
         orderHash = order.hash(DOMAIN_SEPARATOR);
 
-        // Approval is set to the maximum value of uint256 as the contract is intended for single-use only.
-        // This eliminates the need for subsequent approval calls, optimizing for gas efficiency in one-time transactions.
+        // Single-use proxy: set max approval to avoid a second transaction for allowance management.
         IERC20(tokenFrom).forceApprove(RELAYER, type(uint256).max);
 
         emit OrderCreated(address(this), orderHash, order);
@@ -130,40 +131,57 @@ contract Order is IERC1271, AssetRecoverer {
      * @dev Checks include:
      *      - Matching the provided hash with the stored order hash.
      *      - Confirming order validity within the specified timeframe (`validTo`).
-     *      - Computing and comparing expected purchase amounts with market price (provided by ChainLink).
-     *      - Checking that the price tolerance is not exceeded.
+     *      - Price floor enforcement with asymmetric tolerance.
      */
-    function isValidSignature(bytes32 hash_, bytes calldata) external view returns (bytes4 magicValue) {
+    function isValidSignature(
+        bytes32 hash_,
+        bytes calldata
+    ) external view returns (bytes4 magicValue) {
         if (hash_ != orderHash) revert InvalidOrderHash(orderHash, hash_);
         if (validTo < block.timestamp) revert OrderExpired(validTo);
 
-        /// The price tolerance mechanism is crucial for ensuring that the order remains valid only within a specific price range.
-        /// This is a safeguard against market volatility and drastic price changes, which could otherwise lead to unfavorable trades.
-        /// If the price deviates beyond the tolerance level, the order is invalidated to protect against executing a trade at an undesirable rate.
-        ///
-        /// |           buyAmount                 maxToleratedAmount        currentCalculatedBuyAmount
-        /// |  --------------*-----------------------------*-----------------------------*-----------------> amount
-        /// |                 <-------- tolerance -------->
-        /// |                 <-------------------- differenceAmount ------------------->
-        ///
-        /// where:
-        ///     buyAmount - amount received from the Stonks contract, which is the minimum accepted result amount of the trade.
-        ///     tolerance - the maximum accepted deviation of the buyAmount.
-        ///     currentCalculatedBuyAmount - the currently calculated purchase amount based on real-time market conditions taken from Stonks contract.
-        ///     differenceAmount - the difference between the buyAmount and the currentCalculatedBuyAmount.
-        ///     maxToleratedAmount - the maximum tolerated deviation of the purchase amount. Represents the threshold beyond which the order is
-        ///                          considered invalid due to excessive deviation from the expected purchase amount.
-
         uint256 currentCalculatedBuyAmount = IStonks(stonks).estimateTradeOutput(sellAmount);
 
-        if (currentCalculatedBuyAmount <= buyAmount) return ERC1271_MAGIC_VALUE;
+        // Favorable move: above the floor is always valid.
+        if (currentCalculatedBuyAmount >= buyAmount) return ERC1271_MAGIC_VALUE;
 
-        uint256 priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
-        uint256 differenceAmount = currentCalculatedBuyAmount - buyAmount;
-        uint256 maxToleratedAmountDeviation = buyAmount * priceToleranceInBasisPoints / MAX_BASIS_POINTS;
+        (address tokenFrom, address tokenTo, ) = IStonks(stonks).getOrderParameters();
 
-        if (differenceAmount > maxToleratedAmountDeviation) {
-            revert PriceConditionChanged(buyAmount + maxToleratedAmountDeviation, currentCalculatedBuyAmount);
+        // Pair-profiled tolerance; use global if pair returns 0 (unset).
+        uint256 priceToleranceInBasisPoints = IStonks(stonks).getPairPriceTolerance(
+            tokenFrom,
+            tokenTo
+        );
+        if (priceToleranceInBasisPoints == 0) {
+            priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
+        }
+        /// Price floor check (downside-only). We commit to a floor (`buyAmount`) and allow a small dip.
+        /// If the live quote stays above the allowed dip, accept; otherwise reject.
+        ///
+        /// Visual (buy-token units; not to scale):
+        ///
+        ///   minAcceptable                buyAmount
+        ///         |----------------------*------------------------------------> amount
+        ///         |<---- maxShortfall --->|
+        ///         |<- short ->|               currentCalculatedBuyAmount
+        ///                     |------*---------------------------------------->
+        ///
+        /// Terms:
+        ///   - minAcceptable: the lowest we’ll take after applying tolerance.
+        ///   - maxShortfall:  the allowed dip from the floor (tolerance in bps).
+        ///   - shortfall:     how far the live quote is below the floor.
+        ///
+        /// Rule: accept if currentCalculatedBuyAmount ≥ minAcceptable; otherwise revert.
+        uint256 shortfall = buyAmount - currentCalculatedBuyAmount;
+        uint256 maxToleratedShortfall = (buyAmount * priceToleranceInBasisPoints) /
+            MAX_BASIS_POINTS;
+
+        if (shortfall > maxToleratedShortfall) {
+            // `maxAcceptedAmount` denotes the minimum acceptable buy amount under tolerance.
+            revert PriceConditionChanged(
+                buyAmount - maxToleratedShortfall,
+                currentCalculatedBuyAmount
+            );
         }
 
         return ERC1271_MAGIC_VALUE;
@@ -190,7 +208,7 @@ contract Order is IERC1271, AssetRecoverer {
             uint32 validTo_
         )
     {
-        (address tokenFrom, address tokenTo,) = IStonks(stonks).getOrderParameters();
+        (address tokenFrom, address tokenTo, ) = IStonks(stonks).getOrderParameters();
         return (orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo);
     }
 
@@ -200,7 +218,7 @@ contract Order is IERC1271, AssetRecoverer {
      */
     function recoverTokenFrom() external {
         if (validTo >= block.timestamp) revert OrderNotExpired(validTo, block.timestamp);
-        (address tokenFrom,,) = IStonks(stonks).getOrderParameters();
+        (address tokenFrom, , ) = IStonks(stonks).getOrderParameters();
         uint256 balance = IERC20(tokenFrom).balanceOf(address(this));
         // Prevents dust transfers to avoid rounding issues for rebasable tokens like stETH.
         if (balance < MIN_POSSIBLE_BALANCE) revert InvalidAmountToRecover(balance);
@@ -214,7 +232,7 @@ contract Order is IERC1271, AssetRecoverer {
      * @dev Can only be called by the agent or manager of the contract. This is a safety feature to prevent accidental token loss.
      */
     function recoverERC20(address token_, uint256 amount_) public override onlyAgentOrManager {
-        (address tokenFrom,,) = IStonks(stonks).getOrderParameters();
+        (address tokenFrom, , ) = IStonks(stonks).getOrderParameters();
         if (token_ == tokenFrom) revert CannotRecoverTokenFrom(tokenFrom);
         AssetRecoverer.recoverERC20(token_, amount_);
     }

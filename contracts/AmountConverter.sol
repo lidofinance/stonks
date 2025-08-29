@@ -2,64 +2,48 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
-import {IFeedRegistry} from "./interfaces/IFeedRegistry.sol";
+import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
 
 /**
  * @title AmountConverter
- * @dev This contract provides functionality for converting the amount
- *      of Token A into the amount of Token B based on the Chainlink price feed.
+ * @dev Converts an amount of one token into another using OracleRouter’s USD-anchored prices.
+ *      No direct TOKEN/TOKEN feeds are queried here; the router handles TOKEN/USD or TOKEN/ETH→ETH/USD.
  */
 contract AmountConverter is IAmountConverter {
-    // Conversion targets: https://github.com/smartcontractkit/chainlink/blob/develop/contracts/src/v0.8/Denominations.sol
-    address public immutable CONVERSION_TARGET;
-    IFeedRegistry public immutable FEED_REGISTRY;
+    IOracleRouter public immutable ORACLE;
 
     mapping(address tokenToSell => bool allowed) public allowedTokensToSell;
     mapping(address tokenToBuy => bool allowed) public allowedTokensToBuy;
-    mapping(address tokenToSell => uint256 priceFeedTimeout) public priceFeedsHeartbeatTimeouts;
 
     event AllowedTokenToSellAdded(address tokenAddress);
     event AllowedTokenToBuyAdded(address tokenAddress);
-    event PriceFeedHeartbeatTimeoutSet(address tokenAddress, uint256 timeout);
 
-    error InvalidFeedRegistryAddress(address feedRegistryAddress);
-    error InvalidConversionTargetAddress(address conversionTargetAddress);
+    error InvalidOracleRouterAddress(address oracleRouterAddress);
     error InvalidAllowedTokenToBuy(address allowedTokenToBuy);
     error InvalidAllowedTokenToSell(address allowedTokenToSell);
     error InvalidAmount(uint256 amount);
-    error InvalidHeartbeatArrayLength();
     error InvalidTokensToSellArrayLength();
     error InvalidTokensToBuyArrayLength();
     error SellTokenNotAllowed(address tokenFrom);
     error BuyTokenNotAllowed(address tokenTo);
     error SameTokensConversion();
-    error UnexpectedPriceFeedAnswer();
-    error PriceFeedNotUpdated(uint256 updatedAt);
 
     /**
-     * @param feedRegistry_ Chainlink Price Feed Registry
-     * @param conversionTarget_ Target currency we expect to be equal to allowed tokens to buy
-     * @param allowedTokensToSell_ List of addresses which allowed to use as sell tokens
-     * @param allowedTokensToBuy_ List of addresses of tokens that we expect to be equal to conversionTarget
-     * @param priceFeedsHeartbeatTimeouts_ List of timeouts for price feeds (should be in sync by index with allowedTokensToSell_)
+     * @param oracleRouter_ OracleRouter used for USD-anchored pricing and cached decimals.
+     * @param allowedTokensToSell_ Addresses allowed as input tokens.
+     * @param allowedTokensToBuy_  Addresses allowed as output tokens.
      */
     constructor(
-        address feedRegistry_,
-        address conversionTarget_,
+        address oracleRouter_,
         address[] memory allowedTokensToSell_,
-        address[] memory allowedTokensToBuy_,
-        uint256[] memory priceFeedsHeartbeatTimeouts_
+        address[] memory allowedTokensToBuy_
     ) {
-        if (feedRegistry_ == address(0)) revert InvalidFeedRegistryAddress(feedRegistry_);
-        if (conversionTarget_ == address(0)) revert InvalidConversionTargetAddress(conversionTarget_);
+        if (oracleRouter_ == address(0)) revert InvalidOracleRouterAddress(oracleRouter_);
         if (allowedTokensToSell_.length == 0) revert InvalidTokensToSellArrayLength();
         if (allowedTokensToBuy_.length == 0) revert InvalidTokensToBuyArrayLength();
-        if (allowedTokensToSell_.length != priceFeedsHeartbeatTimeouts_.length) revert InvalidHeartbeatArrayLength();
 
-        FEED_REGISTRY = IFeedRegistry(feedRegistry_);
-        CONVERSION_TARGET = conversionTarget_;
+        ORACLE = IOracleRouter(oracleRouter_);
 
         for (uint256 i = 0; i < allowedTokensToBuy_.length; ++i) {
             if (allowedTokensToBuy_[i] == address(0)) revert InvalidAllowedTokenToBuy(allowedTokensToBuy_[i]);
@@ -69,62 +53,45 @@ contract AmountConverter is IAmountConverter {
 
         for (uint256 i = 0; i < allowedTokensToSell_.length; ++i) {
             if (allowedTokensToSell_[i] == address(0)) revert InvalidAllowedTokenToSell(allowedTokensToSell_[i]);
-            FEED_REGISTRY.getFeed(allowedTokensToSell_[i], conversionTarget_);
             allowedTokensToSell[allowedTokensToSell_[i]] = true;
-            priceFeedsHeartbeatTimeouts[allowedTokensToSell_[i]] = priceFeedsHeartbeatTimeouts_[i];
-
             emit AllowedTokenToSellAdded(allowedTokensToSell_[i]);
-            emit PriceFeedHeartbeatTimeoutSet(allowedTokensToSell_[i], priceFeedsHeartbeatTimeouts_[i]);
         }
     }
 
     /**
-     * @notice Calculates the expected amount of `tokenTo_` that one would receive for a given amount of `tokenFrom_`.
-     * @dev Uses the Chainlink Price Feed to get the current price relation of `tokenFrom_` to `CONVERSION_TARGET`
-     *      whose price is expected to be equal or close to equal to the `tokenFrom_`.
-     *
-     * @param tokenFrom_ The address of the token being sold.
-     * @param tokenTo_ The address of the token being bought.
-     * @param amountFrom_ The amount of `tokenFrom_` that is being sold.
-     * @return expectedOutputAmount The expected amount of `tokenTo_` that will be received.
+     * @notice Calculates the expected amount of `tokenTo_` received for `amountFrom_` of `tokenFrom_`.
+     * @dev Uses OracleRouter to fetch USD-anchored prices for both tokens in one call. The router may reuse
+     *      a single ETH/USD read when both sides are *\ETH. After price ratio, aligns token decimals via
+     *      cached decimals from the router.
+     * @param tokenFrom_ The token being sold.
+     * @param tokenTo_   The token being bought.
+     * @param amountFrom_ Amount of `tokenFrom_` being sold.
+     * @return expectedOutputAmount The expected amount of `tokenTo_` to receive.
      */
-    function getExpectedOut(address tokenFrom_, address tokenTo_, uint256 amountFrom_)
-        external
-        view
-        returns (uint256 expectedOutputAmount)
-    {
+    function getExpectedOut(
+        address tokenFrom_,
+        address tokenTo_,
+        uint256 amountFrom_
+    ) external view returns (uint256 expectedOutputAmount) {
         if (tokenFrom_ == tokenTo_) revert SameTokensConversion();
         if (allowedTokensToSell[tokenFrom_] == false) revert SellTokenNotAllowed(tokenFrom_);
         if (allowedTokensToBuy[tokenTo_] == false) revert BuyTokenNotAllowed(tokenTo_);
         if (amountFrom_ == 0) revert InvalidAmount(amountFrom_);
 
-        (uint256 currentPrice, uint256 feedDecimals) = _fetchPriceAndDecimals(tokenFrom_, CONVERSION_TARGET);
+        (uint256 priceFromUSD, uint256 priceToUSD) = ORACLE.getUsdPrices(tokenFrom_, tokenTo_);
+        (uint8 decimalsOfSellToken8, uint8 decimalsOfBuyToken8) = ORACLE.getTokenDecimals(tokenFrom_, tokenTo_);
 
-        uint256 decimalsOfSellToken = IERC20Metadata(tokenFrom_).decimals();
-        uint256 decimalsOfBuyToken = IERC20Metadata(tokenTo_).decimals();
+        uint256 decimalsOfSellToken = uint256(decimalsOfSellToken8);
+        uint256 decimalsOfBuyToken  = uint256(decimalsOfBuyToken8);
 
-        int256 effectiveDecimalDifference = int256(decimalsOfSellToken + feedDecimals) - int256(decimalsOfBuyToken);
+        int256 effectiveDecimalDifference = int256(decimalsOfSellToken) - int256(decimalsOfBuyToken);
+
+        uint256 raw = (amountFrom_ * priceFromUSD) / priceToUSD;
 
         if (effectiveDecimalDifference >= 0) {
-            expectedOutputAmount = (amountFrom_ * currentPrice) / 10 ** uint256(effectiveDecimalDifference);
+            expectedOutputAmount = raw / 10 ** uint256(effectiveDecimalDifference);
         } else {
-            expectedOutputAmount = (amountFrom_ * currentPrice) * 10 ** uint256(-effectiveDecimalDifference);
+            expectedOutputAmount = raw * 10 ** uint256(-effectiveDecimalDifference);
         }
-    }
-
-    /**
-     * @dev Internal function to get price relation of `tokenFrom_` to `tokenTo_` from Chainlink Price Feed Registry.
-     */
-    function _fetchPriceAndDecimals(address base_, address quote_)
-        internal
-        view
-        returns (uint256 price, uint256 decimals)
-    {
-        (, int256 intPrice,, uint256 updatedAt,) = FEED_REGISTRY.latestRoundData(base_, quote_);
-        if (intPrice <= 0) revert UnexpectedPriceFeedAnswer();
-        if (block.timestamp > updatedAt + priceFeedsHeartbeatTimeouts[base_]) revert PriceFeedNotUpdated(updatedAt);
-
-        price = uint256(intPrice);
-        decimals = FEED_REGISTRY.decimals(base_, quote_);
     }
 }
