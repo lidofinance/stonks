@@ -40,28 +40,15 @@ describe('AmountConverterFactory', function () {
   })
   describe('amount converter deployment:', async function () {
     it('should emit AmountConverterDeployed event with correct params at Stonks deploy', async function () {
-      const conversionTarget = contracts.CHAINLINK_USD_QUOTE
+      const signers = await ethers.getSigners()
+      const oracleRouter = signers[0].address
+
       const tokensFrom = [contracts.STETH]
       const tokensTo = [contracts.DAI]
-      const priceFeedsHeartbeatTimeouts = [3600]
 
-      await expect(
-        subject.deployAmountConverter(
-          conversionTarget,
-          tokensFrom,
-          tokensTo,
-          priceFeedsHeartbeatTimeouts
-        )
-      )
+      await expect(subject.deployAmountConverter(oracleRouter, tokensFrom, tokensTo))
         .to.emit(subject, 'AmountConverterDeployed')
-        .withArgs(
-          anyValue,
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          conversionTarget,
-          tokensFrom,
-          tokensTo,
-          priceFeedsHeartbeatTimeouts
-        )
+        .withArgs(anyValue, oracleRouter, tokensFrom, tokensTo)
     })
   })
 

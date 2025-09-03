@@ -3,6 +3,7 @@
 pragma solidity 0.8.23;
 
 interface IStonks {
+    function assertQuotable() external view;
     function getOrderParameters()
         external
         view

@@ -11,7 +11,7 @@ import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
  *      No direct TOKEN/TOKEN feeds are queried here; the router handles TOKEN/USD or TOKEN/ETH→ETH/USD.
  */
 contract AmountConverter is IAmountConverter {
-    IOracleRouter public immutable ORACLE;
+    IOracleRouter public immutable ORACLE_ROUTER;
 
     mapping(address tokenToSell => bool allowed) public allowedTokensToSell;
     mapping(address tokenToBuy => bool allowed) public allowedTokensToBuy;
@@ -43,16 +43,18 @@ contract AmountConverter is IAmountConverter {
         if (allowedTokensToSell_.length == 0) revert InvalidTokensToSellArrayLength();
         if (allowedTokensToBuy_.length == 0) revert InvalidTokensToBuyArrayLength();
 
-        ORACLE = IOracleRouter(oracleRouter_);
+        ORACLE_ROUTER = IOracleRouter(oracleRouter_);
 
         for (uint256 i = 0; i < allowedTokensToBuy_.length; ++i) {
-            if (allowedTokensToBuy_[i] == address(0)) revert InvalidAllowedTokenToBuy(allowedTokensToBuy_[i]);
+            if (allowedTokensToBuy_[i] == address(0))
+                revert InvalidAllowedTokenToBuy(allowedTokensToBuy_[i]);
             allowedTokensToBuy[allowedTokensToBuy_[i]] = true;
             emit AllowedTokenToBuyAdded(allowedTokensToBuy_[i]);
         }
 
         for (uint256 i = 0; i < allowedTokensToSell_.length; ++i) {
-            if (allowedTokensToSell_[i] == address(0)) revert InvalidAllowedTokenToSell(allowedTokensToSell_[i]);
+            if (allowedTokensToSell_[i] == address(0))
+                revert InvalidAllowedTokenToSell(allowedTokensToSell_[i]);
             allowedTokensToSell[allowedTokensToSell_[i]] = true;
             emit AllowedTokenToSellAdded(allowedTokensToSell_[i]);
         }
@@ -78,13 +80,20 @@ contract AmountConverter is IAmountConverter {
         if (allowedTokensToBuy[tokenTo_] == false) revert BuyTokenNotAllowed(tokenTo_);
         if (amountFrom_ == 0) revert InvalidAmount(amountFrom_);
 
-        (uint256 priceFromUSD, uint256 priceToUSD) = ORACLE.getUsdPrices(tokenFrom_, tokenTo_);
-        (uint8 decimalsOfSellToken8, uint8 decimalsOfBuyToken8) = ORACLE.getTokenDecimals(tokenFrom_, tokenTo_);
+        (uint256 priceFromUSD, uint256 priceToUSD) = ORACLE_ROUTER.getUsdPrices(
+            tokenFrom_,
+            tokenTo_
+        );
+        (uint8 decimalsOfSellToken8, uint8 decimalsOfBuyToken8) = ORACLE_ROUTER.getTokenDecimals(
+            tokenFrom_,
+            tokenTo_
+        );
 
         uint256 decimalsOfSellToken = uint256(decimalsOfSellToken8);
-        uint256 decimalsOfBuyToken  = uint256(decimalsOfBuyToken8);
+        uint256 decimalsOfBuyToken = uint256(decimalsOfBuyToken8);
 
-        int256 effectiveDecimalDifference = int256(decimalsOfSellToken) - int256(decimalsOfBuyToken);
+        int256 effectiveDecimalDifference = int256(decimalsOfSellToken) -
+            int256(decimalsOfBuyToken);
 
         uint256 raw = (amountFrom_ * priceFromUSD) / priceToUSD;
 

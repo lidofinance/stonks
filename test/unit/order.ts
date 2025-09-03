@@ -7,7 +7,14 @@ import {
   time,
   mine,
 } from '@nomicfoundation/hardhat-network-helpers'
-import { Order, Stonks, HashHelper, AmountConverterTest } from '../../typechain-types'
+import {
+  Order,
+  Stonks,
+  HashHelper,
+  AmountConverterTest,
+  OracleRouter,
+  OracleRouter__factory,
+} from '../../typechain-types'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { getContracts } from '../../utils/contracts'
 import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
@@ -25,6 +32,7 @@ describe('Order', async function () {
   let stonks: Stonks
   let hashHelper: HashHelper
   let amountConverterTest: AmountConverterTest
+  let oracleRouter: OracleRouter
   let snapshot: SnapshotRestorer
   let subject: Order
   let orderHash: string
@@ -36,42 +44,81 @@ describe('Order', async function () {
     manager = (await ethers.getSigners())[0]
 
     const amountConverterTestFactory = await ethers.getContractFactory('AmountConverterTest')
-    amountConverterTest = await amountConverterTestFactory.deploy(
+
+    const oracleRouterFactory = (await ethers.getContractFactory(
+      'OracleRouter'
+    )) as OracleRouter__factory
+    oracleRouter = await oracleRouterFactory.deploy(contracts.AGENT, 18)
+    await oracleRouter.waitForDeployment()
+
+    const registryIface = new ethers.Interface([
+      'function getFeed(address,address) view returns (address)',
+    ])
+    const registry = new ethers.Contract(
       contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-      contracts.CHAINLINK_USD_QUOTE,
+      registryIface,
+      manager
+    )
+    const getFeed = (base: string, quote: string) =>
+      registry.getFunction('getFeed').staticCall(base, quote)
+
+    const erc20Iface = new ethers.Interface(['function decimals() view returns (uint8)'])
+    const readDecimals = async (token: string) => {
+      const c = new ethers.Contract(token, erc20Iface, manager)
+      return c.getFunction('decimals').staticCall()
+    }
+
+    await oracleRouter.setEthUsdBridge(
+      await getFeed(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE),
+      86_400
+    )
+    await oracleRouter.setTokenUsdFeed(
+      contracts.STETH,
+      await getFeed(contracts.STETH, contracts.CHAINLINK_USD_QUOTE),
+      86_400,
+      await readDecimals(contracts.STETH),
+      true
+    )
+    await oracleRouter.setTokenUsdFeed(
+      contracts.DAI,
+      await getFeed(contracts.DAI, contracts.CHAINLINK_USD_QUOTE),
+      86_400,
+      await readDecimals(contracts.DAI),
+      true
+    )
+
+    amountConverterTest = await amountConverterTestFactory.deploy(
+      await oracleRouter.getAddress(),
       [contracts.STETH],
-      [contracts.DAI],
-      [3600]
+      [contracts.DAI]
     )
     await amountConverterTest.waitForDeployment()
 
-    const { stonks: stonksInstance, amountConverter: amountConverterInstance } = await deployStonks(
-      {
-        factoryParams: {
-          agent: contracts.AGENT,
-          relayer: contracts.VAULT_RELAYER,
-          settlement: contracts.SETTLEMENT,
-          priceFeedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-        },
-        stonksParams: {
-          tokenFrom: contracts.STETH,
-          tokenTo: contracts.DAI,
-          manager: await manager.getAddress(),
-          marginInBps: marginInBps,
-          orderDuration: 3600,
-          priceToleranceInBps: PRICE_TOLERANCE_IN_BP,
-          amountConverterAddress: await amountConverterTest.getAddress(),
-        },
-        amountConverterParams: {
-          conversionTarget: contracts.CHAINLINK_USD_QUOTE, // USD
-          allowedTokensToSell: [contracts.STETH],
-          allowedStableTokensToBuy: [contracts.DAI],
-          priceFeedsHeartbeatTimeouts: [3600],
-        },
-      }
-    )
-    const HashHelperFactory = await ethers.getContractFactory('HashHelper')
+    const { stonks: stonksInstance } = await deployStonks({
+      factoryParams: {
+        agent: contracts.AGENT,
+        relayer: contracts.VAULT_RELAYER,
+        settlement: contracts.SETTLEMENT,
+        priceFeedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+      },
+      stonksParams: {
+        tokenFrom: contracts.STETH,
+        tokenTo: contracts.DAI,
+        manager: await manager.getAddress(),
+        marginInBps: marginInBps,
+        orderDuration: 3600,
+        priceToleranceInBps: PRICE_TOLERANCE_IN_BP,
+        amountConverterAddress: await amountConverterTest.getAddress(),
+        oracleRouterAddress: await oracleRouter.getAddress(),
+      },
+      amountConverterParams: {
+        oracleRouter: await oracleRouter.getAddress(),
+        allowedTokensToSell: [contracts.STETH],
+        allowedStableTokensToBuy: [contracts.DAI],
+      },
+    })
 
+    const HashHelperFactory = await ethers.getContractFactory('HashHelper')
     hashHelper = await HashHelperFactory.deploy()
     await hashHelper.waitForDeployment()
 
@@ -84,9 +131,9 @@ describe('Order', async function () {
     })
 
     expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
+
     const placeOrderTx = await stonks.placeOrder(expectedBuyAmount)
     const placeOrderTxReceipt = await placeOrderTx.wait()
-
     if (!placeOrderTxReceipt) throw Error('placeOrderTxReceipt is null')
 
     const decodedOrderTx = await getPlaceOrderData(placeOrderTxReceipt)

@@ -15,11 +15,9 @@ contract AmountConverterFactory {
     event FeedRegistrySet(address feedRegistry);
     event AmountConverterDeployed(
         address indexed amountConverterAddress,
-        address feedRegistryAddress,
-        address conversionTarget,
+        address oracleRouter,
         address[] allowedTokensToSell,
-        address[] allowedStableTokensToBuy,
-        uint256[] priceFeedsHeartbeatTimeouts
+        address[] allowedStableTokensToBuy
     );
 
     error InvalidFeedRegistryAddress(address feedRegistry);
@@ -36,34 +34,24 @@ contract AmountConverterFactory {
 
     /**
      * @notice Deploys a new AmountConverter contract with specified parameters
-     * @param conversionTarget_ The target currency for conversions
+     * @param oracleRouter_ The address of the OracleRouter contract
      * @param allowedTokensToSell_ Array of addresses of tokens allowed to be sold
      * @param allowedStableTokensToBuy_ Array of addresses of stable tokens allowed to be bought
-     * @param priceFeedsHeartbeatTimeouts_ Array of timeouts for the price feeds
      * @return tokenAmountConverter The address of the newly deployed AmountConverter contract
      */
     function deployAmountConverter(
-        address conversionTarget_,
+        address oracleRouter_,
         address[] memory allowedTokensToSell_,
-        address[] memory allowedStableTokensToBuy_,
-        uint256[] memory priceFeedsHeartbeatTimeouts_
+        address[] memory allowedStableTokensToBuy_
     ) public returns (address tokenAmountConverter) {
         tokenAmountConverter = address(
-            new AmountConverter(
-                FEED_REGISTRY,
-                conversionTarget_,
-                allowedTokensToSell_,
-                allowedStableTokensToBuy_,
-                priceFeedsHeartbeatTimeouts_
-            )
+            new AmountConverter(FEED_REGISTRY, allowedTokensToSell_, allowedStableTokensToBuy_)
         );
         emit AmountConverterDeployed(
             tokenAmountConverter,
-            FEED_REGISTRY,
-            conversionTarget_,
+            oracleRouter_,
             allowedTokensToSell_,
-            allowedStableTokensToBuy_,
-            priceFeedsHeartbeatTimeouts_
+            allowedStableTokensToBuy_
         );
     }
 }

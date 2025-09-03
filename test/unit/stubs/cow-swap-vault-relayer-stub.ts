@@ -17,6 +17,7 @@ import {
   CoWSwapVaultRelayerStub__factory,
   ChainlinkFeedRegistryStub__factory,
   CoWSwapSettlementStub__factory,
+  OracleRouter__factory,
 } from '../../../typechain-types'
 import { OrderCreatedEvent } from '../../../typechain-types/contracts/Order'
 
@@ -61,12 +62,12 @@ describe('CoWSwapVaultRelayerStub', async () => {
 
     const amountConverter = await new AmountConverter__factory(deployer).deploy(
       feedRegistry,
-      contracts.CHAINLINK_USD_QUOTE,
       [contracts.STETH],
-      [contracts.DAI],
-      [24 * 3600]
+      [contracts.DAI]
     )
     await amountConverter.waitForDeployment()
+    const oracleRouter = await new OracleRouter__factory(deployer).deploy(contracts.AGENT, 18)
+    await oracleRouter.waitForDeployment()
 
     const orderSample = await new Order__factory(deployer).deploy(
       contracts.AGENT,
@@ -82,6 +83,7 @@ describe('CoWSwapVaultRelayerStub', async () => {
       contracts.DAI,
       amountConverter,
       orderSample,
+      oracleRouter,
       3600,
       1_00,
       50

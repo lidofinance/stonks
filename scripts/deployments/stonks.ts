@@ -2,11 +2,8 @@ import { ethers } from 'hardhat'
 
 import { deployStonksFactory } from './stonks-factory'
 import { deployAmountConverterFactory } from './amount-converter-factory'
-import {
-  getStonksDeployment,
-  getTokenConverterDeployment,
-} from '../../utils/get-events'
-import { AmountConverter, Stonks } from '../../typechain-types'
+import { getStonksDeployment, getTokenConverterDeployment } from '../../utils/get-events'
+import { AmountConverter, Stonks, OracleRouter, OracleRouter__factory } from '../../typechain-types'
 
 export type DeployStonksParams = {
   factoryParams: {
@@ -23,12 +20,12 @@ export type DeployStonksParams = {
     marginInBps: number
     priceToleranceInBps: number
     amountConverterAddress?: string
+    oracleRouterAddress?: string
   }
   amountConverterParams: {
-    conversionTarget: string
+    oracleRouter: string
     allowedTokensToSell: string[]
     allowedStableTokensToBuy: string[]
-    priceFeedsHeartbeatTimeouts: number[]
   }
 }
 type ReturnType = {
@@ -43,40 +40,30 @@ export async function deployStonks({
     tokenFrom,
     tokenTo,
     amountConverterAddress,
+    oracleRouterAddress,
     orderDuration,
     marginInBps,
     priceToleranceInBps,
   },
   amountConverterParams,
 }: DeployStonksParams): Promise<ReturnType> {
-  const { stonksFactory } = await deployStonksFactory(
-    agent,
-    settlement,
-    relayer
-  )
+  const { stonksFactory } = await deployStonksFactory(agent, settlement, relayer)
 
   let amountConverter: AmountConverter | undefined
-  if (amountConverterAddress) {
-    amountConverter = await ethers.getContractAt(
-      'AmountConverter',
-      amountConverterAddress
-    )
+  let oracleRouter: OracleRouter | undefined
+
+  if (amountConverterAddress && oracleRouterAddress) {
+    amountConverter = await ethers.getContractAt('AmountConverter', amountConverterAddress)
+    // If amountConverter is provided, we still need to get the oracleRouter from it
+    oracleRouter = await ethers.getContractAt('OracleRouter', oracleRouterAddress)
   } else if (amountConverterParams) {
-    const { amountConverterFactory } =
-      await deployAmountConverterFactory(priceFeedRegistry)
-    const {
+    const { amountConverterFactory } = await deployAmountConverterFactory(priceFeedRegistry)
+    const { oracleRouter, allowedTokensToSell, allowedStableTokensToBuy } = amountConverterParams
+    const deployTokenConverterTX = await amountConverterFactory.deployAmountConverter(
+      oracleRouter,
       allowedTokensToSell,
-      allowedStableTokensToBuy,
-      conversionTarget,
-      priceFeedsHeartbeatTimeouts,
-    } = amountConverterParams
-    const deployTokenConverterTX =
-      await amountConverterFactory.deployAmountConverter(
-        conversionTarget,
-        allowedTokensToSell,
-        allowedStableTokensToBuy,
-        priceFeedsHeartbeatTimeouts
-      )
+      allowedStableTokensToBuy
+    )
     const receipt = await deployTokenConverterTX.wait()
 
     if (!receipt) throw new Error('No transaction receipt')
@@ -86,12 +73,14 @@ export async function deployStonks({
   } else {
     throw new Error()
   }
+  console.log('Oracle Router Address: ', amountConverterParams.oracleRouter)
 
   const deployStonksTx = await stonksFactory.deployStonks(
     manager,
     tokenFrom,
     tokenTo,
     await amountConverter.getAddress(),
+    amountConverterParams.oracleRouter,
     orderDuration,
     marginInBps,
     priceToleranceInBps

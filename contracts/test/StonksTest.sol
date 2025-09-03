@@ -14,7 +14,8 @@ contract StonksTest is Stonks {
         address orderSample_,
         uint256 orderDurationInSeconds_,
         uint256 marginInBasisPoints_,
-        uint256 priceToleranceInBasisPoints_
+        uint256 priceToleranceInBasisPoints_,
+        address oracleRouter_
     )
         Stonks(
             agent_,
@@ -23,6 +24,7 @@ contract StonksTest is Stonks {
             tokenTo_,
             amountConverter_,
             orderSample_,
+            oracleRouter_,
             orderDurationInSeconds_,
             marginInBasisPoints_,
             priceToleranceInBasisPoints_

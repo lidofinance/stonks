@@ -12,18 +12,14 @@ contract AmountConverterTest {
     uint256 public multiplierInBP = 10_000;
 
     constructor(
-        address feedRegistry_,
-        address conversionTarget_,
+        address oracleRouter_,
         address[] memory allowedTokensToSell_,
-        address[] memory allowedTokensToBuy_,
-        uint256[] memory priceFeedsHeartbeatTimeouts_
+        address[] memory allowedTokensToBuy_
     ) {
         amountConverter = new AmountConverter(
-            feedRegistry_,
-            conversionTarget_,
+            oracleRouter_,
             allowedTokensToSell_,
-            allowedTokensToBuy_,
-            priceFeedsHeartbeatTimeouts_
+            allowedTokensToBuy_
         );
     }
 
@@ -34,7 +30,12 @@ contract AmountConverterTest {
         multiplierInBP = multiplierInBP_;
     }
 
-    function getExpectedOut(address tokenFrom, address tokenTo, uint256 amount) external view returns (uint256) {
-        return amountConverter.getExpectedOut(tokenFrom, tokenTo, amount) * multiplierInBP / 10_000;
+    function getExpectedOut(
+        address tokenFrom,
+        address tokenTo,
+        uint256 amount
+    ) external view returns (uint256) {
+        return
+            (amountConverter.getExpectedOut(tokenFrom, tokenTo, amount) * multiplierInBP) / 10_000;
     }
 }

@@ -9,6 +9,8 @@ import {
   AssetRecovererTest__factory,
   Stonks,
   Stonks__factory,
+  OracleRouter,
+  OracleRouter__factory,
 } from '../../typechain-types'
 import { getContracts } from '../../utils/contracts'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
@@ -22,6 +24,7 @@ describe('Stonks', function () {
   let subject: Stonks
   let subjectTokenConverter: AmountConverter
   let snapshot: SnapshotRestorer
+  let oracleRouter: OracleRouter
 
   const amount = ethers.parseEther('1')
   const marginInBps = 100
@@ -37,6 +40,10 @@ describe('Stonks', function () {
     ContractFactory = await ethers.getContractFactory('Stonks')
     AssetRecovererFactory = await ethers.getContractFactory('AssetRecovererTest')
     managerAddress = await signer.getAddress()
+    const oracleRouterFactory = (await ethers.getContractFactory(
+      'OracleRouter'
+    )) as OracleRouter__factory
+    oracleRouter = await oracleRouterFactory.deploy(contracts.AGENT, 18)
 
     const { stonks, amountConverter: tokenConverter } = await deployStonks({
       factoryParams: {
@@ -54,10 +61,9 @@ describe('Stonks', function () {
         priceToleranceInBps: 100,
       },
       amountConverterParams: {
-        conversionTarget: '0x0000000000000000000000000000000000000348', // USD
+        oracleRouter: await oracleRouter.getAddress(),
         allowedTokensToSell: [contracts.STETH],
         allowedStableTokensToBuy: [contracts.DAI],
-        priceFeedsHeartbeatTimeouts: [3600],
       },
     })
 
@@ -76,12 +82,20 @@ describe('Stonks', function () {
       tokenTo: ContractFactory[3]
       amountConverter: ContractFactory[4]
       orderSample: ContractFactory[5]
-      orderDurationInSeconds: ContractFactory[6]
-      marginInBasisPoints: ContractFactory[7]
-      priceToleranceInBasisPoints: ContractFactory[8]
+      oracleRouter: ContractFactory[6]
+      orderDurationInSeconds: ContractFactory[7]
+      marginInBasisPoints: ContractFactory[9]
+      priceToleranceInBasisPoints: ContractFactory[9]
     }
 
     this.beforeAll(async function () {
+      const oracleRouterFactory = (await ethers.getContractFactory(
+        'OracleRouter'
+      )) as OracleRouter__factory
+      const oracleRouter = await (
+        await oracleRouterFactory.deploy(contracts.AGENT, 18)
+      ).getAddress()
+
       validParams = {
         agent: contracts.AGENT,
         manager: managerAddress,
@@ -92,6 +106,7 @@ describe('Stonks', function () {
         orderDurationInSeconds: 60,
         marginInBasisPoints: 1000,
         priceToleranceInBasisPoints: 999,
+        oracleRouter,
       } as const
     })
 
@@ -103,6 +118,7 @@ describe('Stonks', function () {
         validParams.tokenTo,
         validParams.amountConverter,
         validParams.orderSample,
+        validParams.oracleRouter,
         validParams.orderDurationInSeconds,
         validParams.marginInBasisPoints,
         validParams.priceToleranceInBasisPoints
@@ -125,6 +141,7 @@ describe('Stonks', function () {
         validParams.tokenTo,
         validParams.amountConverter,
         validParams.orderSample,
+        validParams.oracleRouter,
         validParams.orderDurationInSeconds,
         validParams.marginInBasisPoints,
         validParams.priceToleranceInBasisPoints
@@ -158,6 +175,7 @@ describe('Stonks', function () {
           validParams.tokenTo,
           validParams.amountConverter,
           validParams.orderSample,
+          validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
@@ -175,6 +193,7 @@ describe('Stonks', function () {
           validParams.tokenTo,
           validParams.amountConverter,
           validParams.orderSample,
+          validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
@@ -192,6 +211,7 @@ describe('Stonks', function () {
           validParams.tokenTo,
           validParams.amountConverter,
           validParams.orderSample,
+          validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
@@ -209,6 +229,7 @@ describe('Stonks', function () {
           ethers.ZeroAddress,
           validParams.amountConverter,
           validParams.orderSample,
+          validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
@@ -226,6 +247,7 @@ describe('Stonks', function () {
           contracts.STETH,
           validParams.amountConverter,
           validParams.orderSample,
+          validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
@@ -241,6 +263,7 @@ describe('Stonks', function () {
           validParams.tokenTo,
           ethers.ZeroAddress,
           validParams.orderSample,
+          validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
@@ -258,6 +281,7 @@ describe('Stonks', function () {
           validParams.tokenTo,
           validParams.amountConverter,
           ethers.ZeroAddress,
+          validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
@@ -275,6 +299,7 @@ describe('Stonks', function () {
           validParams.tokenTo,
           validParams.amountConverter,
           validParams.orderSample,
+          validParams.oracleRouter,
           59,
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
@@ -292,6 +317,7 @@ describe('Stonks', function () {
           validParams.tokenTo,
           validParams.amountConverter,
           validParams.orderSample,
+          validParams.oracleRouter,
           60 * 60 * 24 + 1,
           validParams.marginInBasisPoints,
           validParams.priceToleranceInBasisPoints
@@ -309,6 +335,7 @@ describe('Stonks', function () {
           validParams.tokenTo,
           validParams.amountConverter,
           validParams.orderSample,
+          validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           1001,
           validParams.priceToleranceInBasisPoints
@@ -326,6 +353,7 @@ describe('Stonks', function () {
           validParams.tokenTo,
           validParams.amountConverter,
           validParams.orderSample,
+          validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
           1001
@@ -333,6 +361,24 @@ describe('Stonks', function () {
       )
         .to.be.revertedWithCustomError(ContractFactory, 'PriceToleranceOverflowsAllowedLimit')
         .withArgs(1000, 1001)
+    })
+    it('should not initialize with oracleRouter zero address', async function () {
+      await expect(
+        ContractFactory.deploy(
+          validParams.agent,
+          validParams.manager,
+          validParams.tokenFrom,
+          validParams.tokenTo,
+          validParams.amountConverter,
+          validParams.orderSample,
+          ethers.ZeroAddress,
+          validParams.orderDurationInSeconds,
+          validParams.marginInBasisPoints,
+          validParams.priceToleranceInBasisPoints
+        )
+      )
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidOracleRouterAddress')
+        .withArgs(ethers.ZeroAddress)
     })
   })
 

@@ -3,6 +3,7 @@ import { network, ethers } from 'hardhat'
 export type Contracts = {
   CHAINLINK_PRICE_FEED_REGISTRY: string
   CHAINLINK_USD_QUOTE: string
+  CHAINLINK_ETH_QUOTE: string
   STETH: string
   DAI: string
   USDT: string
@@ -19,6 +20,7 @@ export const mainnet: Contracts = {
   CHAINLINK_PRICE_FEED_REGISTRY: '0x47Fb2585D2C56Fe188D0E6ec628a38b74fCeeeDf',
   // Conversion targets: https://github.com/smartcontractkit/chainlink/blob/develop/contracts/src/v0.8/Denominations.sol
   CHAINLINK_USD_QUOTE: '0x0000000000000000000000000000000000000348',
+  CHAINLINK_ETH_QUOTE: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
   STETH: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84',
   DAI: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
   USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
@@ -34,6 +36,7 @@ export const mainnet: Contracts = {
 export const holesky: Contracts = {
   AGENT: '0xE92329EC7ddB11D25e25b3c21eeBf11f15eB325d',
   CHAINLINK_USD_QUOTE: '0x0000000000000000000000000000000000000348',
+  CHAINLINK_ETH_QUOTE: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
   LDO: '0x14ae7daeecdf57034f3E9db8564e46Dba8D97344',
   STETH: '0x3F1c547b21f65e10480dE3ad8E19fAAC46C95034',
   DAI: '0x2eb8e9198e647f80ccf62a5e291bcd4a5a3ca68c',

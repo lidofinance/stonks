@@ -93,7 +93,7 @@ contract Order is IERC1271, AssetRecoverer {
             .getOrderParameters();
 
         // Fail-fast if either side lacks a valid oracle route (prevents stranded approvals/funds).
-        IStonks(stonks).assertQuotable(tokenFrom, tokenTo);
+        IStonks(stonks).assertQuotable();
 
         validTo = uint32(block.timestamp + orderDurationInSeconds);
         sellAmount = IERC20(tokenFrom).balanceOf(address(this));
@@ -145,13 +145,9 @@ contract Order is IERC1271, AssetRecoverer {
         // Favorable move: above the floor is always valid.
         if (currentCalculatedBuyAmount >= buyAmount) return ERC1271_MAGIC_VALUE;
 
-        (address tokenFrom, address tokenTo, ) = IStonks(stonks).getOrderParameters();
-
         // Pair-profiled tolerance; use global if pair returns 0 (unset).
-        uint256 priceToleranceInBasisPoints = IStonks(stonks).getPairPriceTolerance(
-            tokenFrom,
-            tokenTo
-        );
+        uint256 priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
+
         if (priceToleranceInBasisPoints == 0) {
             priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
         }

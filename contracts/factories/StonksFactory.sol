@@ -25,6 +25,7 @@ contract StonksFactory {
         address tokenTo,
         address amountConverter,
         address order,
+        address oracleRouter,
         uint256 orderDurationInSeconds,
         uint256 marginInBasisPoints,
         uint256 priceToleranceInBasisPoints
@@ -45,7 +46,9 @@ contract StonksFactory {
         if (settlement_ == address(0)) revert InvalidSettlementAddress(settlement_);
 
         AGENT = agent_;
-        ORDER_SAMPLE = address(new Order(agent_, relayer_, ICoWSwapSettlement(settlement_).domainSeparator()));
+        ORDER_SAMPLE = address(
+            new Order(agent_, relayer_, ICoWSwapSettlement(settlement_).domainSeparator())
+        );
 
         emit AgentSet(agent_);
         emit OrderSampleDeployed(ORDER_SAMPLE);
@@ -57,6 +60,7 @@ contract StonksFactory {
      * @param tokenFrom_ Address of the token to be sold
      * @param tokenTo_ Address of the token to be bought
      * @param amountConverter_ Address of the amount converter contract
+     * @param oracleRouter_ Address of the oracle router contract
      * @param orderDurationInSeconds_ Duration of the order in seconds
      * @param marginInBasisPoints_ Margin represented in basis points
      * @param priceToleranceInBasisPoints_ Price tolerance in basis points
@@ -67,6 +71,7 @@ contract StonksFactory {
         address tokenFrom_,
         address tokenTo_,
         address amountConverter_,
+        address oracleRouter_,
         uint256 orderDurationInSeconds_,
         uint256 marginInBasisPoints_,
         uint256 priceToleranceInBasisPoints_
@@ -75,10 +80,11 @@ contract StonksFactory {
             new Stonks(
                 AGENT,
                 manager_,
-                tokenFrom_, 
+                tokenFrom_,
                 tokenTo_,
                 amountConverter_,
                 ORDER_SAMPLE,
+                oracleRouter_,
                 orderDurationInSeconds_,
                 marginInBasisPoints_,
                 priceToleranceInBasisPoints_
@@ -92,6 +98,7 @@ contract StonksFactory {
             tokenTo_,
             amountConverter_,
             ORDER_SAMPLE,
+            oracleRouter_,
             orderDurationInSeconds_,
             marginInBasisPoints_,
             priceToleranceInBasisPoints_

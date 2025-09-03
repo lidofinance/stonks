@@ -50,7 +50,8 @@ describe('Stonks: acceptance', async function () {
       const tokenToSetFilter = stonks.filters['TokenToSet(address)']
       const orderDurationInSecondsSetFilter = stonks.filters['OrderDurationInSecondsSet(uint256)']
       const marginInBasisPointsSetFilter = stonks.filters['MarginInBasisPointsSet(uint256)']
-      const priceToleranceInBasisPointsSetFilter = stonks.filters['PriceToleranceInBasisPointsSet(uint256)']
+      const priceToleranceInBasisPointsSetFilter =
+        stonks.filters['PriceToleranceInBasisPointsSet(uint256)']
 
       const managerSetEvents = await stonks.queryFilter(managerSetFilter)
       const agentSetEvents = await stonks.queryFilter(agentSetFilter)
@@ -58,9 +59,13 @@ describe('Stonks: acceptance', async function () {
       const amountConverterSetEvents = await stonks.queryFilter(amountConverterSetFilter)
       const tokenFromSetEvents = await stonks.queryFilter(tokenFromSetFilter)
       const tokenToSetEvents = await stonks.queryFilter(tokenToSetFilter)
-      const orderDurationInSecondsSetEvents = await stonks.queryFilter(orderDurationInSecondsSetFilter)
+      const orderDurationInSecondsSetEvents = await stonks.queryFilter(
+        orderDurationInSecondsSetFilter
+      )
       const marginInBasisPointsSetEvents = await stonks.queryFilter(marginInBasisPointsSetFilter)
-      const priceToleranceInBasisPointsSetEvents = await stonks.queryFilter(priceToleranceInBasisPointsSetFilter)
+      const priceToleranceInBasisPointsSetEvents = await stonks.queryFilter(
+        priceToleranceInBasisPointsSetFilter
+      )
 
       expect(managerSetEvents.length).to.equal(1)
       expect(agentSetEvents.length).to.equal(1)
@@ -71,7 +76,7 @@ describe('Stonks: acceptance', async function () {
       expect(orderDurationInSecondsSetEvents.length).to.equal(1)
       expect(marginInBasisPointsSetEvents.length).to.equal(1)
       expect(priceToleranceInBasisPointsSetEvents.length).to.equal(1)
-        
+
       expect(managerSetEvents[0].args[0]).to.hexEqual(contracts.MANAGER)
       expect(agentSetEvents[0].args[0]).to.hexEqual(contracts.AGENT)
       expect(orderSampleSetEvents[0].args[0]).to.hexEqual(params.orderSample)
@@ -80,7 +85,9 @@ describe('Stonks: acceptance', async function () {
       expect(tokenToSetEvents[0].args[0]).to.hexEqual(params.tokenTo)
       expect(orderDurationInSecondsSetEvents[0].args[0]).to.equal(params.orderDurationInSeconds)
       expect(marginInBasisPointsSetEvents[0].args[0]).to.equal(params.marginInBasisPoints)
-      expect(priceToleranceInBasisPointsSetEvents[0].args[0]).to.equal(params.priceToleranceInBasisPoints)
+      expect(priceToleranceInBasisPointsSetEvents[0].args[0]).to.equal(
+        params.priceToleranceInBasisPoints
+      )
 
       const order = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
 

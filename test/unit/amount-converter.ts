@@ -1,230 +1,349 @@
 import { ethers } from 'hardhat'
-import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
+import { takeSnapshot, SnapshotRestorer, time } from '@nomicfoundation/hardhat-network-helpers'
 import { expect } from 'chai'
 
-import { AmountConverter__factory, IAmountConverter } from '../../typechain-types'
+import {
+  AmountConverter__factory,
+  IAmountConverter,
+  OracleRouter,
+  OracleRouter__factory,
+} from '../../typechain-types'
 import { getContracts } from '../../utils/contracts'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
 
-const contracts = getContracts()
+const addresses = getContracts()
 
-describe('AmountConverter', function () {
-  let subject: IAmountConverter
-  let contractFactory: AmountConverter__factory
+describe('AmountConverter', () => {
+  let converter: IAmountConverter
+  let factory: AmountConverter__factory
   let snapshot: SnapshotRestorer
 
-  this.beforeAll(async function () {
-    snapshot = await takeSnapshot()
-    contractFactory = await ethers.getContractFactory('AmountConverter')
-    subject = await contractFactory.deploy(
-      contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-      '0x0000000000000000000000000000000000000348', // USD
-      [contracts.STETH, contracts.DAI, contracts.USDC, contracts.USDT],
-      [contracts.DAI, contracts.USDC, contracts.USDT],
-      [3600, 3600, 86400, 86400]
+  let router: OracleRouter
+  let routerAddress: string
+
+  const FEED_REGISTRY = addresses.CHAINLINK_PRICE_FEED_REGISTRY
+  const USD = addresses.CHAINLINK_USD_QUOTE
+  const WETH = addresses.CHAINLINK_ETH_QUOTE
+
+  const readAggregatorAddress = async (base: string, quote: string) => {
+    const registryInterface = new ethers.Interface([
+      'function getFeed(address,address) view returns (address)',
+    ])
+    const registry = new ethers.Contract(
+      FEED_REGISTRY,
+      registryInterface,
+      (await ethers.getSigners())[0]
     )
+    return registry.getFunction('getFeed').staticCall(base, quote)
+  }
 
-    await subject.waitForDeployment()
+  const readTokenDecimals = async (token: string) => {
+    const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
+    const erc20 = new ethers.Contract(token, tokenInterface, (await ethers.getSigners())[0])
+    return erc20.getFunction('decimals').staticCall()
+  }
+
+  const configureRouterEthUsd = async (r: OracleRouter, maxStalenessSeconds: number) => {
+    const aggregator = await readAggregatorAddress(WETH, USD)
+    await r.setEthUsdBridge(aggregator, maxStalenessSeconds)
+  }
+
+  const configureRouterTokenUsd = async (
+    r: OracleRouter,
+    token: string,
+    maxStalenessSeconds: number,
+    isActive = true
+  ) => {
+    const aggregator = await readAggregatorAddress(token, USD)
+    const tokenDecimals = await readTokenDecimals(token)
+    await r.setTokenUsdFeed(token, aggregator, maxStalenessSeconds, tokenDecimals, isActive)
+  }
+
+  const configureRouterTokenEth = async (
+    r: OracleRouter,
+    token: string,
+    maxStalenessSeconds: number,
+    isActive = true
+  ) => {
+    const aggregator = await readAggregatorAddress(token, WETH)
+    const tokenDecimals = await readTokenDecimals(token)
+    await r.setTokenEthFeed(token, aggregator, maxStalenessSeconds, tokenDecimals, isActive)
+  }
+
+  before(async () => {
+    snapshot = await takeSnapshot()
+    factory = await ethers.getContractFactory('AmountConverter')
+
+    const [deployer] = await ethers.getSigners()
+    router = await new OracleRouter__factory(deployer).deploy(deployer.address, 18)
+    await router.waitForDeployment()
+    routerAddress = await router.getAddress()
+
+    await configureRouterEthUsd(router, 86_400) // 24 hours
+
+    // Configure tokens on the router:
+    // - stETH via TOKEN/USD (to match chainlink-helpers expectations)
+    // - DAI, USDC, USDT via TOKEN/USD
+    await configureRouterTokenUsd(router, addresses.STETH, 86_400)
+    await configureRouterTokenUsd(router, addresses.DAI, 86_400)
+    await configureRouterTokenUsd(router, addresses.USDC, 86_400)
+    await configureRouterTokenUsd(router, addresses.USDT, 86_400)
+
+    converter = await factory.deploy(
+      routerAddress,
+      [addresses.STETH, addresses.DAI, addresses.USDC, addresses.USDT],
+      [addresses.DAI, addresses.USDC, addresses.USDT]
+    )
+    await converter.waitForDeployment()
   })
 
-  describe('initialization:', async function () {
-    it('should not initialize with feed registry zero address', async function () {
+  describe('initialization:', () => {
+    it('reverts on zero oracle router address', async () => {
       await expect(
-        contractFactory.deploy(
+        factory.deploy(
           ethers.ZeroAddress,
-          contracts.CHAINLINK_USD_QUOTE,
-          [contracts.STETH, contracts.DAI, contracts.USDC, contracts.USDT],
-          [contracts.DAI, contracts.USDC, contracts.USDT],
-          [3600, 3600, 86400, 86400]
+          [addresses.STETH, addresses.DAI, addresses.USDC, addresses.USDT],
+          [addresses.DAI, addresses.USDC, addresses.USDT]
         )
       )
-        .to.be.revertedWithCustomError(contractFactory, 'InvalidFeedRegistryAddress')
+        .to.be.revertedWithCustomError(factory, 'InvalidOracleRouterAddress')
         .withArgs(ethers.ZeroAddress)
     })
 
-    it('should not initialize with conversion target zero address', async function () {
+    it('reverts on empty allowedTokensToSell', async () => {
       await expect(
-        contractFactory.deploy(
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          ethers.ZeroAddress,
-          [contracts.STETH, contracts.DAI, contracts.USDC, contracts.USDT],
-          [contracts.DAI, contracts.USDC, contracts.USDT],
-          [3600, 3600, 86400, 86400]
-        )
+        factory.deploy(routerAddress, [], [addresses.DAI, addresses.USDC, addresses.USDT])
+      ).to.be.revertedWithCustomError(factory, 'InvalidTokensToSellArrayLength')
+    })
+    it('reverts on empty allowedTokensToBuy', async () => {
+      await expect(
+        factory.deploy(routerAddress, [addresses.STETH, addresses.DAI], [])
+      ).to.be.revertedWithCustomError(factory, 'InvalidTokensToBuyArrayLength')
+    })
+
+    it('reverts on zero address in allowedTokensToSell', async () => {
+      await expect(
+        factory.deploy(routerAddress, [addresses.STETH, ethers.ZeroAddress], [addresses.DAI])
       )
-        .to.be.revertedWithCustomError(contractFactory, 'InvalidConversionTargetAddress')
+        .to.be.revertedWithCustomError(factory, 'InvalidAllowedTokenToSell')
         .withArgs(ethers.ZeroAddress)
     })
 
-    it('should not initialize with empty allowedTokensToSell', async function () {
-      await expect(
-        contractFactory.deploy(
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          contracts.CHAINLINK_USD_QUOTE,
-          [],
-          [contracts.DAI, contracts.USDC, contracts.USDT],
-          [3600, 3600, 86400, 86400]
-        )
-      ).to.be.revertedWithCustomError(contractFactory, 'InvalidTokensToSellArrayLength')
-    })
-
-    it('should not initialize with empty allowedTokensToBuy', async function () {
-      await expect(
-        contractFactory.deploy(
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          contracts.CHAINLINK_USD_QUOTE,
-          [contracts.STETH, contracts.DAI, contracts.USDC, contracts.USDT],
-          [],
-          [3600, 3600, 86400, 86400]
-        )
-      ).to.be.revertedWithCustomError(contractFactory, 'InvalidTokensToBuyArrayLength')
-    })
-
-    it('should not initialize with zero address in allowedTokensToSell', async function () {
-      await expect(
-        contractFactory.deploy(
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          contracts.CHAINLINK_USD_QUOTE,
-          [contracts.STETH, ethers.ZeroAddress],
-          [contracts.DAI, contracts.USDC, contracts.USDT],
-          [3600, 3600]
-        )
-      )
-        .to.be.revertedWithCustomError(contractFactory, 'InvalidAllowedTokenToSell')
+    it('reverts on zero address in allowedTokensToBuy', async () => {
+      await expect(factory.deploy(routerAddress, [addresses.STETH], [ethers.ZeroAddress]))
+        .to.be.revertedWithCustomError(factory, 'InvalidAllowedTokenToBuy')
         .withArgs(ethers.ZeroAddress)
-    })
-
-    it('should not initialize with zero address in allowedTokensToBuy', async function () {
-      await expect(
-        contractFactory.deploy(
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          contracts.CHAINLINK_USD_QUOTE,
-          [contracts.STETH],
-          [ethers.ZeroAddress, contracts.DAI, contracts.USDC, contracts.USDT],
-          [3600]
-        )
-      )
-        .to.be.revertedWithCustomError(contractFactory, 'InvalidAllowedTokenToBuy')
-        .withArgs(ethers.ZeroAddress)
-    })
-
-    it('should not initialize with wrong length priceFeedsHeartbeatTimeouts', async function () {
-      await expect(
-        contractFactory.deploy(
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          contracts.CHAINLINK_USD_QUOTE,
-          [contracts.STETH],
-          [ethers.ZeroAddress, contracts.DAI, contracts.USDC, contracts.USDT],
-          []
-        )
-      ).to.be.revertedWithCustomError(contractFactory, 'InvalidHeartbeatArrayLength')
     })
   })
 
-  describe('getExpectedOut:', async function () {
-    it('should revert if amount is zero', async function () {
-      await expect(subject.getExpectedOut(contracts.STETH, contracts.DAI, 0))
-        .to.be.revertedWithCustomError(subject, 'InvalidAmount')
+  describe('getExpectedOut:', () => {
+    it('reverts when amount is zero', async () => {
+      await expect(converter.getExpectedOut(addresses.STETH, addresses.DAI, 0))
+        .to.be.revertedWithCustomError(converter, 'InvalidAmount')
         .withArgs(0)
     })
-    it('should revert if tokenFrom is not allowed', async function () {
-      await expect(subject.getExpectedOut(contracts.LDO, contracts.DAI, 1))
-        .to.be.revertedWithCustomError(subject, 'SellTokenNotAllowed')
-        .withArgs(contracts.LDO)
+
+    it('reverts when tokenFrom is not allowed', async () => {
+      await expect(converter.getExpectedOut(addresses.LDO, addresses.DAI, 1))
+        .to.be.revertedWithCustomError(converter, 'SellTokenNotAllowed')
+        .withArgs(addresses.LDO)
     })
-    it('should revert if tokenTo is not allowed', async function () {
-      await expect(subject.getExpectedOut(contracts.STETH, contracts.LDO, 1))
-        .to.be.revertedWithCustomError(subject, 'BuyTokenNotAllowed')
-        .withArgs(contracts.LDO)
+
+    it('reverts when tokenTo is not allowed', async () => {
+      await expect(converter.getExpectedOut(addresses.STETH, addresses.LDO, 1))
+        .to.be.revertedWithCustomError(converter, 'BuyTokenNotAllowed')
+        .withArgs(addresses.LDO)
     })
-    it('should revert if tokenFrom is the same as tokenTo', async function () {
+
+    it('reverts when tokenFrom equals tokenTo', async () => {
       await expect(
-        subject.getExpectedOut(contracts.STETH, contracts.STETH, 1)
-      ).to.be.revertedWithCustomError(subject, 'SameTokensConversion')
+        converter.getExpectedOut(addresses.STETH, addresses.STETH, 1)
+      ).to.be.revertedWithCustomError(converter, 'SameTokensConversion')
     })
-    it('should have the right price steth -> dai', async function () {
-      const amountToSell = ethers.parseEther('1')
-      const price = await subject.getExpectedOut(contracts.STETH, contracts.DAI, amountToSell)
-      expect(price.toString()).to.equal(
-        (await getExpectedOut(contracts.STETH, contracts.DAI, amountToSell)).toString()
-      )
-    })
-    it('should have the right price usdc -> dai', async function () {
-      const amountToSell = BigInt(1000000)
-      const resultAmount = await subject.getExpectedOut(contracts.USDC, contracts.DAI, amountToSell)
-      expect(resultAmount.toString()).to.equal(
-        (await getExpectedOut(contracts.USDC, contracts.DAI, amountToSell)).toString()
-      )
-    })
-    it('should have the right price dai -> usdc', async function () {
-      const amountToSell = ethers.parseEther('1')
-      const resultAmount = await subject.getExpectedOut(contracts.DAI, contracts.USDC, amountToSell)
-      expect(resultAmount.toString()).to.equal(
-        (await getExpectedOut(contracts.DAI, contracts.USDC, amountToSell)).toString()
-      )
-    })
-    it('should revert if updatedAt is behind heartbeat', async function () {
-      const FeedRegistryTestFactory = await ethers.getContractFactory('FeedRegistryTest')
-      const feedRegistryTest = await FeedRegistryTestFactory.deploy(
-        contracts.CHAINLINK_PRICE_FEED_REGISTRY
-      )
-      await feedRegistryTest.waitForDeployment()
 
-      const localSubject = await contractFactory.deploy(
-        feedRegistryTest,
-        '0x0000000000000000000000000000000000000348', // USD
-        [contracts.STETH],
-        [contracts.DAI],
-        [3600]
+    it('matches Chainlink helper for stETH → DAI (18 → 18)', async () => {
+      const amountToSell = ethers.parseEther('1')
+      const amountFromContract = await converter.getExpectedOut(
+        addresses.STETH,
+        addresses.DAI,
+        amountToSell
       )
-      localSubject.waitForDeployment()
+      const amountFromHelper = await getExpectedOut(addresses.STETH, addresses.DAI, amountToSell)
+      expect(amountFromContract.toString()).to.equal(amountFromHelper.toString())
+    })
+
+    it('matches Chainlink helper for USDC → DAI (6 → 18)', async () => {
+      const amountToSell = 1_000_000n // 1 USDC with 6 decimals
+      const amountFromContract = await converter.getExpectedOut(
+        addresses.USDC,
+        addresses.DAI,
+        amountToSell
+      )
+      const amountFromHelper = await getExpectedOut(addresses.USDC, addresses.DAI, amountToSell)
+      expect(amountFromContract.toString()).to.equal(amountFromHelper.toString())
+    })
+
+    it('matches Chainlink helper for DAI → USDC (18 → 6)', async () => {
+      const amountToSell = ethers.parseEther('1')
+      const amountFromContract = await converter.getExpectedOut(
+        addresses.DAI,
+        addresses.USDC,
+        amountToSell
+      )
+      const amountFromHelper = await getExpectedOut(addresses.DAI, addresses.USDC, amountToSell)
+      expect(amountFromContract.toString()).to.equal(amountFromHelper.toString())
+    })
+
+    it('uses ETH bridge path when configured (stETH/ETH * ETH/USD)', async () => {
+      const [deployer] = await ethers.getSigners()
+      const bridgeRouter = await new OracleRouter__factory(deployer).deploy(deployer.address, 18)
+      await bridgeRouter.waitForDeployment()
+
+      // Configure bridge and feeds on the dedicated router
+      const readAggregatorAddress = async (base: string, quote: string) => {
+        const registryInterface = new ethers.Interface([
+          'function getFeed(address,address) view returns (address)',
+        ])
+        const registry = new ethers.Contract(
+          FEED_REGISTRY,
+          registryInterface,
+          (await ethers.getSigners())[0]
+        )
+        return registry.getFunction('getFeed').staticCall(base, quote)
+      }
+      const readTokenDecimals = async (token: string) => {
+        const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
+        const erc20 = new ethers.Contract(token, tokenInterface, (await ethers.getSigners())[0])
+        return erc20.getFunction('decimals').staticCall()
+      }
+
+      // ETH/USD bridge
+      await bridgeRouter.setEthUsdBridge(await readAggregatorAddress(WETH, USD), 86_400)
+      // stETH/ETH
+      await bridgeRouter.setTokenEthFeed(
+        addresses.STETH,
+        await readAggregatorAddress(addresses.STETH, WETH),
+        86_400,
+        await readTokenDecimals(addresses.STETH),
+        true
+      )
+      // DAI/USD
+      await bridgeRouter.setTokenUsdFeed(
+        addresses.DAI,
+        await readAggregatorAddress(addresses.DAI, USD),
+        86_400,
+        await readTokenDecimals(addresses.DAI),
+        true
+      )
+
+      const bridgeConverter = await factory.deploy(
+        await bridgeRouter.getAddress(),
+        [addresses.STETH, addresses.DAI],
+        [addresses.DAI]
+      )
+      await bridgeConverter.waitForDeployment()
 
       const amountToSell = ethers.parseEther('1')
-      const resultAmount = await localSubject.getExpectedOut(
-        contracts.STETH,
-        contracts.DAI,
+      const amountFromContract = await bridgeConverter.getExpectedOut(
+        addresses.STETH,
+        addresses.DAI,
         amountToSell
       )
 
-      await feedRegistryTest.setHeartbeat(3600)
-      const result = await getExpectedOut(contracts.STETH, contracts.DAI, amountToSell)
-      expect(resultAmount.toString()).to.equal(result.toString())
-
-      const unacceptableHeartbeat = 3601
-      await feedRegistryTest.setHeartbeat(unacceptableHeartbeat)
-      const blockNumber = await ethers.provider.getBlockNumber()
-      const expectedTimestamp = (await ethers.provider.getBlock(blockNumber))?.timestamp!
-
-      await expect(localSubject.getExpectedOut(contracts.STETH, contracts.DAI, amountToSell))
-        .to.be.revertedWithCustomError(localSubject, 'PriceFeedNotUpdated')
-        .withArgs(expectedTimestamp - unacceptableHeartbeat)
-    })
-  })
-
-  describe('events:', async function () {
-    it('constructor should emits events about configuration', async function () {
-      const localSubject = await contractFactory.deploy(
-        contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-        '0x0000000000000000000000000000000000000348', // USD
-        [contracts.STETH],
-        [contracts.DAI],
-        [3600]
+      // Independent compute via the router
+      const [stethUsdPrice, daiUsdPrice] = await bridgeRouter.getUsdPrices(
+        addresses.STETH,
+        addresses.DAI
       )
-      await localSubject.waitForDeployment()
+      const [sellDecimals, buyDecimals] = await bridgeRouter.getTokenDecimals(
+        addresses.STETH,
+        addresses.DAI
+      )
 
-      await expect(localSubject.deploymentTransaction())
-        .to.emit(localSubject, 'AllowedTokenToSellAdded')
-        .withArgs(contracts.STETH)
-      await expect(localSubject.deploymentTransaction())
-        .to.emit(localSubject, 'AllowedTokenToBuyAdded')
-        .withArgs(contracts.DAI)
-      await expect(localSubject.deploymentTransaction())
-        .to.emit(localSubject, 'PriceFeedHeartbeatTimeoutSet')
-        .withArgs(contracts.STETH, 3600)
+      const raw = (amountToSell * stethUsdPrice) / daiUsdPrice
+      const expected =
+        sellDecimals >= buyDecimals
+          ? raw / 10n ** BigInt(sellDecimals - buyDecimals)
+          : raw * 10n ** BigInt(buyDecimals - sellDecimals)
+
+      expect(amountFromContract.toString()).to.equal(expected.toString())
+    })
+
+    it('bubbles router staleness (OracleStale) on outdated feed', async () => {
+      const [deployer] = await ethers.getSigners()
+      const staleRouter = await new OracleRouter__factory(deployer).deploy(deployer.address, 18)
+      await staleRouter.waitForDeployment()
+
+      // Bridge
+      const registryInterface = new ethers.Interface([
+        'function getFeed(address,address) view returns (address)',
+      ])
+      const registry = new ethers.Contract(
+        FEED_REGISTRY,
+        registryInterface,
+        (await ethers.getSigners())[0]
+      )
+      const readAggregatorAddress = (base: string, quote: string) =>
+        registry.getFunction('getFeed').staticCall(base, quote)
+      const readTokenDecimals = async (token: string) => {
+        const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
+        const erc20 = new ethers.Contract(token, tokenInterface, (await ethers.getSigners())[0])
+        return erc20.getFunction('decimals').staticCall()
+      }
+
+      await staleRouter.setEthUsdBridge(await readAggregatorAddress(WETH, USD), 86_400)
+
+      // Tight staleness on DAI/USD to force staleness
+      await staleRouter.setTokenUsdFeed(
+        addresses.DAI,
+        await readAggregatorAddress(addresses.DAI, USD),
+        1,
+        await readTokenDecimals(addresses.DAI),
+        true
+      )
+
+      // Normal on USDC/USD so only one side is tight
+      await staleRouter.setTokenUsdFeed(
+        addresses.USDC,
+        await readAggregatorAddress(addresses.USDC, USD),
+        86_400,
+        await readTokenDecimals(addresses.USDC),
+        true
+      )
+
+      const staleConverter = await factory.deploy(
+        await staleRouter.getAddress(),
+        [addresses.DAI, addresses.USDC],
+        [addresses.USDC]
+      )
+      await staleConverter.waitForDeployment()
+
+      // Move time forward beyond the 1-second staleness
+      await time.increase(2)
+      await time.latestBlock()
+
+      await expect(
+        staleConverter.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1'))
+      ).to.be.revertedWithCustomError(staleRouter, 'OracleStale')
     })
   })
 
-  this.afterAll(async function () {
+  describe('events:', () => {
+    it('constructor emits allowlist events', async () => {
+      const local = await factory.deploy(routerAddress, [addresses.STETH], [addresses.DAI])
+      await local.waitForDeployment()
+
+      await expect(local.deploymentTransaction())
+        .to.emit(local, 'AllowedTokenToSellAdded')
+        .withArgs(addresses.STETH)
+
+      await expect(local.deploymentTransaction())
+        .to.emit(local, 'AllowedTokenToBuyAdded')
+        .withArgs(addresses.DAI)
+    })
+  })
+
+  after(async () => {
     await snapshot.restore()
   })
 })

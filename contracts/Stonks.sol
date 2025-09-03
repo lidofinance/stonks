@@ -42,7 +42,7 @@ contract Stonks is IStonks, AssetRecoverer {
     uint256 public immutable PRICE_TOLERANCE_IN_BASIS_POINTS;
 
     // Router used for quotability checks
-    IOracleRouter public immutable ORACLE;
+    IOracleRouter public immutable ORACLE_ROUTER;
 
     // Pair-profiled tolerance override (bps); 0 means "use global"
     mapping(bytes32 pairId => uint256 toleranceBps) private pairToleranceBps;
@@ -88,10 +88,10 @@ contract Stonks is IStonks, AssetRecoverer {
         address tokenTo_,
         address amountConverter_,
         address orderSample_,
+        address oracleRouter_,
         uint256 orderDurationInSeconds_,
         uint256 marginInBasisPoints_,
-        uint256 priceToleranceInBasisPoints_,
-        address oracleRouter_
+        uint256 priceToleranceInBasisPoints_
     ) AssetRecoverer(agent_) {
         if (manager_ == address(0)) revert InvalidManagerAddress(manager_);
         if (tokenFrom_ == address(0)) revert InvalidTokenFromAddress(tokenFrom_);
@@ -128,7 +128,7 @@ contract Stonks is IStonks, AssetRecoverer {
         ORDER_DURATION_IN_SECONDS = orderDurationInSeconds_;
         MARGIN_IN_BASIS_POINTS = marginInBasisPoints_;
         PRICE_TOLERANCE_IN_BASIS_POINTS = priceToleranceInBasisPoints_;
-        ORACLE = IOracleRouter(oracleRouter_);
+        ORACLE_ROUTER = IOracleRouter(oracleRouter_);
 
         emit ManagerSet(manager_);
         emit AmountConverterSet(amountConverter_);
@@ -233,68 +233,8 @@ contract Stonks is IStonks, AssetRecoverer {
     /**
      * @notice Asserts that a price path exists for the pair; used by Order to fail fast.
      * @dev Reads via OracleRouter which reverts if a token is not configured or the bridge is missing.
-     * @param tokenFrom_ Input token address.
-     * @param tokenTo_ Output token address.
      */
-    function assertQuotable(address tokenFrom_, address tokenTo_) external view {
-        ORACLE.getUsdPrices(tokenFrom_, tokenTo_); // reverts internally if unquotable
-    }
-
-    /**
-     * @notice Returns pair-profiled price tolerance in basis points for a specific pair.
-     * @dev Zero means "use global PRICE_TOLERANCE_IN_BASIS_POINTS" in Order.
-     * @param tokenFrom_ Input token address.
-     * @param tokenTo_ Output token address.
-     * @return Pair-specific tolerance in basis points or zero if unset.
-     */
-    function getPairPriceTolerance(
-        address tokenFrom_,
-        address tokenTo_
-    ) external view returns (uint256) {
-        bytes32 key = keccak256(abi.encodePacked(tokenFrom_, tokenTo_));
-        return pairToleranceBps[key];
-    }
-
-    /**
-     * @notice Sets pair-profiled price tolerance in basis points (0 clears override).
-     * @dev Bounded by BASIS_POINTS_PARAMETERS_LIMIT for parity with global tolerance setting.
-     * @param tokenFrom_ Input token address.
-     * @param tokenTo_ Output token address.
-     * @param toleranceBps_ New tolerance in basis points (0 to clear).
-     */
-    function setPairPriceTolerance(
-        address tokenFrom_,
-        address tokenTo_,
-        uint256 toleranceBps_
-    ) external onlyAgentOrManager {
-        if (toleranceBps_ > BASIS_POINTS_PARAMETERS_LIMIT) {
-            revert PriceToleranceOverflowsAllowedLimit(
-                BASIS_POINTS_PARAMETERS_LIMIT,
-                toleranceBps_
-            );
-        }
-        bytes32 key = keccak256(abi.encodePacked(tokenFrom_, tokenTo_));
-        pairToleranceBps[key] = toleranceBps_;
-        emit PairPriceToleranceSet(tokenFrom_, tokenTo_, toleranceBps_);
-    }
-
-    /**
-     * @notice Sets pair-profiled margin in basis points (0 clears override).
-     * @dev Bounded by BASIS_POINTS_PARAMETERS_LIMIT for parity with global margin setting.
-     * @param tokenFrom_ Input token address.
-     * @param tokenTo_ Output token address.
-     * @param marginBps_ New margin in basis points (0 to clear).
-     */
-    function setPairMargin(
-        address tokenFrom_,
-        address tokenTo_,
-        uint256 marginBps_
-    ) external onlyAgentOrManager {
-        if (marginBps_ > BASIS_POINTS_PARAMETERS_LIMIT) {
-            revert MarginOverflowsAllowedLimit(BASIS_POINTS_PARAMETERS_LIMIT, marginBps_);
-        }
-        bytes32 key = keccak256(abi.encodePacked(tokenFrom_, tokenTo_));
-        pairMarginBps[key] = marginBps_;
-        emit PairMarginSet(tokenFrom_, tokenTo_, marginBps_);
+    function assertQuotable() external view {
+        ORACLE_ROUTER.getUsdPrices(TOKEN_FROM, TOKEN_TO); // reverts internally if unquotable
     }
 }
