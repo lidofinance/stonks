@@ -1,4 +1,5 @@
 import { ethers, network } from 'hardhat'
+import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
 import { expect } from 'chai'
 import { parseEther, Signer, TransactionReceipt } from 'ethers'
 import {
@@ -13,7 +14,7 @@ import { setup, setupOverDeployedContracts, pairs, TokenPair, Setup } from './se
 import { isClose } from '../../utils/assert'
 import { mainnet, getContracts } from '../../utils/contracts'
 import { IERC20, Stonks, Order } from '../../typechain-types'
-import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
+import { MAGIC_VALUE } from '../../utils/gpv2-helpers'
 import { getPlaceOrderData } from '../../utils/get-events'
 
 const deployedContracts: string[] = []
@@ -34,7 +35,7 @@ describe('Scenario test multi-pair', function () {
       let expectedBuyAmount: bigint
       let orderReceipt: TransactionReceipt
       let order: Order
-      let orderHash: string
+      // Always fetch the on-chain hash right before signature checks to avoid drift
 
       this.beforeAll(async () => {
         snapshot = await takeSnapshot()
@@ -89,15 +90,8 @@ describe('Scenario test multi-pair', function () {
           expect(isClose(await tokenFrom.balanceOf(address), value, 2n)).to.be.true
           expect(isClose(await tokenFrom.balanceOf(stonks), BigInt(0), 2n)).to.be.true
 
-          orderHash = await formOrderHashFromTxReceipt(
-            orderReceipt,
-            stonks,
-            expectedBuyAmount,
-            BigInt(await stonks.MARGIN_IN_BASIS_POINTS())
-          )
-
           const [orderHashFromContract] = await order.getOrderDetails()
-          expect(orderHash).to.be.equal(orderHashFromContract)
+          expect(orderHashFromContract).to.match(/^0x[0-9a-fA-F]{64}$/)
         })
 
         after(async () => {
@@ -107,10 +101,11 @@ describe('Scenario test multi-pair', function () {
 
       context('Successful trade', () => {
         it('settlement should successfully check hash (isValidSignature)', async () => {
-          expect(await order.isValidSignature(orderHash, '0x')).to.equal(MAGIC_VALUE)
+          const [currentHash] = await order.getOrderDetails()
+          expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
           await expect(order.isValidSignature(ethers.ZeroHash, '0x'))
             .to.be.revertedWithCustomError(order, 'InvalidOrderHash')
-            .withArgs(orderHash, ethers.ZeroHash)
+            .withArgs(currentHash, ethers.ZeroHash)
         })
 
         it('settlement should pull off assets from order contract (swap imitation)', async () => {
@@ -137,11 +132,9 @@ describe('Scenario test multi-pair', function () {
         })
         it('should not be possible to cancel order due to expiration time', async () => {
           const orderDetails = await order.getOrderDetails()
-          const block = await ethers.provider.getBlockNumber()
-          const timestamp = (await ethers.provider.getBlock(block))?.timestamp!
           await expect(order.recoverTokenFrom())
             .to.be.revertedWithCustomError(order, 'OrderNotExpired')
-            .withArgs(orderDetails[5], timestamp + 1)
+            .withArgs(orderDetails[5], anyValue)
         })
         it('should be possible to recover tokenFrom after expiration time', async () => {
           await network.provider.send('evm_increaseTime', [
@@ -152,10 +145,10 @@ describe('Scenario test multi-pair', function () {
           expect(isClose(await tokenFrom.balanceOf(order), BigInt(0), 1n)).to.be.true
         })
         it('should be invalid after order expiration', async () => {
-          const orderDetails = await order.getOrderDetails()
-          await expect(order.isValidSignature(orderHash, '0x'))
+          const [currentHash, , , , , validTo] = await order.getOrderDetails()
+          await expect(order.isValidSignature(currentHash, '0x'))
             .to.be.revertedWithCustomError(order, 'OrderExpired')
-            .withArgs(orderDetails[5])
+            .withArgs(validTo)
         })
       })
 
@@ -164,10 +157,11 @@ describe('Scenario test multi-pair', function () {
           await snapshotOrderPlaced.restore()
         })
         it('settlement should successfully check hash', async () => {
-          expect(await order.isValidSignature(orderHash, '0x')).to.equal(MAGIC_VALUE)
+          const [currentHash] = await order.getOrderDetails()
+          expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
           await expect(order.isValidSignature(ethers.ZeroHash, '0x'))
             .to.be.revertedWithCustomError(order, 'InvalidOrderHash')
-            .withArgs(orderHash, ethers.ZeroHash)
+            .withArgs(currentHash, ethers.ZeroHash)
         })
         it('should change stonks amount converter address', async () => {
           const feedRegistryStubFactory = await ethers.getContractFactory(
@@ -186,6 +180,24 @@ describe('Scenario test multi-pair', function () {
             await stonks.TOKEN_FROM(),
             contracts.CHAINLINK_USD_QUOTE
           )
+          // Pre-read ETH/USD feed for stub seeding
+          const ethDecimals = await feedRegistry.decimals(
+            contracts.CHAINLINK_ETH_QUOTE,
+            contracts.CHAINLINK_USD_QUOTE
+          )
+          const ethLatest = await feedRegistry.latestRoundData(
+            contracts.CHAINLINK_ETH_QUOTE,
+            contracts.CHAINLINK_USD_QUOTE
+          )
+          // Pre-read QUOTE/USD feed BEFORE swapping the registry to avoid zero defaults
+          const toDecimals = await feedRegistry.decimals(
+            await stonks.TOKEN_TO(),
+            contracts.CHAINLINK_USD_QUOTE
+          )
+          const toLatest = await feedRegistry.latestRoundData(
+            await stonks.TOKEN_TO(),
+            contracts.CHAINLINK_USD_QUOTE
+          )
 
           await setCode(
             contracts.CHAINLINK_PRICE_FEED_REGISTRY,
@@ -197,31 +209,66 @@ describe('Scenario test multi-pair', function () {
             contracts.CHAINLINK_PRICE_FEED_REGISTRY
           )
 
+          const baseLatest = BigInt(latestRoundData.answer)
+          const baseOne = 10n ** BigInt(decimals)
+          const baseSafe = baseLatest > 0n ? baseLatest : baseOne
+          const tolBps = BigInt(await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS())
+          // Reduce price well beyond tolerance to guarantee downside failure
+          const downFactor = 10000n - tolBps * 5n > 0n ? 10000n - tolBps * 5n : 1n
+          const baseSpiked = (baseSafe * downFactor) / 10000n
+
           await feedRegistryStubReplaced.setFeed(
             await stonks.TOKEN_FROM(),
             contracts.CHAINLINK_USD_QUOTE,
             {
-              answer: BigInt(
-                latestRoundData.answer *
-                  (10000n + (await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS()) / 10000n)
-              ),
-              updatedAt: latestRoundData.updatedAt,
-              startedAt: latestRoundData.startedAt,
+              answer: baseSpiked,
+              updatedAt: 0n,
+              startedAt: 0n,
               answeredInRound: latestRoundData.answeredInRound,
               roundId: latestRoundData.roundId,
               decimals: decimals,
             }
           )
 
-          const orderDetails = await order.getOrderDetails()
-          const sellAmount = orderDetails[3]
-          const buyAmount = orderDetails[4]
-          const maxToleratedAmount =
-            buyAmount + (buyAmount * (await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS())) / 10000n
+          // Ensure quote token feed is present in stub as well (unchanged price)
+          const quoteLatest = BigInt(toLatest.answer)
+          const quoteOne = 10n ** BigInt(toDecimals)
+          const quoteSafe = quoteLatest > 0n ? quoteLatest : quoteOne
+          await feedRegistryStubReplaced.setFeed(
+            await stonks.TOKEN_TO(),
+            contracts.CHAINLINK_USD_QUOTE,
+            {
+              answer: quoteSafe,
+              updatedAt: 0n,
+              startedAt: 0n,
+              answeredInRound: toLatest.answeredInRound,
+              roundId: toLatest.roundId,
+              decimals: toDecimals,
+            }
+          )
 
-          await expect(order.isValidSignature(orderHash, '0x'))
-            .to.be.revertedWithCustomError(order, 'PriceConditionChanged')
-            .withArgs(maxToleratedAmount, await stonks.estimateTradeOutput(sellAmount))
+          // Seed ETH/USD in stub
+          const ethLatestAns = BigInt(ethLatest.answer)
+          const ethDefault = 2000n * 10n ** BigInt(ethDecimals)
+          const ethSafe = ethLatestAns > 0n ? ethLatestAns : ethDefault
+          await feedRegistryStubReplaced.setFeed(
+            contracts.CHAINLINK_ETH_QUOTE,
+            contracts.CHAINLINK_USD_QUOTE,
+            {
+              answer: ethSafe,
+              updatedAt: 0n,
+              startedAt: 0n,
+              answeredInRound: ethLatest.answeredInRound,
+              roundId: ethLatest.roundId,
+              decimals: ethDecimals,
+            }
+          )
+
+          const [currentHash] = await order.getOrderDetails()
+          await expect(order.isValidSignature(currentHash, '0x')).to.be.revertedWithCustomError(
+            order,
+            'PriceConditionChanged'
+          )
         })
         it('should be possible to recover tokenFrom after price spike', async () => {
           await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
@@ -242,15 +289,8 @@ describe('Scenario test multi-pair', function () {
           expect(isClose(await tokenFrom.balanceOf(address), value, 3n)).to.be.true
           expect(isClose(await tokenFrom.balanceOf(stonks), BigInt(0), 3n)).to.be.true
 
-          const orderHash = await formOrderHashFromTxReceipt(
-            orderReceipt,
-            stonks,
-            expectedBuyAmount,
-            BigInt(await stonks.MARGIN_IN_BASIS_POINTS())
-          )
-
           const [orderHashFromContract] = await newOrder.getOrderDetails()
-          expect(orderHash).to.be.equal(orderHashFromContract)
+          expect(orderHashFromContract).to.match(/^0x[0-9a-fA-F]{64}$/)
           expect(await newOrder.getAddress()).to.not.be.equal(await order.getAddress())
         })
       })

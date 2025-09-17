@@ -5,7 +5,7 @@ pragma solidity 0.8.23;
 import {Ownable} from "../Ownable.sol";
 import {IAggregatorV3} from "../interfaces/IAggregatorV3.sol";
 import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
-
+import {IFeedRegistry} from "../interfaces/IFeedRegistry.sol";
 /**
  * @title OracleRouter
  * @notice Chainlink-only price router with a 2-hop strategy:
@@ -18,6 +18,9 @@ import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
 contract OracleRouter is IOracleRouter, Ownable {
     uint8 public immutable UNIT_DECIMALS;
     uint256 public immutable UNIT;
+    address public immutable FEED_REGISTRY;
+    address private constant USD_DENOM = 0x0000000000000000000000000000000000000348;
+    address private constant ETH_DENOM = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     uint128 private constant MAX_DECIMALS = 38;
 
@@ -29,7 +32,6 @@ contract OracleRouter is IOracleRouter, Ownable {
     struct FeedConfig {
         uint128 scaleNumerator;
         uint128 scaleDenominator;
-        address aggregator;
         uint32 maxStaleness;
         uint8 aggregatorDecimals;
     }
@@ -77,30 +79,26 @@ contract OracleRouter is IOracleRouter, Ownable {
     /// @notice Set immutable unit settings and ownership agent.
     /// @param agent_ Owner agent for admin controls.
     /// @param unitDecimals_ Fixed-point unit decimals used across the router.
-    constructor(address agent_, uint8 unitDecimals_) Ownable(agent_) {
+    constructor(address agent_, uint8 unitDecimals_, address feedRegistry_) Ownable(agent_) {
         if (unitDecimals_ == 0) {
             revert InvalidAggregatorDecimals();
         }
-
+        if (feedRegistry_ == address(0)) {
+            revert ZeroAddress();
+        }
+        FEED_REGISTRY = feedRegistry_;
         UNIT_DECIMALS = unitDecimals_;
         UNIT = 10 ** unitDecimals_;
     }
 
     /// @notice Configure the global ETH/USD bridge feed.
-    /// @param aggregator_ Chainlink ETH/USD aggregator address.
+    /// @param aggregator_ Chainlink ETH/USD aggregator address (ignored; kept for ABI compatibility).
     /// @param maxStaleness_ Max accepted staleness in seconds.
-    function setEthUsdBridge(
-        address aggregator_,
-        uint32 maxStaleness_
-    ) external onlyAgentOrManager {
-        if (aggregator_ == address(0)) {
-            revert ZeroAddress();
-        }
+    function setEthUsdBridge(address aggregator_, uint32 maxStaleness_) external onlyAgentOrManager {
         if (maxStaleness_ == 0) {
             revert ZeroStaleness();
         }
-
-        uint8 aggregatorDecimals = IAggregatorV3(aggregator_).decimals();
+        uint8 aggregatorDecimals = IFeedRegistry(FEED_REGISTRY).decimals(ETH_DENOM, USD_DENOM);
         if (aggregatorDecimals == 0 || aggregatorDecimals > MAX_DECIMALS) {
             revert InvalidAggregatorDecimals();
         }
@@ -110,25 +108,17 @@ contract OracleRouter is IOracleRouter, Ownable {
         );
 
         ethUsdBridge = FeedConfig({
-            aggregator: aggregator_,
             maxStaleness: maxStaleness_,
             aggregatorDecimals: aggregatorDecimals,
             scaleNumerator: scaleNumerator,
             scaleDenominator: scaleDenominator
         });
 
-        emit EthUsdBridgeConfigured(
-            aggregator_,
-            aggregatorDecimals,
-            maxStaleness_,
-            scaleNumerator,
-            scaleDenominator
-        );
+        emit EthUsdBridgeConfigured(aggregator_, aggregatorDecimals, maxStaleness_, scaleNumerator, scaleDenominator);
     }
 
     /// @notice Configure a token with a TOKEN/USD feed.
     /// @param token_ ERC20 token address.
-    /// @param aggregator_ Chainlink TOKEN/USD aggregator.
     /// @param maxStaleness_ Max accepted staleness in seconds.
     /// @param tokenDecimals_ Cached ERC20 decimals for the token.
     /// @param isActive_ Whether this token is quotable.
@@ -151,7 +141,6 @@ contract OracleRouter is IOracleRouter, Ownable {
 
     /// @notice Configure a token with a TOKEN/ETH feed (will bridge via ETH/USD).
     /// @param token_ ERC20 token address.
-    /// @param aggregator_ Chainlink TOKEN/ETH aggregator.
     /// @param maxStaleness_ Max accepted staleness in seconds.
     /// @param tokenDecimals_ Cached ERC20 decimals for the token.
     /// @param isActive_ Whether this token is quotable.
@@ -179,7 +168,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         if (token_ == address(0)) {
             revert ZeroAddress();
         }
-        
+
         tokenConfig[token_].isActive = isActive_;
         emit TokenActiveUpdated(token_, isActive_);
     }
@@ -194,13 +183,13 @@ contract OracleRouter is IOracleRouter, Ownable {
         }
 
         if (config.primaryQuote == QuoteDenomination.USD) {
-            usdPrice_ = _readNormalizedPrice(config.primaryFeed);
+            usdPrice_ = _readNormalizedPrice(token_, USD_DENOM, config.primaryFeed);
         } else {
-            if (ethUsdBridge.aggregator == address(0)) {
+            if (ethUsdBridge.aggregatorDecimals == 0) {
                 revert EthUsdBridgeMissing();
             }
-            uint256 tokenToEth = _readNormalizedPrice(config.primaryFeed);
-            uint256 ethToUsd = _readNormalizedPrice(ethUsdBridge);
+            uint256 tokenToEth = _readNormalizedPrice(token_, ETH_DENOM, config.primaryFeed);
+            uint256 ethToUsd = _readNormalizedPrice(ETH_DENOM, USD_DENOM, ethUsdBridge);
             usdPrice_ = (tokenToEth * ethToUsd) / UNIT;
         }
     }
@@ -216,6 +205,7 @@ contract OracleRouter is IOracleRouter, Ownable {
     ) external view returns (uint256 baseUsdPrice_, uint256 quoteUsdPrice_) {
         TokenConfig storage baseCfg = tokenConfig[baseToken_];
         TokenConfig storage quoteCfg = tokenConfig[quoteToken_];
+
         if (!baseCfg.isActive) {
             revert TokenNotConfigured(baseToken_);
         }
@@ -227,26 +217,26 @@ contract OracleRouter is IOracleRouter, Ownable {
 
         // Base
         if (baseCfg.primaryQuote == QuoteDenomination.USD) {
-            baseUsdPrice_ = _readNormalizedPrice(baseCfg.primaryFeed);
+            baseUsdPrice_ = _readNormalizedPrice(baseToken_, USD_DENOM, baseCfg.primaryFeed);
         } else {
-            if (ethUsdBridge.aggregator == address(0)) {
+            if (ethUsdBridge.aggregatorDecimals == 0) {
                 revert EthUsdBridgeMissing();
             }
-            ethUsdCached = _readNormalizedPrice(ethUsdBridge);
-            baseUsdPrice_ = (_readNormalizedPrice(baseCfg.primaryFeed) * ethUsdCached) / UNIT;
+            ethUsdCached = _readNormalizedPrice(ETH_DENOM, USD_DENOM, ethUsdBridge);
+            baseUsdPrice_ = (_readNormalizedPrice(baseToken_, ETH_DENOM, baseCfg.primaryFeed) * ethUsdCached) / UNIT;
         }
 
         // Quote (reuse ETH/USD if already fetched)
         if (quoteCfg.primaryQuote == QuoteDenomination.USD) {
-            quoteUsdPrice_ = _readNormalizedPrice(quoteCfg.primaryFeed);
+            quoteUsdPrice_ = _readNormalizedPrice(quoteToken_, USD_DENOM, quoteCfg.primaryFeed);
         } else {
             if (ethUsdCached == 0) {
-                if (ethUsdBridge.aggregator == address(0)) {
+                if (ethUsdBridge.aggregatorDecimals == 0) {
                     revert EthUsdBridgeMissing();
                 }
-                ethUsdCached = _readNormalizedPrice(ethUsdBridge);
+                ethUsdCached = _readNormalizedPrice(ETH_DENOM, USD_DENOM, ethUsdBridge);
             }
-            quoteUsdPrice_ = (_readNormalizedPrice(quoteCfg.primaryFeed) * ethUsdCached) / UNIT;
+            quoteUsdPrice_ = (_readNormalizedPrice(quoteToken_, ETH_DENOM, quoteCfg.primaryFeed) * ethUsdCached) / UNIT;
         }
     }
 
@@ -273,19 +263,21 @@ contract OracleRouter is IOracleRouter, Ownable {
     function _setTokenFeed(
         address token_,
         QuoteDenomination primaryQuote_,
-        address aggregator_,
+        address /* aggregator_ */,
         uint32 maxStaleness_,
         uint8 tokenDecimals_,
         bool isActive_
     ) internal {
-        if (token_ == address(0) || aggregator_ == address(0)) {
+        if (token_ == address(0)) {
             revert ZeroAddress();
         }
         if (maxStaleness_ == 0) {
             revert ZeroStaleness();
         }
-
-        uint8 aggregatorDecimals = IAggregatorV3(aggregator_).decimals();
+        uint8 aggregatorDecimals = IFeedRegistry(FEED_REGISTRY).decimals(
+            token_,
+            primaryQuote_ == QuoteDenomination.USD ? USD_DENOM : ETH_DENOM
+        );
         if (aggregatorDecimals == 0 || aggregatorDecimals > MAX_DECIMALS) {
             revert InvalidAggregatorDecimals();
         }
@@ -297,7 +289,6 @@ contract OracleRouter is IOracleRouter, Ownable {
         tokenConfig[token_] = TokenConfig({
             primaryQuote: primaryQuote_,
             primaryFeed: FeedConfig({
-                aggregator: aggregator_,
                 maxStaleness: maxStaleness_,
                 aggregatorDecimals: aggregatorDecimals,
                 scaleNumerator: scaleNumerator,
@@ -310,7 +301,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         emit TokenConfigured(
             token_,
             primaryQuote_,
-            aggregator_,
+            address(0),
             aggregatorDecimals,
             maxStaleness_,
             tokenDecimals_,
@@ -321,15 +312,20 @@ contract OracleRouter is IOracleRouter, Ownable {
     }
 
     function _readNormalizedPrice(
+        address base_,
+        address quote_,
         FeedConfig storage feed_
     ) internal view returns (uint256 normalizedPrice_) {
-        (, int256 rawAnswer, , uint256 updatedAt, ) = IAggregatorV3(feed_.aggregator)
-            .latestRoundData();
+        (, int256 rawAnswer, , uint256 updatedAt, ) = IFeedRegistry(FEED_REGISTRY).latestRoundData(
+            base_,
+            quote_
+        );
+
         if (rawAnswer <= 0) {
-            revert OracleBadAnswer(feed_.aggregator, rawAnswer);
+            revert OracleBadAnswer(address(0), rawAnswer);
         }
         if (block.timestamp > updatedAt + feed_.maxStaleness) {
-            revert OracleStale(feed_.aggregator, updatedAt);
+            revert OracleStale(address(0), updatedAt);
         }
         normalizedPrice_ = (uint256(rawAnswer) * feed_.scaleNumerator) / feed_.scaleDenominator;
     }

@@ -4,7 +4,6 @@ pragma solidity 0.8.23;
 
 import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
 import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
-
 /**
  * @title AmountConverter
  * @dev Converts an amount of one token into another using OracleRouter’s USD-anchored prices.
@@ -84,6 +83,7 @@ contract AmountConverter is IAmountConverter {
             tokenFrom_,
             tokenTo_
         );
+
         (uint8 decimalsOfSellToken8, uint8 decimalsOfBuyToken8) = ORACLE_ROUTER.getTokenDecimals(
             tokenFrom_,
             tokenTo_

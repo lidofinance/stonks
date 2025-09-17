@@ -68,10 +68,8 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
       priceToleranceInBps: 100,
     },
     amountConverterParams: {
-      conversionTarget: contracts.CHAINLINK_USD_QUOTE,
       allowedTokensToSell: [pair.tokenFrom],
       allowedStableTokensToBuy: [pair.tokenTo],
-      priceFeedsHeartbeatTimeouts: [86400],
     },
   })
 

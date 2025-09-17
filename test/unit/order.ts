@@ -7,14 +7,8 @@ import {
   time,
   mine,
 } from '@nomicfoundation/hardhat-network-helpers'
-import {
-  Order,
-  Stonks,
-  HashHelper,
-  AmountConverterTest,
-  OracleRouter,
-  OracleRouter__factory,
-} from '../../typechain-types'
+import { Order, Stonks, HashHelper, AmountConverterTest, OracleRouter } from '../../typechain-types'
+import { deployAndConfigureOracleRouter } from '../../utils/oracle-router'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { getContracts } from '../../utils/contracts'
 import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
@@ -45,47 +39,10 @@ describe('Order', async function () {
 
     const amountConverterTestFactory = await ethers.getContractFactory('AmountConverterTest')
 
-    const oracleRouterFactory = (await ethers.getContractFactory(
-      'OracleRouter'
-    )) as OracleRouter__factory
-    oracleRouter = await oracleRouterFactory.deploy(contracts.AGENT, 18)
-    await oracleRouter.waitForDeployment()
-
-    const registryIface = new ethers.Interface([
-      'function getFeed(address,address) view returns (address)',
-    ])
-    const registry = new ethers.Contract(
-      contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-      registryIface,
-      manager
-    )
-    const getFeed = (base: string, quote: string) =>
-      registry.getFunction('getFeed').staticCall(base, quote)
-
-    const erc20Iface = new ethers.Interface(['function decimals() view returns (uint8)'])
-    const readDecimals = async (token: string) => {
-      const c = new ethers.Contract(token, erc20Iface, manager)
-      return c.getFunction('decimals').staticCall()
-    }
-
-    await oracleRouter.setEthUsdBridge(
-      await getFeed(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE),
-      86_400
-    )
-    await oracleRouter.setTokenUsdFeed(
-      contracts.STETH,
-      await getFeed(contracts.STETH, contracts.CHAINLINK_USD_QUOTE),
-      86_400,
-      await readDecimals(contracts.STETH),
-      true
-    )
-    await oracleRouter.setTokenUsdFeed(
-      contracts.DAI,
-      await getFeed(contracts.DAI, contracts.CHAINLINK_USD_QUOTE),
-      86_400,
-      await readDecimals(contracts.DAI),
-      true
-    )
+    oracleRouter = await deployAndConfigureOracleRouter({
+      feedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+      tokensUsd: [contracts.STETH, contracts.DAI],
+    })
 
     amountConverterTest = await amountConverterTestFactory.deploy(
       await oracleRouter.getAddress(),
@@ -141,12 +98,7 @@ describe('Order', async function () {
     orderData = decodedOrderTx
     subject = await ethers.getContractAt('Order', orderData.address, manager)
 
-    orderHash = await formOrderHashFromTxReceipt(
-      placeOrderTxReceipt,
-      stonks,
-      expectedBuyAmount,
-      BigInt(marginInBps)
-    )
+    orderHash = await formOrderHashFromTxReceipt(placeOrderTxReceipt, stonks)
   })
 
   describe('initialization (direct):', function () {
@@ -240,12 +192,18 @@ describe('Order', async function () {
       const orderDetails = await subject.getOrderDetails()
       const sellAmount = orderDetails[3]
       const buyAmount = orderDetails[4]
-      const maxToleratedAmount = buyAmount + (buyAmount * BigInt(PRICE_TOLERANCE_IN_BP)) / 10000n
+      const toleratedShortfall = (buyAmount * BigInt(PRICE_TOLERANCE_IN_BP)) / 10000n
+      const minAcceptable = buyAmount - toleratedShortfall
 
-      await amountConverterTest.multiplyAnswer(10000 + PRICE_TOLERANCE_IN_BP + 1)
-      await expect(subject.isValidSignature(orderHash, '0x'))
+      // Create a downside move beyond tolerance
+      await amountConverterTest.multiplyAnswer(10000 - PRICE_TOLERANCE_IN_BP - 1)
+
+      const currentCalculated = await stonks.estimateTradeOutput(sellAmount)
+      const [currentHash] = await subject.getOrderDetails()
+
+      await expect(subject.isValidSignature(currentHash, '0x'))
         .to.be.revertedWithCustomError(subject, 'PriceConditionChanged')
-        .withArgs(maxToleratedAmount, await stonks.estimateTradeOutput(sellAmount))
+        .withArgs(minAcceptable, currentCalculated)
     })
 
     this.afterEach(async function () {

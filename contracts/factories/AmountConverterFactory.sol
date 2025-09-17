@@ -45,7 +45,7 @@ contract AmountConverterFactory {
         address[] memory allowedStableTokensToBuy_
     ) public returns (address tokenAmountConverter) {
         tokenAmountConverter = address(
-            new AmountConverter(FEED_REGISTRY, allowedTokensToSell_, allowedStableTokensToBuy_)
+            new AmountConverter(oracleRouter_, allowedTokensToSell_, allowedStableTokensToBuy_)
         );
         emit AmountConverterDeployed(
             tokenAmountConverter,

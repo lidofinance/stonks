@@ -13,15 +13,23 @@ export const getExpectedOut = async (
     contracts.CHAINLINK_PRICE_FEED_REGISTRY
   )
 
-  const feedDecimals = await feedRegistry.decimals(
-    tokenFrom,
-    contracts.CHAINLINK_USD_QUOTE
-  )
-  const [_, price] = await feedRegistry.latestRoundData(
-    tokenFrom,
-    contracts.CHAINLINK_USD_QUOTE
-  )
+  // Router UNIT_DECIMALS = 18
+  const UNIT_DECIMALS = 18n
 
+  const readPriceNormalized = async (base: string, quote: string): Promise<bigint> => {
+    const decimals = await feedRegistry.decimals(base, quote)
+    const [, raw] = await feedRegistry.latestRoundData(base, quote)
+    const d = BigInt(decimals)
+    if (d === UNIT_DECIMALS) return raw
+    if (d < UNIT_DECIMALS) return raw * 10n ** (UNIT_DECIMALS - d)
+    return raw / 10n ** (d - UNIT_DECIMALS)
+  }
+
+  // USD prices for both tokens
+  const priceFromUSD = await readPriceNormalized(tokenFrom, contracts.CHAINLINK_USD_QUOTE)
+  const priceToUSD = await readPriceNormalized(tokenTo, contracts.CHAINLINK_USD_QUOTE)
+
+  // Token decimals
   const decimalsOfSellToken = await (
     await ethers.getContractAt('IERC20Metadata', tokenFrom)
   ).decimals()
@@ -29,17 +37,12 @@ export const getExpectedOut = async (
     await ethers.getContractAt('IERC20Metadata', tokenTo)
   ).decimals()
 
-  const effectiveDecimalDifference =
-    decimalsOfSellToken + feedDecimals - decimalsOfBuyToken
+  const raw = (amount * priceFromUSD) / priceToUSD
 
-  let expectedOutputAmount
-  if (effectiveDecimalDifference >= 0) {
-    expectedOutputAmount =
-      (amount * price) / BigInt(10) ** effectiveDecimalDifference
+  const diff = BigInt(decimalsOfSellToken) - BigInt(decimalsOfBuyToken)
+  if (diff >= 0) {
+    return raw / 10n ** diff
   } else {
-    expectedOutputAmount =
-      amount * price * BigInt(10) ** -effectiveDecimalDifference
+    return raw * 10n ** -diff
   }
-
-  return expectedOutputAmount
 }

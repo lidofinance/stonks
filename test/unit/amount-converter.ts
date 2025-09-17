@@ -2,12 +2,8 @@ import { ethers } from 'hardhat'
 import { takeSnapshot, SnapshotRestorer, time } from '@nomicfoundation/hardhat-network-helpers'
 import { expect } from 'chai'
 
-import {
-  AmountConverter__factory,
-  IAmountConverter,
-  OracleRouter,
-  OracleRouter__factory,
-} from '../../typechain-types'
+import { AmountConverter__factory, IAmountConverter, OracleRouter } from '../../typechain-types'
+import { deployAndConfigureOracleRouter } from '../../utils/oracle-router'
 import { getContracts } from '../../utils/contracts'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
 
@@ -74,20 +70,11 @@ describe('AmountConverter', () => {
     snapshot = await takeSnapshot()
     factory = await ethers.getContractFactory('AmountConverter')
 
-    const [deployer] = await ethers.getSigners()
-    router = await new OracleRouter__factory(deployer).deploy(deployer.address, 18)
-    await router.waitForDeployment()
+    router = await deployAndConfigureOracleRouter({
+      feedRegistry: addresses.CHAINLINK_PRICE_FEED_REGISTRY,
+      tokensUsd: [addresses.STETH, addresses.DAI, addresses.USDC, addresses.USDT],
+    })
     routerAddress = await router.getAddress()
-
-    await configureRouterEthUsd(router, 86_400) // 24 hours
-
-    // Configure tokens on the router:
-    // - stETH via TOKEN/USD (to match chainlink-helpers expectations)
-    // - DAI, USDC, USDT via TOKEN/USD
-    await configureRouterTokenUsd(router, addresses.STETH, 86_400)
-    await configureRouterTokenUsd(router, addresses.DAI, 86_400)
-    await configureRouterTokenUsd(router, addresses.USDC, 86_400)
-    await configureRouterTokenUsd(router, addresses.USDT, 86_400)
 
     converter = await factory.deploy(
       routerAddress,
@@ -196,45 +183,11 @@ describe('AmountConverter', () => {
 
     it('uses ETH bridge path when configured (stETH/ETH * ETH/USD)', async () => {
       const [deployer] = await ethers.getSigners()
-      const bridgeRouter = await new OracleRouter__factory(deployer).deploy(deployer.address, 18)
-      await bridgeRouter.waitForDeployment()
-
-      // Configure bridge and feeds on the dedicated router
-      const readAggregatorAddress = async (base: string, quote: string) => {
-        const registryInterface = new ethers.Interface([
-          'function getFeed(address,address) view returns (address)',
-        ])
-        const registry = new ethers.Contract(
-          FEED_REGISTRY,
-          registryInterface,
-          (await ethers.getSigners())[0]
-        )
-        return registry.getFunction('getFeed').staticCall(base, quote)
-      }
-      const readTokenDecimals = async (token: string) => {
-        const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
-        const erc20 = new ethers.Contract(token, tokenInterface, (await ethers.getSigners())[0])
-        return erc20.getFunction('decimals').staticCall()
-      }
-
-      // ETH/USD bridge
-      await bridgeRouter.setEthUsdBridge(await readAggregatorAddress(WETH, USD), 86_400)
-      // stETH/ETH
-      await bridgeRouter.setTokenEthFeed(
-        addresses.STETH,
-        await readAggregatorAddress(addresses.STETH, WETH),
-        86_400,
-        await readTokenDecimals(addresses.STETH),
-        true
-      )
-      // DAI/USD
-      await bridgeRouter.setTokenUsdFeed(
-        addresses.DAI,
-        await readAggregatorAddress(addresses.DAI, USD),
-        86_400,
-        await readTokenDecimals(addresses.DAI),
-        true
-      )
+      const bridgeRouter = await deployAndConfigureOracleRouter({
+        feedRegistry: FEED_REGISTRY,
+        tokensUsd: [addresses.DAI],
+        tokensEth: [addresses.STETH],
+      })
 
       const bridgeConverter = await factory.deploy(
         await bridgeRouter.getAddress(),
@@ -271,10 +224,12 @@ describe('AmountConverter', () => {
 
     it('bubbles router staleness (OracleStale) on outdated feed', async () => {
       const [deployer] = await ethers.getSigners()
-      const staleRouter = await new OracleRouter__factory(deployer).deploy(deployer.address, 18)
-      await staleRouter.waitForDeployment()
-
-      // Bridge
+      const staleRouter = await deployAndConfigureOracleRouter({
+        feedRegistry: FEED_REGISTRY,
+        tokensUsd: [addresses.DAI, addresses.USDC],
+      })
+      // Overwrite DAI staleness to 1s to simulate staleness
+      // Reconfigure only DAI with tight window
       const registryInterface = new ethers.Interface([
         'function getFeed(address,address) view returns (address)',
       ])
@@ -283,33 +238,16 @@ describe('AmountConverter', () => {
         registryInterface,
         (await ethers.getSigners())[0]
       )
-      const readAggregatorAddress = (base: string, quote: string) =>
+      const getFeed = (base: string, quote: string) =>
         registry.getFunction('getFeed').staticCall(base, quote)
-      const readTokenDecimals = async (token: string) => {
-        const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
-        const erc20 = new ethers.Contract(token, tokenInterface, (await ethers.getSigners())[0])
-        return erc20.getFunction('decimals').staticCall()
-      }
-
-      await staleRouter.setEthUsdBridge(await readAggregatorAddress(WETH, USD), 86_400)
-
-      // Tight staleness on DAI/USD to force staleness
-      await staleRouter.setTokenUsdFeed(
+      const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
+      const erc20 = new ethers.Contract(
         addresses.DAI,
-        await readAggregatorAddress(addresses.DAI, USD),
-        1,
-        await readTokenDecimals(addresses.DAI),
-        true
+        tokenInterface,
+        (await ethers.getSigners())[0]
       )
-
-      // Normal on USDC/USD so only one side is tight
-      await staleRouter.setTokenUsdFeed(
-        addresses.USDC,
-        await readAggregatorAddress(addresses.USDC, USD),
-        86_400,
-        await readTokenDecimals(addresses.USDC),
-        true
-      )
+      const decimals = await erc20.getFunction('decimals').staticCall()
+      await staleRouter.setTokenUsdFeed(addresses.DAI, ethers.ZeroAddress, 1, decimals, true)
 
       const staleConverter = await factory.deploy(
         await staleRouter.getAddress(),

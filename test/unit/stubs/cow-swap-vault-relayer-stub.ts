@@ -20,6 +20,7 @@ import {
   OracleRouter__factory,
 } from '../../../typechain-types'
 import { OrderCreatedEvent } from '../../../typechain-types/contracts/Order'
+import { deployAndConfigureOracleRouter } from '../../../utils/oracle-router'
 
 type HardhatEthersSigner = Awaited<ReturnType<(typeof ethers)['getSigners']>>[number]
 
@@ -59,15 +60,25 @@ describe('CoWSwapVaultRelayerStub', async () => {
       answeredInRound: 1n,
       decimals: 18n,
     })
+    await feedRegistry.connect(manager).setFeed(contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
+      roundId: 1n,
+      answer: 1n * 10n ** 8n,
+      updatedAt: 0n,
+      startedAt: 0n,
+      answeredInRound: 1n,
+      decimals: 8n,
+    })
 
+    const oracleRouter = await deployAndConfigureOracleRouter({
+      feedRegistry: await feedRegistry.getAddress(),
+      tokensUsd: [contracts.STETH, contracts.DAI],
+    })
     const amountConverter = await new AmountConverter__factory(deployer).deploy(
-      feedRegistry,
+      await oracleRouter.getAddress(),
       [contracts.STETH],
       [contracts.DAI]
     )
     await amountConverter.waitForDeployment()
-    const oracleRouter = await new OracleRouter__factory(deployer).deploy(contracts.AGENT, 18)
-    await oracleRouter.waitForDeployment()
 
     const orderSample = await new Order__factory(deployer).deploy(
       contracts.AGENT,

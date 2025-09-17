@@ -4,6 +4,7 @@ import { deployStonksFactory } from './stonks-factory'
 import { deployAmountConverterFactory } from './amount-converter-factory'
 import { getStonksDeployment, getTokenConverterDeployment } from '../../utils/get-events'
 import { AmountConverter, Stonks, OracleRouter, OracleRouter__factory } from '../../typechain-types'
+import { getContracts } from '../../utils/contracts'
 
 export type DeployStonksParams = {
   factoryParams: {
@@ -23,7 +24,7 @@ export type DeployStonksParams = {
     oracleRouterAddress?: string
   }
   amountConverterParams: {
-    oracleRouter: string
+    oracleRouter?: string
     allowedTokensToSell: string[]
     allowedStableTokensToBuy: string[]
   }
@@ -54,15 +55,73 @@ export async function deployStonks({
 
   if (amountConverterAddress && oracleRouterAddress) {
     amountConverter = await ethers.getContractAt('AmountConverter', amountConverterAddress)
-    // If amountConverter is provided, we still need to get the oracleRouter from it
     oracleRouter = await ethers.getContractAt('OracleRouter', oracleRouterAddress)
   } else if (amountConverterParams) {
     const { amountConverterFactory } = await deployAmountConverterFactory(priceFeedRegistry)
-    const { oracleRouter, allowedTokensToSell, allowedStableTokensToBuy } = amountConverterParams
+
+    // Ensure OracleRouter exists; deploy and configure if not provided
+    let oracleRouterAddressLocal = amountConverterParams.oracleRouter
+    if (!oracleRouterAddressLocal) {
+      const [deployer] = await ethers.getSigners()
+      oracleRouter = await new OracleRouter__factory(deployer).deploy(
+        deployer.address,
+        18,
+        priceFeedRegistry as any
+      )
+      await oracleRouter.waitForDeployment()
+      oracleRouterAddressLocal = await oracleRouter.getAddress()
+
+      // Configure ETH/USD bridge
+      await oracleRouter.setEthUsdBridge(ethers.ZeroAddress, 86_400)
+
+      // Configure tokenFrom and tokenTo feeds as TOKEN/USD
+      const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
+      const erc20 = (addr: string) => new ethers.Contract(addr, tokenInterface, deployer)
+      const tokenFromDecimals = await erc20(tokenFrom).getFunction('decimals').staticCall()
+      const tokenToDecimals = await erc20(tokenTo).getFunction('decimals').staticCall()
+
+      await oracleRouter.setTokenUsdFeed(
+        tokenFrom,
+        ethers.ZeroAddress,
+        86_400,
+        tokenFromDecimals,
+        true
+      )
+      await oracleRouter.setTokenUsdFeed(tokenTo, ethers.ZeroAddress, 86_400, tokenToDecimals, true)
+    } else {
+      oracleRouter = await ethers.getContractAt('OracleRouter', oracleRouterAddressLocal)
+
+      // Ensure the router has both pair feeds configured when reusing an external router
+      try {
+        const [signer0] = await ethers.getSigners()
+        const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
+        const erc20 = (addr: string) => new ethers.Contract(addr, tokenInterface, signer0)
+        const tokenFromDecimals = await erc20(tokenFrom).getFunction('decimals').staticCall()
+        const tokenToDecimals = await erc20(tokenTo).getFunction('decimals').staticCall()
+        await oracleRouter.setEthUsdBridge(ethers.ZeroAddress, 86_400)
+        await oracleRouter.setTokenUsdFeed(
+          tokenFrom,
+          ethers.ZeroAddress,
+          86_400,
+          tokenFromDecimals,
+          true
+        )
+        await oracleRouter.setTokenUsdFeed(
+          tokenTo,
+          ethers.ZeroAddress,
+          86_400,
+          tokenToDecimals,
+          true
+        )
+      } catch (_) {
+        // ignore if caller is not authorized or feeds already set
+      }
+    }
+
     const deployTokenConverterTX = await amountConverterFactory.deployAmountConverter(
-      oracleRouter,
-      allowedTokensToSell,
-      allowedStableTokensToBuy
+      oracleRouterAddressLocal,
+      amountConverterParams.allowedTokensToSell,
+      amountConverterParams.allowedStableTokensToBuy
     )
     const receipt = await deployTokenConverterTX.wait()
 
@@ -73,14 +132,13 @@ export async function deployStonks({
   } else {
     throw new Error()
   }
-  console.log('Oracle Router Address: ', amountConverterParams.oracleRouter)
 
   const deployStonksTx = await stonksFactory.deployStonks(
     manager,
     tokenFrom,
     tokenTo,
     await amountConverter.getAddress(),
-    amountConverterParams.oracleRouter,
+    oracleRouter ? await oracleRouter.getAddress() : oracleRouterAddress!,
     orderDuration,
     marginInBps,
     priceToleranceInBps

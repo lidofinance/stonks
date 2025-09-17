@@ -40,10 +40,7 @@ describe('Stonks', function () {
     ContractFactory = await ethers.getContractFactory('Stonks')
     AssetRecovererFactory = await ethers.getContractFactory('AssetRecovererTest')
     managerAddress = await signer.getAddress()
-    const oracleRouterFactory = (await ethers.getContractFactory(
-      'OracleRouter'
-    )) as OracleRouter__factory
-    oracleRouter = await oracleRouterFactory.deploy(contracts.AGENT, 18)
+    // Let deployStonks deploy and configure OracleRouter to ensure permissions and feeds are set
 
     const { stonks, amountConverter: tokenConverter } = await deployStonks({
       factoryParams: {
@@ -59,9 +56,11 @@ describe('Stonks', function () {
         marginInBps: marginInBps,
         orderDuration: 3600,
         priceToleranceInBps: 100,
+        amountConverterAddress: undefined,
+        oracleRouterAddress: undefined,
       },
       amountConverterParams: {
-        oracleRouter: await oracleRouter.getAddress(),
+        oracleRouter: undefined,
         allowedTokensToSell: [contracts.STETH],
         allowedStableTokensToBuy: [contracts.DAI],
       },
@@ -93,7 +92,11 @@ describe('Stonks', function () {
         'OracleRouter'
       )) as OracleRouter__factory
       const oracleRouter = await (
-        await oracleRouterFactory.deploy(contracts.AGENT, 18)
+        await oracleRouterFactory.deploy(
+          contracts.AGENT,
+          18,
+          contracts.CHAINLINK_PRICE_FEED_REGISTRY
+        )
       ).getAddress()
 
       validParams = {

@@ -11,7 +11,6 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {GPv2Order} from "./lib/GPv2Order.sol";
 import {AssetRecoverer} from "./AssetRecoverer.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
-
 /**
  * @title CoW Protocol Programmatic Order
  * @dev Handles the execution of individual trading order for the Stonks contract on CoW Protocol.
@@ -137,13 +136,18 @@ contract Order is IERC1271, AssetRecoverer {
         bytes32 hash_,
         bytes calldata
     ) external view returns (bytes4 magicValue) {
-        if (hash_ != orderHash) revert InvalidOrderHash(orderHash, hash_);
+        if (hash_ != orderHash){
+            revert InvalidOrderHash(orderHash, hash_);
+        }
+
         if (validTo < block.timestamp) revert OrderExpired(validTo);
 
         uint256 currentCalculatedBuyAmount = IStonks(stonks).estimateTradeOutput(sellAmount);
 
         // Favorable move: above the floor is always valid.
-        if (currentCalculatedBuyAmount >= buyAmount) return ERC1271_MAGIC_VALUE;
+        if (currentCalculatedBuyAmount >= buyAmount) {
+            return ERC1271_MAGIC_VALUE;
+        }
 
         // Pair-profiled tolerance; use global if pair returns 0 (unset).
         uint256 priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
