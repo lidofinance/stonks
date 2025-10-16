@@ -14,6 +14,7 @@ export type Contracts = {
   VAULT_RELAYER: string
   DOMAIN_SEPARATOR: string
   MANAGER: string
+  ORACLE_ROUTER: string
 }
 
 export const mainnet: Contracts = {
@@ -31,6 +32,7 @@ export const mainnet: Contracts = {
   VAULT_RELAYER: '0xC92E8bdf79f0507f65a392b0ab4667716BFE0110',
   DOMAIN_SEPARATOR: '0xc078f884a2676e1345748b1feace7b0abee5d00ecadb6e574dcdd109a63e8943',
   MANAGER: '0xa02FC823cCE0D016bD7e17ac684c9abAb2d6D647',
+  ORACLE_ROUTER: '0x0000000000000000000000000000000000000000',
 }
 
 export const holesky: Contracts = {
@@ -48,6 +50,7 @@ export const holesky: Contracts = {
   // https://holesky.etherscan.io/address/0x4f5db3A496A0fA5D8F0Bee0ced7526d678790De1
   DOMAIN_SEPARATOR: '0x90b97fde628a8331305c021e506ae0ad8664dc2a4be80f63dff923b7173d9479',
   MANAGER: '0x96d2Ff1C4D30f592B91fd731E218247689a76915',
+  ORACLE_ROUTER: '0x0000000000000000000000000000000000000000',
 }
 
 export const getContracts = () => {

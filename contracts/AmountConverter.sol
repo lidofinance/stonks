@@ -4,6 +4,7 @@ pragma solidity 0.8.23;
 
 import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
 import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 /**
  * @title AmountConverter
  * @dev Converts an amount of one token into another using OracleRouter’s USD-anchored prices.
@@ -27,6 +28,8 @@ contract AmountConverter is IAmountConverter {
     error SellTokenNotAllowed(address tokenFrom);
     error BuyTokenNotAllowed(address tokenTo);
     error SameTokensConversion();
+    error InvalidDecimalsDifference(uint8 diff);
+    error AmountTooLarge(uint256 amount);
 
     /**
      * @param oracleRouter_ OracleRouter used for USD-anchored pricing and cached decimals.
@@ -44,14 +47,14 @@ contract AmountConverter is IAmountConverter {
 
         ORACLE_ROUTER = IOracleRouter(oracleRouter_);
 
-        for (uint256 i = 0; i < allowedTokensToBuy_.length; ++i) {
+        for (uint256 i; i < allowedTokensToBuy_.length; ++i) {
             if (allowedTokensToBuy_[i] == address(0))
                 revert InvalidAllowedTokenToBuy(allowedTokensToBuy_[i]);
             allowedTokensToBuy[allowedTokensToBuy_[i]] = true;
             emit AllowedTokenToBuyAdded(allowedTokensToBuy_[i]);
         }
 
-        for (uint256 i = 0; i < allowedTokensToSell_.length; ++i) {
+        for (uint256 i; i < allowedTokensToSell_.length; ++i) {
             if (allowedTokensToSell_[i] == address(0))
                 revert InvalidAllowedTokenToSell(allowedTokensToSell_[i]);
             allowedTokensToSell[allowedTokensToSell_[i]] = true;
@@ -78,29 +81,29 @@ contract AmountConverter is IAmountConverter {
         if (allowedTokensToSell[tokenFrom_] == false) revert SellTokenNotAllowed(tokenFrom_);
         if (allowedTokensToBuy[tokenTo_] == false) revert BuyTokenNotAllowed(tokenTo_);
         if (amountFrom_ == 0) revert InvalidAmount(amountFrom_);
+        if (amountFrom_ > type(uint128).max) revert AmountTooLarge(amountFrom_);
 
-        (uint256 priceFromUSD, uint256 priceToUSD) = ORACLE_ROUTER.getUsdPrices(
-            tokenFrom_,
-            tokenTo_
-        );
+        (
+            uint256 priceFromUSD,
+            uint256 priceToUSD,
+            uint8 decimalsOfSellToken,
+            uint8 decimalsOfBuyToken
+        ) = ORACLE_ROUTER.getPricesAndDecimals(tokenFrom_, tokenTo_);
 
-        (uint8 decimalsOfSellToken8, uint8 decimalsOfBuyToken8) = ORACLE_ROUTER.getTokenDecimals(
-            tokenFrom_,
-            tokenTo_
-        );
+        bool scaleDown = decimalsOfSellToken >= decimalsOfBuyToken;
+        uint8 diff = scaleDown
+            ? (decimalsOfSellToken - decimalsOfBuyToken)
+            : (decimalsOfBuyToken - decimalsOfSellToken);
+        if (diff > 38) revert InvalidDecimalsDifference(diff);
 
-        uint256 decimalsOfSellToken = uint256(decimalsOfSellToken8);
-        uint256 decimalsOfBuyToken = uint256(decimalsOfBuyToken8);
+        uint256 raw = Math.mulDiv(amountFrom_, priceFromUSD, priceToUSD);
 
-        int256 effectiveDecimalDifference = int256(decimalsOfSellToken) -
-            int256(decimalsOfBuyToken);
-
-        uint256 raw = (amountFrom_ * priceFromUSD) / priceToUSD;
-
-        if (effectiveDecimalDifference >= 0) {
-            expectedOutputAmount = raw / 10 ** uint256(effectiveDecimalDifference);
+        if (scaleDown) {
+            // Use Math.mulDiv for safe division to prevent overflow
+            expectedOutputAmount = Math.mulDiv(raw, 1, 10 ** diff);
         } else {
-            expectedOutputAmount = raw * 10 ** uint256(-effectiveDecimalDifference);
+            // Use Math.mulDiv for safe multiplication to prevent overflow
+            expectedOutputAmount = Math.mulDiv(raw, 10 ** diff, 1);
         }
     }
 }

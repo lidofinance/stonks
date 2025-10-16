@@ -130,62 +130,53 @@ contract Order is IERC1271, AssetRecoverer {
      * @dev Checks include:
      *      - Matching the provided hash with the stored order hash.
      *      - Confirming order validity within the specified timeframe (`validTo`).
-     *      - Price floor enforcement with asymmetric tolerance.
+     *      - Price validation: protects against both price improvements and unfavorable moves beyond tolerance.
+     *
+     * Price Logic:
+     * - ACCEPT: Current price equals expected price (perfect match)
+     * - REJECT: Current price is better than expected (any improvement makes order unfulfillable)
+     * - ACCEPT: Current price is slightly worse than expected (within tolerance)
+     * - REJECT: Current price is much worse than expected (beyond tolerance)
+     *
+     * Note: Any price improvement is rejected because it makes the order unrealistic for fulfillment
+     * by solvers who cannot buy tokens at the limit price when market price is higher.
      */
-    function isValidSignature(
-        bytes32 hash_,
-        bytes calldata
-    ) external view returns (bytes4 magicValue) {
-        if (hash_ != orderHash){
-            revert InvalidOrderHash(orderHash, hash_);
-        }
-
+    function isValidSignature(bytes32 hash_, bytes calldata) external view returns (bytes4 magicValue) {
+        if (hash_ != orderHash) revert InvalidOrderHash(orderHash, hash_);
         if (validTo < block.timestamp) revert OrderExpired(validTo);
 
         uint256 currentCalculatedBuyAmount = IStonks(stonks).estimateTradeOutput(sellAmount);
 
-        // Favorable move: above the floor is always valid.
-        if (currentCalculatedBuyAmount >= buyAmount) {
+        // Perfect match - accept
+        if (currentCalculatedBuyAmount == buyAmount) {
             return ERC1271_MAGIC_VALUE;
         }
 
-        // Pair-profiled tolerance; use global if pair returns 0 (unset).
-        uint256 priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
-
-        if (priceToleranceInBasisPoints == 0) {
-            priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
-        }
-        /// Price floor check (downside-only). We commit to a floor (`buyAmount`) and allow a small dip.
-        /// If the live quote stays above the allowed dip, accept; otherwise reject.
-        ///
-        /// Visual (buy-token units; not to scale):
-        ///
-        ///   minAcceptable                buyAmount
-        ///         |----------------------*------------------------------------> amount
-        ///         |<---- maxShortfall --->|
-        ///         |<- short ->|               currentCalculatedBuyAmount
-        ///                     |------*---------------------------------------->
-        ///
-        /// Terms:
-        ///   - minAcceptable: the lowest we’ll take after applying tolerance.
-        ///   - maxShortfall:  the allowed dip from the floor (tolerance in bps).
-        ///   - shortfall:     how far the live quote is below the floor.
-        ///
-        /// Rule: accept if currentCalculatedBuyAmount ≥ minAcceptable; otherwise revert.
-        uint256 shortfall = buyAmount - currentCalculatedBuyAmount;
-        uint256 maxToleratedShortfall = (buyAmount * priceToleranceInBasisPoints) /
-            MAX_BASIS_POINTS;
-
-        if (shortfall > maxToleratedShortfall) {
-            // `maxAcceptedAmount` denotes the minimum acceptable buy amount under tolerance.
+        // Reject any price improvement - makes order unfulfillable
+        if (currentCalculatedBuyAmount > buyAmount) {
             revert PriceConditionChanged(
-                buyAmount - maxToleratedShortfall,
-                currentCalculatedBuyAmount
+                buyAmount,                           // Expected price (limit)
+                currentCalculatedBuyAmount          // Actual current price (better)
             );
         }
 
+        // Current price is worse than expected - check tolerance
+        uint256 shortfall = buyAmount - currentCalculatedBuyAmount;
+        uint256 priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
+        uint256 maxToleratedShortfall = (buyAmount * priceToleranceInBasisPoints) / MAX_BASIS_POINTS;
+
+        // Reject if beyond tolerance
+        if (shortfall > maxToleratedShortfall) {
+            revert PriceConditionChanged(
+                buyAmount - maxToleratedShortfall,  // Minimum acceptable price
+                currentCalculatedBuyAmount         // Actual current price
+            );
+        }
+
+        // Accept if within tolerance
         return ERC1271_MAGIC_VALUE;
     }
+
 
     /**
      * @notice Retrieves the details of the placed order.
@@ -217,11 +208,18 @@ contract Order is IERC1271, AssetRecoverer {
      * @dev Can only be called if the order's validity period has passed.
      */
     function recoverTokenFrom() external {
-        if (validTo >= block.timestamp) revert OrderNotExpired(validTo, block.timestamp);
+        if (validTo >= block.timestamp) {
+            revert OrderNotExpired(validTo, block.timestamp);
+        }
+
         (address tokenFrom, , ) = IStonks(stonks).getOrderParameters();
         uint256 balance = IERC20(tokenFrom).balanceOf(address(this));
+
         // Prevents dust transfers to avoid rounding issues for rebasable tokens like stETH.
-        if (balance < MIN_POSSIBLE_BALANCE) revert InvalidAmountToRecover(balance);
+        if (balance < MIN_POSSIBLE_BALANCE) {
+            revert InvalidAmountToRecover(balance);
+        }
+
         IERC20(tokenFrom).safeTransfer(stonks, balance);
     }
 
@@ -233,7 +231,11 @@ contract Order is IERC1271, AssetRecoverer {
      */
     function recoverERC20(address token_, uint256 amount_) public override onlyAgentOrManager {
         (address tokenFrom, , ) = IStonks(stonks).getOrderParameters();
-        if (token_ == tokenFrom) revert CannotRecoverTokenFrom(tokenFrom);
+
+        if (token_ == tokenFrom) {
+            revert CannotRecoverTokenFrom(tokenFrom);
+        }
+
         AssetRecoverer.recoverERC20(token_, amount_);
     }
 }

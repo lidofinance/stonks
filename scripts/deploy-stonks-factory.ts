@@ -10,10 +10,12 @@ import { OrderSampleDeployedEvent } from '../typechain-types/contracts/factories
 const AGENT = ''
 const COWSWAP_SETTLEMENT = ''
 const COWSWAP_VAULT_RELAYER = ''
+const ORACLE_ROUTER = ''
 
 assert(ethers.isAddress(AGENT), 'AGENT is not a valid address')
 assert(ethers.isAddress(COWSWAP_SETTLEMENT), 'COWSWAP_SETTLEMENT is not a valid address')
 assert(ethers.isAddress(COWSWAP_VAULT_RELAYER), 'COWSWAP_VAULT_RELAYER is not a valid address')
+assert(ethers.isAddress(ORACLE_ROUTER), 'ORACLE_ROUTER is not a valid address')
 
 async function main() {
   // prettier-ignore
@@ -26,16 +28,16 @@ async function main() {
   console.log(`Deployment parameters:`)
   console.log(`  * ${fmt.name('Agent')} address: ${fmt.value(AGENT)}`)
   console.log(`  * ${fmt.name('CoWSwapSettlement')} address: ${fmt.value(COWSWAP_SETTLEMENT)}`)
-  console.log(
-    `  * ${fmt.name('CoWSwapVaultRelayer')} address: ${fmt.value(COWSWAP_VAULT_RELAYER)}\n`
-  )
+  console.log(`  * ${fmt.name('CoWSwapVaultRelayer')} address: ${fmt.value(COWSWAP_VAULT_RELAYER)}`)
+  console.log(`  * ${fmt.name('OracleRouter')} address: ${fmt.value(ORACLE_ROUTER)}\n`)
 
   await confirmOrAbort('Proceed?')
 
   const stonksFactory = await new StonksFactory__factory(deployer).deploy(
     AGENT,
     COWSWAP_SETTLEMENT,
-    COWSWAP_VAULT_RELAYER
+    COWSWAP_VAULT_RELAYER,
+    ORACLE_ROUTER
   )
 
   const receipt = await waitForDeployment(stonksFactory.deploymentTransaction()!)
@@ -67,7 +69,11 @@ async function main() {
     `Sample of the ${fmt.name('Order')} contract was deployed at ${fmt.address(orderAddress)}\n`
   )
   if (!['localhost', 'hardhat'].includes(network.name)) {
-    await verify(stonksFactoryAddress, [AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER], receipt)
+    await verify(
+      stonksFactoryAddress,
+      [AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER, ORACLE_ROUTER],
+      receipt
+    )
   } else {
     console.log(`Deployed on the local hardhat network, verification is skipped.`)
   }

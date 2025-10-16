@@ -19,11 +19,14 @@ const AGENT = ''
 const STONKS_FACTORY = ''
 const AMOUNT_CONVERTER = ''
 const MANAGER_ADDRESS = ''
+const ORACLE_ROUTER = ''
 const STONKS_CONFIGS: Record<string, StonksConfig> = {}
 
 assert(ethers.isAddress(AGENT), 'AGENT is not a valid address')
 assert(ethers.isAddress(STONKS_FACTORY), 'STONKS_FACTORY is not a valid address')
 assert(ethers.isAddress(AMOUNT_CONVERTER), 'AMOUNT_CONVERTER is not a valid address')
+assert(ethers.isAddress(ORACLE_ROUTER), 'ORACLE_ROUTER is not a valid address')
+assert(ethers.isAddress(MANAGER_ADDRESS), 'MANAGER_ADDRESS is not a valid address')
 assert(Object.values(STONKS_CONFIGS).length > 0, 'STONKS_CONFIGS is empty')
 
 async function main() {
@@ -82,6 +85,7 @@ async function main() {
       tokenTo,
       amountConverter,
       order,
+      oracleRouter,
       orderDurationInSeconds,
       marginInBasisPoints,
       priceToleranceInBasisPoints,
@@ -103,6 +107,7 @@ async function main() {
           tokenTo,
           amountConverter,
           orderSample,
+          ORACLE_ROUTER,
           orderDurationInSeconds,
           marginInBasisPoints,
           priceToleranceInBasisPoints,
@@ -118,10 +123,14 @@ async function main() {
     assert.equal(tokenFrom.toLowerCase(), config.tokenFrom.toLowerCase())
     assert.equal(tokenTo.toLowerCase(), config.tokenTo.toLowerCase())
     assert.equal(amountConverter.toLowerCase(), AMOUNT_CONVERTER.toLowerCase())
+    assert.equal(oracleRouter.toLowerCase(), ORACLE_ROUTER.toLowerCase())
     assert.equal(order.toLowerCase(), orderSample.toLowerCase())
-    assert.equal(orderDurationInSeconds, config.orderDurationInSeconds)
-    assert.equal(marginInBasisPoints, config.marginBasisPoints)
-    assert.equal(priceToleranceInBasisPoints, config.priceToleranceInBasisPoints)
+    assert.equal(orderDurationInSeconds.toString(), config.orderDurationInSeconds.toString())
+    assert.equal(marginInBasisPoints.toString(), config.marginBasisPoints.toString())
+    assert.equal(
+      priceToleranceInBasisPoints.toString(),
+      config.priceToleranceInBasisPoints.toString()
+    )
 
     console.log()
   }

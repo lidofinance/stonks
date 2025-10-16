@@ -43,11 +43,7 @@ async function main() {
 
   const factory = AmountConverterFactory__factory.connect(AMOUNT_CONVERTER_FACTORY, deployer)
 
-  const tx = await factory.deployAmountConverter(
-    ORACLE_ROUTER,
-    ALLOWED_TOKENS_TO_SELL,
-    ALLOWED_TOKENS_TO_BUY
-  )
+  const tx = await factory.deployAmountConverter(ALLOWED_TOKENS_TO_SELL, ALLOWED_TOKENS_TO_BUY)
 
   const receipt = await waitForDeployment(tx)
 
@@ -76,7 +72,6 @@ async function main() {
   } else {
     console.log(`Deployed on the local hardhat network, verification is skipped.`)
   }
-
   assert.equal(oracleRouter.toLowerCase(), ORACLE_ROUTER.toLowerCase())
   assert.deepEqual(
     allowedTokensToSell.map((a) => a.toLowerCase()),

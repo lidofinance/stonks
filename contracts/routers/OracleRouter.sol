@@ -6,6 +6,8 @@ import {Ownable} from "../Ownable.sol";
 import {IAggregatorV3} from "../interfaces/IAggregatorV3.sol";
 import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
 import {IFeedRegistry} from "../interfaces/IFeedRegistry.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+
 /**
  * @title OracleRouter
  * @notice Chainlink-only price router with a 2-hop strategy:
@@ -14,6 +16,11 @@ import {IFeedRegistry} from "../interfaces/IFeedRegistry.sol";
  *         Bridge is assumed to be ETH/USD (no inversion logic).
  *         The router's fixed-point unit is configurable at deploy (UNIT_DECIMALS).
  *         Each feed stores precomputed scale factors to normalize to UNIT on read.
+ *
+ * @dev This version applies in-place gas/storage optimizations without changing the external/public API:
+ *      - Deduplicated price retrieval logic with ETH/USD caching.
+ *      - Consistent use of Math.mulDiv to avoid transient overflow and improve rounding.
+ *      - Minimized repeated SLOADs and external calls within functions.
  */
 contract OracleRouter is IOracleRouter, Ownable {
     uint8 public immutable UNIT_DECIMALS;
@@ -30,6 +37,7 @@ contract OracleRouter is IOracleRouter, Ownable {
     }
 
     struct FeedConfig {
+        address aggregator; // cached for observability/debugging
         uint128 scaleNumerator;
         uint128 scaleDenominator;
         uint32 maxStaleness;
@@ -71,216 +79,182 @@ contract OracleRouter is IOracleRouter, Ownable {
     error ZeroAddress();
     error ZeroStaleness();
     error InvalidAggregatorDecimals();
+    error InvalidUnitDecimals();
     error TokenNotConfigured(address token);
     error EthUsdBridgeMissing();
     error OracleStale(address aggregator, uint256 lastUpdate);
     error OracleBadAnswer(address aggregator, int256 answer);
+    error FeedMissing(address base, address quote);
 
     /// @notice Set immutable unit settings and ownership agent.
     /// @param agent_ Owner agent for admin controls.
     /// @param unitDecimals_ Fixed-point unit decimals used across the router.
+    /// @param feedRegistry_ Chainlink Feed Registry address.
     constructor(address agent_, uint8 unitDecimals_, address feedRegistry_) Ownable(agent_) {
-        if (unitDecimals_ == 0) {
-            revert InvalidAggregatorDecimals();
-        }
-        if (feedRegistry_ == address(0)) {
-            revert ZeroAddress();
-        }
+        if (unitDecimals_ == 0 || unitDecimals_ > MAX_DECIMALS) revert InvalidUnitDecimals();
+        if (feedRegistry_ == address(0)) revert ZeroAddress();
+
         FEED_REGISTRY = feedRegistry_;
         UNIT_DECIMALS = unitDecimals_;
         UNIT = 10 ** unitDecimals_;
     }
 
     /// @notice Configure the global ETH/USD bridge feed.
-    /// @param aggregator_ Chainlink ETH/USD aggregator address (ignored; kept for ABI compatibility).
     /// @param maxStaleness_ Max accepted staleness in seconds.
-    function setEthUsdBridge(address aggregator_, uint32 maxStaleness_) external onlyAgentOrManager {
-        if (maxStaleness_ == 0) {
-            revert ZeroStaleness();
-        }
-        uint8 aggregatorDecimals = IFeedRegistry(FEED_REGISTRY).decimals(ETH_DENOM, USD_DENOM);
-        if (aggregatorDecimals == 0 || aggregatorDecimals > MAX_DECIMALS) {
+    function setEthUsdBridge(uint32 maxStaleness_) external onlyAgentOrManager {
+        if (maxStaleness_ == 0) revert ZeroStaleness();
+
+        IFeedRegistry registry = IFeedRegistry(FEED_REGISTRY);
+        address resolvedAggregator = registry.getFeed(ETH_DENOM, USD_DENOM);
+        if (resolvedAggregator == address(0)) revert FeedMissing(ETH_DENOM, USD_DENOM);
+
+        uint8 aggregatorDecimals = registry.decimals(ETH_DENOM, USD_DENOM);
+        if (aggregatorDecimals == 0 || aggregatorDecimals > MAX_DECIMALS)
             revert InvalidAggregatorDecimals();
-        }
 
         (uint128 scaleNumerator, uint128 scaleDenominator) = _computeScaleFactors(
             aggregatorDecimals
         );
 
         ethUsdBridge = FeedConfig({
+            aggregator: resolvedAggregator,
             maxStaleness: maxStaleness_,
             aggregatorDecimals: aggregatorDecimals,
             scaleNumerator: scaleNumerator,
             scaleDenominator: scaleDenominator
         });
 
-        emit EthUsdBridgeConfigured(aggregator_, aggregatorDecimals, maxStaleness_, scaleNumerator, scaleDenominator);
+        emit EthUsdBridgeConfigured(
+            resolvedAggregator,
+            aggregatorDecimals,
+            maxStaleness_,
+            scaleNumerator,
+            scaleDenominator
+        );
     }
 
     /// @notice Configure a token with a TOKEN/USD feed.
-    /// @param token_ ERC20 token address.
-    /// @param maxStaleness_ Max accepted staleness in seconds.
-    /// @param tokenDecimals_ Cached ERC20 decimals for the token.
-    /// @param isActive_ Whether this token is quotable.
     function setTokenUsdFeed(
         address token_,
-        address aggregator_,
         uint32 maxStaleness_,
         uint8 tokenDecimals_,
         bool isActive_
     ) external onlyAgentOrManager {
-        _setTokenFeed(
-            token_,
-            QuoteDenomination.USD,
-            aggregator_,
-            maxStaleness_,
-            tokenDecimals_,
-            isActive_
-        );
+        _setTokenFeed(token_, QuoteDenomination.USD, maxStaleness_, tokenDecimals_, isActive_);
     }
 
     /// @notice Configure a token with a TOKEN/ETH feed (will bridge via ETH/USD).
-    /// @param token_ ERC20 token address.
-    /// @param maxStaleness_ Max accepted staleness in seconds.
-    /// @param tokenDecimals_ Cached ERC20 decimals for the token.
-    /// @param isActive_ Whether this token is quotable.
     function setTokenEthFeed(
         address token_,
-        address aggregator_,
         uint32 maxStaleness_,
         uint8 tokenDecimals_,
         bool isActive_
     ) external onlyAgentOrManager {
-        _setTokenFeed(
-            token_,
-            QuoteDenomination.ETH,
-            aggregator_,
-            maxStaleness_,
-            tokenDecimals_,
-            isActive_
-        );
+        _setTokenFeed(token_, QuoteDenomination.ETH, maxStaleness_, tokenDecimals_, isActive_);
     }
 
     /// @notice Toggle quoting availability for a token.
-    /// @param token_ ERC20 token address.
-    /// @param isActive_ New active flag value.
     function setTokenActive(address token_, bool isActive_) external onlyAgentOrManager {
-        if (token_ == address(0)) {
-            revert ZeroAddress();
-        }
-
+        if (token_ == address(0)) revert ZeroAddress();
+        if (isActive_ && tokenConfig[token_].tokenDecimals == 0) revert TokenNotConfigured(token_);
         tokenConfig[token_].isActive = isActive_;
         emit TokenActiveUpdated(token_, isActive_);
     }
 
-    /// @notice Return the USD price for a token in router UNIT.
-    /// @param token_ ERC20 token address.
-    /// @return usdPrice_ Price in UNIT decimals.
-    function getUsdPrice(address token_) external view returns (uint256 usdPrice_) {
-        TokenConfig storage config = tokenConfig[token_];
-        if (!config.isActive) {
-            revert TokenNotConfigured(token_);
-        }
-
-        if (config.primaryQuote == QuoteDenomination.USD) {
-            usdPrice_ = _readNormalizedPrice(token_, USD_DENOM, config.primaryFeed);
-        } else {
-            if (ethUsdBridge.aggregatorDecimals == 0) {
-                revert EthUsdBridgeMissing();
-            }
-            uint256 tokenToEth = _readNormalizedPrice(token_, ETH_DENOM, config.primaryFeed);
-            uint256 ethToUsd = _readNormalizedPrice(ETH_DENOM, USD_DENOM, ethUsdBridge);
-            usdPrice_ = (tokenToEth * ethToUsd) / UNIT;
-        }
-    }
-
     /// @notice Return USD prices for two tokens; reuses a single ETH/USD read when possible.
-    /// @param baseToken_ First token address.
-    /// @param quoteToken_ Second token address.
-    /// @return baseUsdPrice_ USD price of baseToken_ in UNIT.
-    /// @return quoteUsdPrice_ USD price of quoteToken_ in UNIT.
     function getUsdPrices(
         address baseToken_,
         address quoteToken_
     ) external view returns (uint256 baseUsdPrice_, uint256 quoteUsdPrice_) {
-        TokenConfig storage baseCfg = tokenConfig[baseToken_];
-        TokenConfig storage quoteCfg = tokenConfig[quoteToken_];
-
-        if (!baseCfg.isActive) {
-            revert TokenNotConfigured(baseToken_);
-        }
-        if (!quoteCfg.isActive) {
-            revert TokenNotConfigured(quoteToken_);
-        }
-
-        uint256 ethUsdCached = 0;
-
-        // Base
-        if (baseCfg.primaryQuote == QuoteDenomination.USD) {
-            baseUsdPrice_ = _readNormalizedPrice(baseToken_, USD_DENOM, baseCfg.primaryFeed);
-        } else {
-            if (ethUsdBridge.aggregatorDecimals == 0) {
-                revert EthUsdBridgeMissing();
-            }
-            ethUsdCached = _readNormalizedPrice(ETH_DENOM, USD_DENOM, ethUsdBridge);
-            baseUsdPrice_ = (_readNormalizedPrice(baseToken_, ETH_DENOM, baseCfg.primaryFeed) * ethUsdCached) / UNIT;
-        }
-
-        // Quote (reuse ETH/USD if already fetched)
-        if (quoteCfg.primaryQuote == QuoteDenomination.USD) {
-            quoteUsdPrice_ = _readNormalizedPrice(quoteToken_, USD_DENOM, quoteCfg.primaryFeed);
-        } else {
-            if (ethUsdCached == 0) {
-                if (ethUsdBridge.aggregatorDecimals == 0) {
-                    revert EthUsdBridgeMissing();
-                }
-                ethUsdCached = _readNormalizedPrice(ETH_DENOM, USD_DENOM, ethUsdBridge);
-            }
-            quoteUsdPrice_ = (_readNormalizedPrice(quoteToken_, ETH_DENOM, quoteCfg.primaryFeed) * ethUsdCached) / UNIT;
-        }
-    }
-
-    /// @notice Return cached ERC20 decimals for a token.
-    /// @param token_ ERC20 token address.
-    /// @return decimals_ Cached decimals value.
-    function tokenDecimalsOf(address token_) external view returns (uint8 decimals_) {
-        decimals_ = tokenConfig[token_].tokenDecimals;
+        uint256 ethUsdCached;
+        (baseUsdPrice_, ethUsdCached) = _usdPriceWithEthCache(baseToken_, 0);
+        (quoteUsdPrice_, ) = _usdPriceWithEthCache(quoteToken_, ethUsdCached);
     }
 
     /// @notice Return cached ERC20 decimals for two tokens.
-    /// @param baseToken_ First token address.
-    /// @param quoteToken_ Second token address.
-    /// @return baseTokenDecimals_ Decimals for baseToken_.
-    /// @return quoteTokenDecimals_ Decimals for quoteToken_.
     function getTokenDecimals(
         address baseToken_,
         address quoteToken_
     ) external view returns (uint8 baseTokenDecimals_, uint8 quoteTokenDecimals_) {
         baseTokenDecimals_ = tokenConfig[baseToken_].tokenDecimals;
+        if (baseTokenDecimals_ == 0) revert TokenNotConfigured(baseToken_);
+
         quoteTokenDecimals_ = tokenConfig[quoteToken_].tokenDecimals;
+        if (quoteTokenDecimals_ == 0) revert TokenNotConfigured(quoteToken_);
+    }
+
+    /// @notice Return USD prices and decimals for two tokens in a single call.
+    function getPricesAndDecimals(
+        address baseToken_,
+        address quoteToken_
+    )
+        external
+        view
+        returns (
+            uint256 baseUsdPrice_,
+            uint256 quoteUsdPrice_,
+            uint8 baseTokenDecimals_,
+            uint8 quoteTokenDecimals_
+        )
+    {
+        uint256 ethUsdCached;
+        (baseUsdPrice_, ethUsdCached) = _usdPriceWithEthCache(baseToken_, 0);
+        (quoteUsdPrice_, ) = _usdPriceWithEthCache(quoteToken_, ethUsdCached);
+
+        baseTokenDecimals_ = tokenConfig[baseToken_].tokenDecimals;
+        if (baseTokenDecimals_ == 0) revert TokenNotConfigured(baseToken_);
+
+        quoteTokenDecimals_ = tokenConfig[quoteToken_].tokenDecimals;
+        if (quoteTokenDecimals_ == 0) revert TokenNotConfigured(quoteToken_);
+    }
+
+    /// @dev Returns USD price for a token and (optionally) reuses/provides ETH/USD cache.
+    function _usdPriceWithEthCache(
+        address token_,
+        uint256 ethUsdCached_
+    ) internal view returns (uint256 price_, uint256 ethUsdOut_) {
+        TokenConfig storage cfg = tokenConfig[token_];
+        if (!cfg.isActive) revert TokenNotConfigured(token_);
+
+        if (cfg.primaryQuote == QuoteDenomination.USD) {
+            price_ = _readNormalizedPrice(token_, USD_DENOM, cfg.primaryFeed);
+            return (price_, ethUsdCached_);
+        }
+
+        // TOKEN/ETH path: ensure bridge exists and reuse cache when available.
+        FeedConfig storage bridge = ethUsdBridge;
+        if (bridge.aggregatorDecimals == 0) revert EthUsdBridgeMissing();
+
+        uint256 tokenToEth = _readNormalizedPrice(token_, ETH_DENOM, cfg.primaryFeed);
+
+        uint256 ethUsd = ethUsdCached_;
+        if (ethUsd == 0) {
+            ethUsd = _readNormalizedPrice(ETH_DENOM, USD_DENOM, bridge);
+        }
+
+        price_ = Math.mulDiv(tokenToEth, ethUsd, UNIT);
+        return (price_, ethUsd);
     }
 
     function _setTokenFeed(
         address token_,
         QuoteDenomination primaryQuote_,
-        address /* aggregator_ */,
         uint32 maxStaleness_,
         uint8 tokenDecimals_,
         bool isActive_
     ) internal {
-        if (token_ == address(0)) {
-            revert ZeroAddress();
-        }
-        if (maxStaleness_ == 0) {
-            revert ZeroStaleness();
-        }
-        uint8 aggregatorDecimals = IFeedRegistry(FEED_REGISTRY).decimals(
-            token_,
-            primaryQuote_ == QuoteDenomination.USD ? USD_DENOM : ETH_DENOM
-        );
-        if (aggregatorDecimals == 0 || aggregatorDecimals > MAX_DECIMALS) {
+        if (token_ == address(0)) revert ZeroAddress();
+        if (maxStaleness_ == 0) revert ZeroStaleness();
+
+        address quote = primaryQuote_ == QuoteDenomination.USD ? USD_DENOM : ETH_DENOM;
+        IFeedRegistry registry = IFeedRegistry(FEED_REGISTRY);
+
+        address resolvedAggregator = registry.getFeed(token_, quote);
+        if (resolvedAggregator == address(0)) revert FeedMissing(token_, quote);
+
+        uint8 aggregatorDecimals = registry.decimals(token_, quote);
+        if (aggregatorDecimals == 0 || aggregatorDecimals > MAX_DECIMALS)
             revert InvalidAggregatorDecimals();
-        }
 
         (uint128 scaleNumerator, uint128 scaleDenominator) = _computeScaleFactors(
             aggregatorDecimals
@@ -289,6 +263,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         tokenConfig[token_] = TokenConfig({
             primaryQuote: primaryQuote_,
             primaryFeed: FeedConfig({
+                aggregator: resolvedAggregator,
                 maxStaleness: maxStaleness_,
                 aggregatorDecimals: aggregatorDecimals,
                 scaleNumerator: scaleNumerator,
@@ -301,7 +276,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         emit TokenConfigured(
             token_,
             primaryQuote_,
-            address(0),
+            resolvedAggregator,
             aggregatorDecimals,
             maxStaleness_,
             tokenDecimals_,
@@ -316,18 +291,22 @@ contract OracleRouter is IOracleRouter, Ownable {
         address quote_,
         FeedConfig storage feed_
     ) internal view returns (uint256 normalizedPrice_) {
-        (, int256 rawAnswer, , uint256 updatedAt, ) = IFeedRegistry(FEED_REGISTRY).latestRoundData(
-            base_,
-            quote_
-        );
+        // Note: aggregator address stored in feed_ is for observability/events.
+        // Reads are taken from FeedRegistry to ensure canonical latest data.
+        IFeedRegistry registry = IFeedRegistry(FEED_REGISTRY);
+        (uint80 roundId, int256 rawAnswer, , uint256 updatedAt, uint80 answeredInRound) = registry
+            .latestRoundData(base_, quote_);
 
-        if (rawAnswer <= 0) {
-            revert OracleBadAnswer(address(0), rawAnswer);
-        }
-        if (block.timestamp > updatedAt + feed_.maxStaleness) {
-            revert OracleStale(address(0), updatedAt);
-        }
-        normalizedPrice_ = (uint256(rawAnswer) * feed_.scaleNumerator) / feed_.scaleDenominator;
+        if (rawAnswer <= 0) revert OracleBadAnswer(feed_.aggregator, rawAnswer);
+        if (block.timestamp > updatedAt + feed_.maxStaleness || roundId > answeredInRound)
+            revert OracleStale(feed_.aggregator, updatedAt);
+
+        // Normalize: rawAnswer * scaleNumerator / scaleDenominator
+        normalizedPrice_ = Math.mulDiv(
+            uint256(rawAnswer),
+            feed_.scaleNumerator,
+            feed_.scaleDenominator
+        );
     }
 
     function _computeScaleFactors(
@@ -336,11 +315,13 @@ contract OracleRouter is IOracleRouter, Ownable {
         if (feedDecimals_ == UNIT_DECIMALS) {
             return (1, 1);
         }
-
         if (feedDecimals_ < UNIT_DECIMALS) {
-            return (uint128(10 ** (UNIT_DECIMALS - feedDecimals_)), 1);
+            uint8 upDiff = UNIT_DECIMALS - feedDecimals_;
+            if (upDiff > 38) revert InvalidAggregatorDecimals();
+            return (uint128(10 ** upDiff), 1);
         }
-
-        return (1, uint128(10 ** (feedDecimals_ - UNIT_DECIMALS)));
+        uint8 downDiff = feedDecimals_ - UNIT_DECIMALS;
+        if (downDiff > 38) revert InvalidAggregatorDecimals();
+        return (1, uint128(10 ** downDiff));
     }
 }

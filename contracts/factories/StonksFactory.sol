@@ -14,6 +14,7 @@ import {Order} from "../Order.sol";
 contract StonksFactory {
     address public immutable ORDER_SAMPLE;
     address public immutable AGENT;
+    address public immutable ORACLE_ROUTER;
 
     event AgentSet(address agent);
     event OrderSampleDeployed(address orderAddress);
@@ -34,18 +35,22 @@ contract StonksFactory {
     error InvalidAgentAddress(address agent);
     error InvalidSettlementAddress(address settlement);
     error InvalidRelayerAddress(address relayer);
+    error InvalidOracleRouterAddress(address oracleRouter);
 
     /**
      * @param agent_ Address of the Lido DAO agent
      * @param settlement_ Address of the Cow Protocol settlement contract
      * @param relayer_ Address of the Cow Protocol relayer contract
+     * @param oracleRouter_ Address of the oracle router contract
      */
-    constructor(address agent_, address settlement_, address relayer_) {
+    constructor(address agent_, address settlement_, address relayer_, address oracleRouter_) {
         if (agent_ == address(0)) revert InvalidAgentAddress(agent_);
         if (relayer_ == address(0)) revert InvalidRelayerAddress(relayer_);
         if (settlement_ == address(0)) revert InvalidSettlementAddress(settlement_);
+        if (oracleRouter_ == address(0)) revert InvalidOracleRouterAddress(oracleRouter_);
 
         AGENT = agent_;
+        ORACLE_ROUTER = oracleRouter_;
         ORDER_SAMPLE = address(
             new Order(agent_, relayer_, ICoWSwapSettlement(settlement_).domainSeparator())
         );
@@ -60,7 +65,6 @@ contract StonksFactory {
      * @param tokenFrom_ Address of the token to be sold
      * @param tokenTo_ Address of the token to be bought
      * @param amountConverter_ Address of the amount converter contract
-     * @param oracleRouter_ Address of the oracle router contract
      * @param orderDurationInSeconds_ Duration of the order in seconds
      * @param marginInBasisPoints_ Margin represented in basis points
      * @param priceToleranceInBasisPoints_ Price tolerance in basis points
@@ -71,7 +75,6 @@ contract StonksFactory {
         address tokenFrom_,
         address tokenTo_,
         address amountConverter_,
-        address oracleRouter_,
         uint256 orderDurationInSeconds_,
         uint256 marginInBasisPoints_,
         uint256 priceToleranceInBasisPoints_
@@ -84,7 +87,7 @@ contract StonksFactory {
                 tokenTo_,
                 amountConverter_,
                 ORDER_SAMPLE,
-                oracleRouter_,
+                ORACLE_ROUTER,
                 orderDurationInSeconds_,
                 marginInBasisPoints_,
                 priceToleranceInBasisPoints_
@@ -98,7 +101,7 @@ contract StonksFactory {
             tokenTo_,
             amountConverter_,
             ORDER_SAMPLE,
-            oracleRouter_,
+            ORACLE_ROUTER,
             orderDurationInSeconds_,
             marginInBasisPoints_,
             priceToleranceInBasisPoints_

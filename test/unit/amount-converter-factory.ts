@@ -17,7 +17,10 @@ describe('AmountConverterFactory', function () {
     snapshot = await takeSnapshot()
 
     contractFactory = await ethers.getContractFactory('AmountConverterFactory')
-    subject = await contractFactory.deploy(contracts.CHAINLINK_PRICE_FEED_REGISTRY)
+    subject = await contractFactory.deploy(
+      contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+      contracts.ORACLE_ROUTER
+    )
     await subject.waitForDeployment()
   })
 
@@ -26,12 +29,22 @@ describe('AmountConverterFactory', function () {
       expect(await subject.FEED_REGISTRY()).to.equal(contracts.CHAINLINK_PRICE_FEED_REGISTRY)
     })
     it('should revert with zero feed registry address', async function () {
-      await expect(contractFactory.deploy(ethers.ZeroAddress))
+      await expect(contractFactory.deploy(ethers.ZeroAddress, contracts.ORACLE_ROUTER))
         .to.be.revertedWithCustomError(contractFactory, 'InvalidFeedRegistryAddress')
         .withArgs(ethers.ZeroAddress)
     })
+    it('should revert with zero oracle router address', async function () {
+      await expect(
+        contractFactory.deploy(contracts.CHAINLINK_PRICE_FEED_REGISTRY, ethers.ZeroAddress)
+      )
+        .to.be.revertedWithCustomError(contractFactory, 'InvalidOracleRouterAddress')
+        .withArgs(ethers.ZeroAddress)
+    })
     it('should emit FeedRegistrySet event on deployment', async function () {
-      const subject = await contractFactory.deploy(contracts.CHAINLINK_PRICE_FEED_REGISTRY)
+      const subject = await contractFactory.deploy(
+        contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+        contracts.ORACLE_ROUTER
+      )
       const tx = subject.deploymentTransaction()
       await expect(tx)
         .to.emit(subject, 'FeedRegistrySet')
@@ -40,15 +53,12 @@ describe('AmountConverterFactory', function () {
   })
   describe('amount converter deployment:', async function () {
     it('should emit AmountConverterDeployed event with correct params at Stonks deploy', async function () {
-      const signers = await ethers.getSigners()
-      const oracleRouter = signers[0].address
-
       const tokensFrom = [contracts.STETH]
       const tokensTo = [contracts.DAI]
 
-      await expect(subject.deployAmountConverter(oracleRouter, tokensFrom, tokensTo))
+      await expect(subject.deployAmountConverter(tokensFrom, tokensTo))
         .to.emit(subject, 'AmountConverterDeployed')
-        .withArgs(anyValue, oracleRouter, tokensFrom, tokensTo)
+        .withArgs(anyValue, contracts.ORACLE_ROUTER, tokensFrom, tokensTo)
     })
   })
 

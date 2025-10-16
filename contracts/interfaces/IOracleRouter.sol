@@ -3,10 +3,6 @@
 pragma solidity 0.8.23;
 
 interface IOracleRouter {
-    function getUsdPrice(address token_) external view returns (uint256);
-
-    function tokenDecimalsOf(address token_) external view returns (uint8);
-
     function getUsdPrices(
         address baseToken_,
         address quoteToken_
@@ -16,4 +12,14 @@ interface IOracleRouter {
         address baseToken_,
         address quoteToken_
     ) external view returns (uint8 baseTokenDecimals_, uint8 quoteTokenDecimals_);
+
+    function getPricesAndDecimals(
+        address baseToken_,
+        address quoteToken_
+    ) external view returns (
+        uint256 baseUsdPrice_,
+        uint256 quoteUsdPrice_,
+        uint8 baseTokenDecimals_,
+        uint8 quoteTokenDecimals_
+    );
 }

@@ -11,6 +11,7 @@ import {AmountConverter} from "../AmountConverter.sol";
 
 contract AmountConverterFactory {
     address public immutable FEED_REGISTRY;
+    address public immutable ORACLE_ROUTER;
 
     event FeedRegistrySet(address feedRegistry);
     event AmountConverterDeployed(
@@ -21,35 +22,37 @@ contract AmountConverterFactory {
     );
 
     error InvalidFeedRegistryAddress(address feedRegistry);
+    error InvalidOracleRouterAddress(address oracleRouter);
 
     /**
      *
      * @param feedRegistry_ The address of the Chainlink Feed Registry (https://docs.chain.link/data-feeds/feed-registry)
+     * @param oracleRouter_ The address of the OracleRouter contract
      */
-    constructor(address feedRegistry_) {
+    constructor(address feedRegistry_, address oracleRouter_) {
         if (feedRegistry_ == address(0)) revert InvalidFeedRegistryAddress(feedRegistry_);
+        if (oracleRouter_ == address(0)) revert InvalidOracleRouterAddress(oracleRouter_);
         FEED_REGISTRY = feedRegistry_;
+        ORACLE_ROUTER = oracleRouter_;
         emit FeedRegistrySet(feedRegistry_);
     }
 
     /**
      * @notice Deploys a new AmountConverter contract with specified parameters
-     * @param oracleRouter_ The address of the OracleRouter contract
      * @param allowedTokensToSell_ Array of addresses of tokens allowed to be sold
      * @param allowedStableTokensToBuy_ Array of addresses of stable tokens allowed to be bought
      * @return tokenAmountConverter The address of the newly deployed AmountConverter contract
      */
     function deployAmountConverter(
-        address oracleRouter_,
         address[] memory allowedTokensToSell_,
         address[] memory allowedStableTokensToBuy_
     ) public returns (address tokenAmountConverter) {
         tokenAmountConverter = address(
-            new AmountConverter(oracleRouter_, allowedTokensToSell_, allowedStableTokensToBuy_)
+            new AmountConverter(ORACLE_ROUTER, allowedTokensToSell_, allowedStableTokensToBuy_)
         );
         emit AmountConverterDeployed(
             tokenAmountConverter,
-            oracleRouter_,
+            ORACLE_ROUTER,
             allowedTokensToSell_,
             allowedStableTokensToBuy_
         );
