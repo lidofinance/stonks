@@ -1,0 +1,114 @@
+import { ethers } from 'hardhat'
+import { OracleRouter, ChainlinkFeedRegistryStub } from '../typechain-types'
+import { getContracts } from './contracts'
+import { deployStonks } from '../scripts/deployments/stonks'
+import {
+  getTestFeedRegistryStub as getSharedFeedRegistryStub,
+  resetTestFeedRegistryStub,
+} from './test-feed-registry'
+
+const contracts = getContracts()
+
+let globalOracleRouter: OracleRouter | null = null
+let globalFeedRegistryStub: ChainlinkFeedRegistryStub | null = null
+
+export type TestOracleRouterConfig = {
+  tokens: string[]
+  agent?: string
+  unitDecimals?: number
+  useRealPrices?: boolean
+}
+
+async function initializeGlobalOracleRouter(config: TestOracleRouterConfig): Promise<void> {
+  if (globalOracleRouter && globalFeedRegistryStub) {
+    return
+  }
+
+  const { tokens, agent, unitDecimals = 18, useRealPrices = true } = config
+  const [deployer] = await ethers.getSigners()
+  const agentAddress = agent || (await deployer.getAddress())
+
+  const stub = await getSharedFeedRegistryStub({ tokens, useRealPrices })
+  globalFeedRegistryStub = stub
+
+  const oracleRouterFactory = await ethers.getContractFactory('OracleRouter')
+  const oracleRouter = await oracleRouterFactory.deploy(
+    agentAddress,
+    unitDecimals,
+    await stub.getAddress()
+  )
+  await oracleRouter.waitForDeployment()
+  globalOracleRouter = oracleRouter
+
+  const agentSigner = await ethers.getImpersonatedSigner(agentAddress)
+  await ethers.provider.send('hardhat_setBalance', [agentAddress, '0x1000000000000000000'])
+
+  try {
+    await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+  } catch {
+    // Ignore if already configured
+  }
+
+  const erc20Iface = new ethers.Interface(['function decimals() view returns (uint8)'])
+  const erc20 = (addr: string) => new ethers.Contract(addr, erc20Iface, deployer)
+
+  for (const token of tokens) {
+    try {
+      const decimals = await erc20(token).getFunction('decimals').staticCall()
+      const usdFeed = await stub.getFeed(token, contracts.CHAINLINK_USD_QUOTE)
+
+      if (usdFeed !== ethers.ZeroAddress) {
+        await oracleRouter.connect(agentSigner).setTokenUsdFeed(token, 86_400, decimals, true)
+      } else {
+        const ethFeed = await stub.getFeed(token, contracts.CHAINLINK_ETH_QUOTE)
+        if (ethFeed !== ethers.ZeroAddress) {
+          await oracleRouter.connect(agentSigner).setTokenEthFeed(token, 86_400, decimals, true)
+        } else {
+          console.warn(`No feeds available for token ${token}, skipping configuration`)
+        }
+      }
+    } catch (e) {
+      console.warn(`Failed to configure token ${token}:`, e)
+    }
+  }
+}
+
+export async function getTestOracleRouter(config: TestOracleRouterConfig): Promise<OracleRouter> {
+  await initializeGlobalOracleRouter(config)
+  if (!globalOracleRouter) {
+    throw new Error('Failed to initialize OracleRouter')
+  }
+  return globalOracleRouter
+}
+
+export function resetTestOracleRouter(): void {
+  globalOracleRouter = null
+  globalFeedRegistryStub = null
+  resetTestFeedRegistryStub()
+}
+
+export async function deployTestOracleRouter(
+  config: TestOracleRouterConfig
+): Promise<OracleRouter> {
+  return getTestOracleRouter(config)
+}
+
+export async function deployStonksWithTestOracle(params: any) {
+  const tokens = [params.stonksParams.tokenFrom, params.stonksParams.tokenTo]
+  const oracleRouter = await getTestOracleRouter({
+    tokens: tokens,
+    agent: params.factoryParams.agent,
+  })
+  const updatedParams = {
+    ...params,
+    factoryParams: {
+      ...params.factoryParams,
+      oracleRouterAddress: await oracleRouter.getAddress(),
+    },
+    amountConverterParams: {
+      ...params.amountConverterParams,
+      oracleRouter: await oracleRouter.getAddress(),
+    },
+  }
+  return deployStonks(updatedParams)
+}

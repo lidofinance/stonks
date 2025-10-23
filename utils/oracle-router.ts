@@ -32,47 +32,26 @@ export async function deployAndConfigureOracleRouter(
   )
   await router.waitForDeployment()
 
-  const registryInterface = new ethers.Interface([
-    'function getFeed(address,address) view returns (address)',
-  ])
-  const registry = new ethers.Contract(feedRegistry, registryInterface, deployer)
-  const getFeed = (base: string, quote: string) =>
-    registry.getFunction('getFeed').staticCall(base, quote)
-
   const erc20Interface = new ethers.Interface(['function decimals() view returns (uint8)'])
   const readDecimals = async (token: string) => {
     const c = new ethers.Contract(token, erc20Interface, deployer)
     return c.getFunction('decimals').staticCall()
   }
-
-  const contracts = (await import('./contracts')).getContracts()
   // Bridge ETH/USD (skip silently if registry lacks ETH/USD in stub)
   try {
-    await router.setEthUsdBridge(ethers.ZeroAddress, maxStaleness)
+    await router.setEthUsdBridge(maxStaleness)
   } catch (_) {
     // ignore
   }
 
   // Configure TOKEN/USD feeds
   for (const token of tokensUsd) {
-    await router.setTokenUsdFeed(
-      token,
-      ethers.ZeroAddress,
-      maxStaleness,
-      await readDecimals(token),
-      true
-    )
+    await router.setTokenUsdFeed(token, maxStaleness, await readDecimals(token), true)
   }
 
   // Configure TOKEN/ETH feeds (optional)
   for (const token of tokensEth) {
-    await router.setTokenEthFeed(
-      token,
-      ethers.ZeroAddress,
-      maxStaleness,
-      await readDecimals(token),
-      true
-    )
+    await router.setTokenEthFeed(token, maxStaleness, await readDecimals(token), true)
   }
 
   return router

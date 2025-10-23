@@ -58,6 +58,7 @@ describe('ChainlinkFeedRegistryStub', () => {
     for (const sender of [stranger, deployer]) {
       const feedBefore = await registry.feeds(baseToken, quoteToken)
       const tx = await registry.connect(sender).setFeed(baseToken, quoteToken, {
+        aggregator: feedBefore.aggregator,
         roundId: feedBefore.roundId + 1n,
         answeredInRound: feedBefore.answeredInRound + 2n,
         answer: feedBefore.answer + 3n,
@@ -77,11 +78,26 @@ describe('ChainlinkFeedRegistryStub', () => {
   })
 
   it('getFeed()', async () => {
+    // Initially, no feed is set, so aggregator should be zero address
+    assert.equal(await registry.getFeed(baseToken, quoteToken), ethers.ZeroAddress)
+
+    // After setting a feed, getFeed should return the aggregator address
+    const feedStub = {
+      aggregator: await registry.getAddress(),
+      roundId: 1n,
+      answeredInRound: 2n,
+      answer: 3n,
+      startedAt: 4n,
+      updatedAt: 5n,
+      decimals: 6n,
+    }
+    await registry.connect(manager).setFeed(baseToken, quoteToken, feedStub)
     assert.equal(await registry.getFeed(baseToken, quoteToken), await registry.getAddress())
   })
 
   it('setFeed(), decimals(), latestRoundData()', async () => {
     const feedStub = {
+      aggregator: ethers.ZeroAddress,
       roundId: 1n,
       answeredInRound: 2n,
       answer: 3n,

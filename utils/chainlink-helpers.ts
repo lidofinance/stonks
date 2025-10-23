@@ -1,5 +1,6 @@
 import { ethers } from 'hardhat'
 import { getContracts } from './contracts'
+import { getTestFeedRegistryStub } from './test-feed-registry'
 
 const contracts = getContracts()
 
@@ -8,12 +9,14 @@ export const getExpectedOut = async (
   tokenTo: string,
   amount: bigint
 ): Promise<bigint> => {
-  const feedRegistry = await ethers.getContractAt(
-    'IFeedRegistry',
-    contracts.CHAINLINK_PRICE_FEED_REGISTRY
-  )
+  const feedRegistryAddress = await (
+    await getTestFeedRegistryStub({
+      tokens: [tokenFrom, tokenTo],
+      useRealPrices: true,
+    })
+  ).getAddress()
+  const feedRegistry = await ethers.getContractAt('IFeedRegistry', feedRegistryAddress)
 
-  // Router UNIT_DECIMALS = 18
   const UNIT_DECIMALS = 18n
 
   const readPriceNormalized = async (base: string, quote: string): Promise<bigint> => {
@@ -25,11 +28,9 @@ export const getExpectedOut = async (
     return raw / 10n ** (d - UNIT_DECIMALS)
   }
 
-  // USD prices for both tokens
   const priceFromUSD = await readPriceNormalized(tokenFrom, contracts.CHAINLINK_USD_QUOTE)
   const priceToUSD = await readPriceNormalized(tokenTo, contracts.CHAINLINK_USD_QUOTE)
 
-  // Token decimals
   const decimalsOfSellToken = await (
     await ethers.getContractAt('IERC20Metadata', tokenFrom)
   ).decimals()

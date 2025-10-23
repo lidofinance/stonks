@@ -8,7 +8,8 @@ import {
   mine,
 } from '@nomicfoundation/hardhat-network-helpers'
 import { Order, Stonks, HashHelper, AmountConverterTest, OracleRouter } from '../../typechain-types'
-import { deployAndConfigureOracleRouter } from '../../utils/oracle-router'
+import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
+import { getAllTestTokens, refreshTestFeedData } from '../../utils/test-feed-registry'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { getContracts } from '../../utils/contracts'
 import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
@@ -39,10 +40,12 @@ describe('Order', async function () {
 
     const amountConverterTestFactory = await ethers.getContractFactory('AmountConverterTest')
 
-    oracleRouter = await deployAndConfigureOracleRouter({
-      feedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-      tokensUsd: [contracts.STETH, contracts.DAI],
+    oracleRouter = await getTestOracleRouter({
+      tokens: getAllTestTokens(),
+      useRealPrices: true,
     })
+
+    await refreshTestFeedData(getAllTestTokens())
 
     amountConverterTest = await amountConverterTestFactory.deploy(
       await oracleRouter.getAddress(),
@@ -57,6 +60,7 @@ describe('Order', async function () {
         relayer: contracts.VAULT_RELAYER,
         settlement: contracts.SETTLEMENT,
         priceFeedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+        oracleRouterAddress: await oracleRouter.getAddress(),
       },
       stonksParams: {
         tokenFrom: contracts.STETH,
@@ -66,7 +70,6 @@ describe('Order', async function () {
         orderDuration: 3600,
         priceToleranceInBps: PRICE_TOLERANCE_IN_BP,
         amountConverterAddress: await amountConverterTest.getAddress(),
-        oracleRouterAddress: await oracleRouter.getAddress(),
       },
       amountConverterParams: {
         oracleRouter: await oracleRouter.getAddress(),
@@ -87,6 +90,34 @@ describe('Order', async function () {
       address: await stonks.getAddress(),
     })
 
+    // Ensure router-bound registry feeds are fresh to avoid staleness/answeredInRound issues
+    const latest = await ethers.provider.getBlock('latest')
+    const nowTs = BigInt(latest!.timestamp)
+
+    const registryAddr = await oracleRouter.FEED_REGISTRY()
+    const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
+
+    const seed = async (base: string, quote: string) => {
+      try {
+        const cur = await stub.feeds(base, quote)
+        await stub.setFeed(base, quote, {
+          aggregator:
+            cur.aggregator !== ethers.ZeroAddress ? cur.aggregator : await stub.getAddress(),
+          answer: cur.answer !== 0n ? cur.answer : 1n,
+          updatedAt: nowTs,
+          startedAt: nowTs,
+          answeredInRound: 1n,
+          roundId: 1n,
+          decimals: cur.decimals !== 0n ? cur.decimals : 8n,
+        })
+      } catch (err) {
+        console.warn(`Failed to seed feed ${base}/${quote}:`, err)
+      }
+    }
+    await seed(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE)
+    await seed(contracts.STETH, contracts.CHAINLINK_USD_QUOTE)
+    await seed(contracts.DAI, contracts.CHAINLINK_USD_QUOTE)
+
     expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
 
     const placeOrderTx = await stonks.placeOrder(expectedBuyAmount)
@@ -98,7 +129,7 @@ describe('Order', async function () {
     orderData = decodedOrderTx
     subject = await ethers.getContractAt('Order', orderData.address, manager)
 
-    orderHash = await formOrderHashFromTxReceipt(placeOrderTxReceipt, stonks)
+    orderHash = await formOrderHashFromTxReceipt(placeOrderTxReceipt)
   })
 
   describe('initialization (direct):', function () {
@@ -184,9 +215,11 @@ describe('Order', async function () {
         'OrderExpired'
       )
     })
-    it('should not revert if there was a price spike less than price tolerance allows', async () => {
-      await amountConverterTest.multiplyAnswer(10000 + PRICE_TOLERANCE_IN_BP)
-      expect(await subject.isValidSignature(orderHash, '0x')).to.equal(MAGIC_VALUE)
+    it('should not revert if there was a price deterioration within tolerance', async () => {
+      await amountConverterTest.multiplyAnswer(10000 - PRICE_TOLERANCE_IN_BP + 1)
+
+      const [currentHash] = await subject.getOrderDetails()
+      expect(await subject.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
     it('should revert if there was a price spike', async () => {
       const orderDetails = await subject.getOrderDetails()
@@ -302,7 +335,22 @@ describe('Order', async function () {
     })
   })
 
+  describe('additional negative cases:', function () {
+    it('should revert recoverEther when called by stranger', async () => {
+      const stranger = (await ethers.getSigners())[4]
+      await expect(subject.connect(stranger).recoverEther())
+        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .withArgs(await stranger.getAddress())
+    })
+
+    it('should handle isValidSignature with non-empty signature data', async () => {
+      const signature = '0x1234567890abcdef'
+      expect(await subject.isValidSignature(orderHash, signature)).to.equal(MAGIC_VALUE)
+    })
+  })
+
   this.afterAll(async function () {
     await snapshot.restore()
+    resetTestOracleRouter() // Clean up global state
   })
 })

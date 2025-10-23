@@ -3,13 +3,13 @@ import { Signer } from 'ethers'
 import { expect } from 'chai'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import { isClose } from '../../utils/assert'
-import { deployStonks } from '../../scripts/deployments/stonks'
+import { deployStonksWithTestOracle, resetTestOracleRouter } from '../../utils/test-oracle-router'
+import { refreshTestFeedData } from '../../utils/test-feed-registry'
 import {
   AmountConverter,
   AssetRecovererTest__factory,
   Stonks,
   Stonks__factory,
-  OracleRouter,
   OracleRouter__factory,
 } from '../../typechain-types'
 import { getContracts } from '../../utils/contracts'
@@ -24,7 +24,6 @@ describe('Stonks', function () {
   let subject: Stonks
   let subjectTokenConverter: AmountConverter
   let snapshot: SnapshotRestorer
-  let oracleRouter: OracleRouter
 
   const amount = ethers.parseEther('1')
   const marginInBps = 100
@@ -40,9 +39,10 @@ describe('Stonks', function () {
     ContractFactory = await ethers.getContractFactory('Stonks')
     AssetRecovererFactory = await ethers.getContractFactory('AssetRecovererTest')
     managerAddress = await signer.getAddress()
-    // Let deployStonks deploy and configure OracleRouter to ensure permissions and feeds are set
 
-    const { stonks, amountConverter: tokenConverter } = await deployStonks({
+    await refreshTestFeedData([contracts.STETH, contracts.DAI])
+
+    const { stonks, amountConverter: tokenConverter } = await deployStonksWithTestOracle({
       factoryParams: {
         agent: contracts.AGENT,
         relayer: contracts.VAULT_RELAYER,
@@ -57,10 +57,8 @@ describe('Stonks', function () {
         orderDuration: 3600,
         priceToleranceInBps: 100,
         amountConverterAddress: undefined,
-        oracleRouterAddress: undefined,
       },
       amountConverterParams: {
-        oracleRouter: undefined,
         allowedTokensToSell: [contracts.STETH],
         allowedStableTokensToBuy: [contracts.DAI],
       },
@@ -450,9 +448,134 @@ describe('Stonks', function () {
       const tx = await subject.placeOrder(expectedBuyAmount)
       await tx.wait()
     })
+
+    it('placeOrderWithAmount sends only specified amount', async function () {
+      const steth = await ethers.getContractAt('IERC20', contracts.STETH, signer)
+      const stonksAddr = await subject.getAddress()
+
+      // fund 3 ETH
+      await fillUpERC20FromTreasury({
+        token: contracts.STETH,
+        amount: ethers.parseEther('3'),
+        address: stonksAddr,
+      })
+
+      const beforeBalance = await steth.balanceOf(stonksAddr)
+      const sellAmount = ethers.parseEther('1')
+      const minBuy = await subject.estimateTradeOutput(sellAmount)
+
+      const tx = await subject.placeOrderWithAmount(sellAmount, minBuy)
+      const rc = await tx.wait()
+      expect(rc?.status).to.equal(1)
+
+      const afterBalance = await steth.balanceOf(stonksAddr)
+      const diff = beforeBalance - afterBalance
+      expect(isClose(diff, sellAmount, 1n)).to.be.true
+    })
+
+    it('placeOrderWithAmount reverts when amount below MIN_POSSIBLE_BALANCE', async function () {
+      const tooSmall = 9n // MIN_POSSIBLE_BALANCE = 10
+      await expect(subject.placeOrderWithAmount(tooSmall, 1)).to.be.revertedWithCustomError(
+        subject,
+        'MinimumPossibleBalanceNotMet'
+      )
+    })
+
+    it('placeOrderWithAmount reverts when requested exceeds balance', async function () {
+      const steth = await ethers.getContractAt('IERC20', contracts.STETH, signer)
+      const bal = await steth.balanceOf(subject)
+      const requested = bal + 1n
+      await expect(subject.placeOrderWithAmount(requested, 1)).to.be.revertedWithCustomError(
+        subject,
+        'SellAmountExceedsBalance'
+      )
+    })
+
+    it('placeOrderWithAmount reverts when minBuyAmount is zero', async function () {
+      await expect(
+        subject.placeOrderWithAmount(ethers.parseEther('1'), 0)
+      ).to.be.revertedWithCustomError(subject, 'InvalidAmount')
+    })
+  })
+
+  describe('access control:', function () {
+    let stranger: Signer
+
+    this.beforeAll(async function () {
+      stranger = (await ethers.getSigners())[3]
+    })
+
+    it('should revert placeOrder when called by non-agent/manager', async function () {
+      const stonksAsStranger = subject.connect(stranger)
+      await expect(stonksAsStranger.placeOrder(100))
+        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .withArgs(await stranger.getAddress())
+    })
+
+    it('should revert placeOrderWithAmount when called by non-agent/manager', async function () {
+      const stonksAsStranger = subject.connect(stranger)
+      await expect(stonksAsStranger.placeOrderWithAmount(ethers.parseEther('1'), 100))
+        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .withArgs(await stranger.getAddress())
+    })
+
+    it('should revert recoverERC20 when called by non-agent/manager', async function () {
+      const stonksAsStranger = subject.connect(stranger)
+      await expect(stonksAsStranger.recoverERC20(contracts.DAI, 1))
+        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .withArgs(await stranger.getAddress())
+    })
+
+    it('should revert recoverEther when called by non-agent/manager', async function () {
+      const stonksAsStranger = subject.connect(stranger)
+      await expect(stonksAsStranger.recoverEther())
+        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .withArgs(await stranger.getAddress())
+    })
+
+    it('should revert recoverERC721 when called by non-agent/manager', async function () {
+      const stonksAsStranger = subject.connect(stranger)
+      const mockNftAddress = '0x0000000000000000000000000000000000000001'
+      await expect(stonksAsStranger.recoverERC721(mockNftAddress, 1))
+        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .withArgs(await stranger.getAddress())
+    })
+
+    it('should revert recoverERC1155 when called by non-agent/manager', async function () {
+      const stonksAsStranger = subject.connect(stranger)
+      const mockNftAddress = '0x0000000000000000000000000000000000000001'
+      await expect(stonksAsStranger.recoverERC1155(mockNftAddress, 1))
+        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .withArgs(await stranger.getAddress())
+    })
+  })
+
+  describe('recovery functions:', function () {
+    it('should successfully recover ERC20 tokens', async function () {
+      const daiToken = await ethers.getContractAt('IERC20', contracts.DAI)
+      const recoverAmount = ethers.parseEther('100')
+
+      await fillUpERC20FromTreasury({
+        token: contracts.DAI,
+        amount: recoverAmount,
+        address: await subject.getAddress(),
+      })
+
+      const stonksBalanceBefore = await daiToken.balanceOf(await subject.getAddress())
+      const agentBalanceBefore = await daiToken.balanceOf(contracts.AGENT)
+
+      await subject.recoverERC20(contracts.DAI, recoverAmount)
+
+      const stonksBalanceAfter = await daiToken.balanceOf(await subject.getAddress())
+      const agentBalanceAfter = await daiToken.balanceOf(contracts.AGENT)
+
+      expect(stonksBalanceBefore - stonksBalanceAfter).to.equal(recoverAmount)
+      expect(agentBalanceAfter - agentBalanceBefore).to.equal(recoverAmount)
+    })
   })
 
   this.afterAll(async function () {
     await snapshot.restore()
+    resetTestOracleRouter() // Clean up global state
   })
 })

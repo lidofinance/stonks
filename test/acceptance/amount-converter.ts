@@ -1,6 +1,6 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
-import { getTokensToBuy, getTokensToSell, getPriceFeedTimeouts } from './configuration'
+import { getTokensToBuy, getTokensToSell } from './configuration'
 import { getContracts } from '../../utils/contracts'
 
 const AMOUNT_CONVERTER_ADDRESS: string = ''
@@ -11,7 +11,6 @@ describe('AmountConverter: acceptance', async function () {
     const contracts = getContracts()
     const tokensToSell = (await getTokensToSell()).map((token) => ethers.getAddress(token))
     const tokensToBuy = (await getTokensToBuy()).map((token) => ethers.getAddress(token))
-    const priceFeedTimeouts = await getPriceFeedTimeouts()
 
     const amountConverter = await ethers.getContractAt('AmountConverter', AMOUNT_CONVERTER_ADDRESS)
 

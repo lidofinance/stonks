@@ -2,8 +2,9 @@ import { ethers } from 'hardhat'
 import { takeSnapshot, SnapshotRestorer, time } from '@nomicfoundation/hardhat-network-helpers'
 import { expect } from 'chai'
 
-import { AmountConverter__factory, IAmountConverter, OracleRouter } from '../../typechain-types'
-import { deployAndConfigureOracleRouter } from '../../utils/oracle-router'
+import { IAmountConverter, OracleRouter } from '../../typechain-types'
+import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
+import { refreshTestFeedData } from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
 
@@ -11,27 +12,14 @@ const addresses = getContracts()
 
 describe('AmountConverter', () => {
   let converter: IAmountConverter
-  let factory: AmountConverter__factory
+  let factory: any
   let snapshot: SnapshotRestorer
 
   let router: OracleRouter
   let routerAddress: string
 
-  const FEED_REGISTRY = addresses.CHAINLINK_PRICE_FEED_REGISTRY
   const USD = addresses.CHAINLINK_USD_QUOTE
   const WETH = addresses.CHAINLINK_ETH_QUOTE
-
-  const readAggregatorAddress = async (base: string, quote: string) => {
-    const registryInterface = new ethers.Interface([
-      'function getFeed(address,address) view returns (address)',
-    ])
-    const registry = new ethers.Contract(
-      FEED_REGISTRY,
-      registryInterface,
-      (await ethers.getSigners())[0]
-    )
-    return registry.getFunction('getFeed').staticCall(base, quote)
-  }
 
   const readTokenDecimals = async (token: string) => {
     const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
@@ -39,42 +27,17 @@ describe('AmountConverter', () => {
     return erc20.getFunction('decimals').staticCall()
   }
 
-  const configureRouterEthUsd = async (r: OracleRouter, maxStalenessSeconds: number) => {
-    const aggregator = await readAggregatorAddress(WETH, USD)
-    await r.setEthUsdBridge(aggregator, maxStalenessSeconds)
-  }
-
-  const configureRouterTokenUsd = async (
-    r: OracleRouter,
-    token: string,
-    maxStalenessSeconds: number,
-    isActive = true
-  ) => {
-    const aggregator = await readAggregatorAddress(token, USD)
-    const tokenDecimals = await readTokenDecimals(token)
-    await r.setTokenUsdFeed(token, aggregator, maxStalenessSeconds, tokenDecimals, isActive)
-  }
-
-  const configureRouterTokenEth = async (
-    r: OracleRouter,
-    token: string,
-    maxStalenessSeconds: number,
-    isActive = true
-  ) => {
-    const aggregator = await readAggregatorAddress(token, WETH)
-    const tokenDecimals = await readTokenDecimals(token)
-    await r.setTokenEthFeed(token, aggregator, maxStalenessSeconds, tokenDecimals, isActive)
-  }
-
   before(async () => {
     snapshot = await takeSnapshot()
     factory = await ethers.getContractFactory('AmountConverter')
 
-    router = await deployAndConfigureOracleRouter({
-      feedRegistry: addresses.CHAINLINK_PRICE_FEED_REGISTRY,
-      tokensUsd: [addresses.STETH, addresses.DAI, addresses.USDC, addresses.USDT],
+    router = await getTestOracleRouter({
+      tokens: [addresses.STETH, addresses.DAI, addresses.USDC, addresses.USDT],
+      useRealPrices: true,
     })
     routerAddress = await router.getAddress()
+
+    await refreshTestFeedData([addresses.STETH, addresses.DAI, addresses.USDC, addresses.USDT])
 
     converter = await factory.deploy(
       routerAddress,
@@ -182,15 +145,40 @@ describe('AmountConverter', () => {
     })
 
     it('uses ETH bridge path when configured (stETH/ETH * ETH/USD)', async () => {
-      const [deployer] = await ethers.getSigners()
-      const bridgeRouter = await deployAndConfigureOracleRouter({
-        feedRegistry: FEED_REGISTRY,
-        tokensUsd: [addresses.DAI],
-        tokensEth: [addresses.STETH],
+      const localSnapshot = await takeSnapshot()
+
+      await refreshTestFeedData([addresses.STETH, addresses.DAI])
+
+      const registryAddr = await router.FEED_REGISTRY()
+      const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
+
+      const latest = await ethers.provider.getBlock('latest')
+      const nowTs = BigInt(latest!.timestamp)
+
+      await stub.setFeed(addresses.STETH, WETH, {
+        aggregator: await stub.getAddress(),
+        answer: 1n * 10n ** 18n,
+        updatedAt: nowTs,
+        startedAt: nowTs,
+        answeredInRound: 1n,
+        roundId: 1n,
+        decimals: 18,
+      })
+      await stub.setFeed(WETH, USD, {
+        aggregator: await stub.getAddress(),
+        answer: 2000n * 10n ** 8n,
+        updatedAt: nowTs,
+        startedAt: nowTs,
+        answeredInRound: 1n,
+        roundId: 1n,
+        decimals: 8,
       })
 
+      const tokenDecimals = await readTokenDecimals(addresses.STETH)
+      await router.setTokenEthFeed(addresses.STETH, 86_400, tokenDecimals, true)
+
       const bridgeConverter = await factory.deploy(
-        await bridgeRouter.getAddress(),
+        await router.getAddress(),
         [addresses.STETH, addresses.DAI],
         [addresses.DAI]
       )
@@ -203,12 +191,8 @@ describe('AmountConverter', () => {
         amountToSell
       )
 
-      // Independent compute via the router
-      const [stethUsdPrice, daiUsdPrice] = await bridgeRouter.getUsdPrices(
-        addresses.STETH,
-        addresses.DAI
-      )
-      const [sellDecimals, buyDecimals] = await bridgeRouter.getTokenDecimals(
+      const [stethUsdPrice, daiUsdPrice] = await router.getUsdPrices(addresses.STETH, addresses.DAI)
+      const [sellDecimals, buyDecimals] = await router.getTokenDecimals(
         addresses.STETH,
         addresses.DAI
       )
@@ -220,49 +204,102 @@ describe('AmountConverter', () => {
           : raw * 10n ** BigInt(buyDecimals - sellDecimals)
 
       expect(amountFromContract.toString()).to.equal(expected.toString())
+
+      await localSnapshot.restore()
+    })
+
+    it('should handle very small amounts', async () => {
+      await refreshTestFeedData([addresses.STETH, addresses.DAI])
+      const tinyAmount = 1n
+      const result = await converter.getExpectedOut(addresses.STETH, addresses.DAI, tinyAmount)
+      const expectedResult = await getExpectedOut(addresses.STETH, addresses.DAI, tinyAmount)
+      expect(result).to.equal(expectedResult)
+    })
+
+    it('should handle very large valid amounts', async () => {
+      await refreshTestFeedData([addresses.STETH, addresses.DAI])
+      const largeAmount = ethers.parseEther('100000')
+      const result = await converter.getExpectedOut(addresses.STETH, addresses.DAI, largeAmount)
+      const expectedResult = await getExpectedOut(addresses.STETH, addresses.DAI, largeAmount)
+      expect(result).to.equal(expectedResult)
+    })
+
+    it('should handle amount at uint128 boundary', async () => {
+      await refreshTestFeedData([addresses.STETH, addresses.DAI])
+      const maxUint128 = 2n ** 128n - 1n
+      const result = await converter.getExpectedOut(addresses.STETH, addresses.DAI, maxUint128)
+      const expectedResult = await getExpectedOut(addresses.STETH, addresses.DAI, maxUint128)
+      expect(result).to.equal(expectedResult)
+    })
+
+    it('should handle conversions with maximum decimal difference (38)', async () => {
+      await refreshTestFeedData([addresses.DAI, addresses.USDC])
+      const largeAmount = 2n ** 127n - 1n
+      const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, largeAmount)
+      expect(result).to.be.greaterThan(0)
     })
 
     it('bubbles router staleness (OracleStale) on outdated feed', async () => {
-      const [deployer] = await ethers.getSigners()
-      const staleRouter = await deployAndConfigureOracleRouter({
-        feedRegistry: FEED_REGISTRY,
-        tokensUsd: [addresses.DAI, addresses.USDC],
+      const registryAddr = await router.FEED_REGISTRY()
+      const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
+
+      // Configure short staleness for DAI
+      const decimals = await readTokenDecimals(addresses.DAI)
+      await router.setTokenUsdFeed(addresses.DAI, 1, decimals, true)
+
+      // Freshen both DAI/USD and ETH/USD to now, then advance time to exceed staleness
+      const latest = await ethers.provider.getBlock('latest')
+      const nowTs = BigInt(latest!.timestamp)
+      const daiUsd = await stub.feeds(addresses.DAI, USD)
+      await stub.setFeed(addresses.DAI, USD, {
+        aggregator: daiUsd.aggregator,
+        answer: daiUsd.answer,
+        updatedAt: nowTs,
+        startedAt: nowTs,
+        answeredInRound: 1n,
+        roundId: 1n,
+        decimals: daiUsd.decimals,
       })
-      // Overwrite DAI staleness to 1s to simulate staleness
-      // Reconfigure only DAI with tight window
-      const registryInterface = new ethers.Interface([
-        'function getFeed(address,address) view returns (address)',
-      ])
-      const registry = new ethers.Contract(
-        FEED_REGISTRY,
-        registryInterface,
-        (await ethers.getSigners())[0]
-      )
-      const getFeed = (base: string, quote: string) =>
-        registry.getFunction('getFeed').staticCall(base, quote)
-      const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
-      const erc20 = new ethers.Contract(
-        addresses.DAI,
-        tokenInterface,
-        (await ethers.getSigners())[0]
-      )
-      const decimals = await erc20.getFunction('decimals').staticCall()
-      await staleRouter.setTokenUsdFeed(addresses.DAI, ethers.ZeroAddress, 1, decimals, true)
 
-      const staleConverter = await factory.deploy(
-        await staleRouter.getAddress(),
-        [addresses.DAI, addresses.USDC],
-        [addresses.USDC]
-      )
-      await staleConverter.waitForDeployment()
-
-      // Move time forward beyond the 1-second staleness
       await time.increase(2)
-      await time.latestBlock()
 
       await expect(
-        staleConverter.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1'))
-      ).to.be.revertedWithCustomError(staleRouter, 'OracleStale')
+        converter.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1'))
+      ).to.be.revertedWithCustomError(router, 'OracleStale')
+    })
+
+    it('bubbles router OracleBadAnswer when tokenTo/USD answer is zero', async () => {
+      await refreshTestFeedData([addresses.STETH, addresses.DAI])
+
+      const registryAddr = await router.FEED_REGISTRY()
+      const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
+
+      const latest = await ethers.provider.getBlock('latest')
+      const nowTs = BigInt(latest!.timestamp)
+
+      const current = await stub.feeds(addresses.DAI, USD)
+      await stub.setFeed(addresses.DAI, USD, {
+        aggregator: current.aggregator,
+        answer: 0n,
+        updatedAt: nowTs,
+        startedAt: nowTs,
+        answeredInRound: current.answeredInRound,
+        roundId: current.roundId,
+        decimals: current.decimals,
+      })
+
+      await expect(
+        converter.getExpectedOut(addresses.STETH, addresses.DAI, ethers.parseEther('1'))
+      ).to.be.revertedWithCustomError(router, 'OracleBadAnswer')
+
+      await refreshTestFeedData([addresses.DAI])
+    })
+
+    it('reverts with AmountTooLarge when input exceeds uint128 limit', async () => {
+      const tooLarge = 2n ** 128n + 1n
+      await expect(
+        converter.getExpectedOut(addresses.STETH, addresses.DAI, tooLarge)
+      ).to.be.revertedWithCustomError(converter, 'AmountTooLarge')
     })
   })
 
@@ -283,5 +320,6 @@ describe('AmountConverter', () => {
 
   after(async () => {
     await snapshot.restore()
+    resetTestOracleRouter()
   })
 })

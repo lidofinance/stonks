@@ -5,6 +5,7 @@ pragma solidity 0.8.23;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 import {Order} from "./Order.sol";
 import {AssetRecoverer} from "./AssetRecoverer.sol";
@@ -20,10 +21,11 @@ import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
  *  - Stores key trading parameters: token pair, margin, price tolerance and order duration in immutable variables.
  *  - Creates a minimum proxy from the Order contract and passes params for individual trades.
  *  - Provides asset recovery functionality.
+ *  - Protected against reentrancy on order creation paths.
  *
  * @notice Orchestrates the setup and execution of trades on CoW Swap, utilizing Order contracts for each trade.
  */
-contract Stonks is IStonks, AssetRecoverer {
+contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint16 private constant MAX_BASIS_POINTS = 10_000;
@@ -76,6 +78,7 @@ contract Stonks is IStonks, AssetRecoverer {
     error MinimumPossibleBalanceNotMet(uint256 min, uint256 received);
     error InvalidAmount(uint256 amount);
     error InvalidOracleRouterAddress(address oracleRouter);
+    error SellAmountExceedsBalance(uint256 available, uint256 requested);
 
     /**
      * @notice Initializes the Stonks contract with key trading parameters.
@@ -144,25 +147,27 @@ contract Stonks is IStonks, AssetRecoverer {
     /**
      * @notice Initiates a new trading order by creating an Order contract clone with the current token balance.
      * @dev Transfers the tokenFrom balance to the new Order instance and initializes it with the Stonks' manager settings for execution.
+     *      Protected against reentrancy attacks.
      * @param minBuyAmount_ Minimum amount of tokenTo to be received as a result of the trade.
      * @return Address of the newly created Order contract.
      */
-    function placeOrder(uint256 minBuyAmount_) external onlyAgentOrManager returns (address) {
-        if (minBuyAmount_ == 0) revert InvalidAmount(minBuyAmount_);
-
+    function placeOrder(uint256 minBuyAmount_) external onlyAgentOrManager nonReentrant returns (address) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
+        return _placeOrder(balance, minBuyAmount_, balance);
+    }
 
-        // Prevents dust trades to avoid rounding issues for rebasable tokens like stETH.
-        if (balance < MIN_POSSIBLE_BALANCE)
-            revert MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, balance);
-
-        Order orderCopy = Order(Clones.clone(ORDER_SAMPLE));
-        IERC20(TOKEN_FROM).safeTransfer(address(orderCopy), balance);
-        orderCopy.initialize(minBuyAmount_, manager);
-
-        emit OrderContractCreated(address(orderCopy), minBuyAmount_);
-
-        return address(orderCopy);
+    /**
+     * @notice Initiates a new trading order by creating an Order contract clone with the specified sell amount.
+     * @dev Protected against reentrancy attacks.
+     * @param sellAmount_ Amount of `TOKEN_FROM` to transfer into the Order for this trade.
+     * @param minBuyAmount_ Minimum acceptable `TOKEN_TO` received.
+     */
+    function placeOrderWithAmount(
+        uint256 sellAmount_,
+        uint256 minBuyAmount_
+    ) external onlyAgentOrManager nonReentrant returns (address) {
+        uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
+        return _placeOrder(sellAmount_, minBuyAmount_, balance);
     }
 
     /**
@@ -236,5 +241,25 @@ contract Stonks is IStonks, AssetRecoverer {
      */
     function assertQuotable() external view {
         ORACLE_ROUTER.getUsdPrices(TOKEN_FROM, TOKEN_TO); // reverts internally if unquotable
+    }
+
+    function _placeOrder(
+        uint256 sellAmount_,
+        uint256 minBuyAmount_,
+        uint256 availableBalance_
+    ) internal returns (address) {
+        if (minBuyAmount_ == 0) revert InvalidAmount(minBuyAmount_);
+        if (sellAmount_ < MIN_POSSIBLE_BALANCE)
+            revert MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, sellAmount_);
+
+        if (sellAmount_ > availableBalance_) revert SellAmountExceedsBalance(availableBalance_, sellAmount_);
+
+        Order orderCopy = Order(Clones.clone(ORDER_SAMPLE));
+        emit OrderContractCreated(address(orderCopy), minBuyAmount_);
+
+        IERC20(TOKEN_FROM).safeTransfer(address(orderCopy), sellAmount_);
+        orderCopy.initialize(minBuyAmount_, manager);
+
+        return address(orderCopy);
     }
 }

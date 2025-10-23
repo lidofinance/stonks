@@ -1,6 +1,6 @@
 import { ethers } from 'hardhat'
 import { assert, expect } from 'chai'
-import { mainnet, getContracts } from '../../../utils/contracts'
+import { getContracts } from '../../../utils/contracts'
 import { CoWSwapVaultRelayerStub } from '../../../typechain-types/contracts/stubs/CoWSwapVaultRelayerStub.sol'
 import {
   SnapshotRestorer,
@@ -17,7 +17,6 @@ import {
   CoWSwapVaultRelayerStub__factory,
   ChainlinkFeedRegistryStub__factory,
   CoWSwapSettlementStub__factory,
-  OracleRouter__factory,
 } from '../../../typechain-types'
 import { OrderCreatedEvent } from '../../../typechain-types/contracts/Order'
 import { deployAndConfigureOracleRouter } from '../../../utils/oracle-router'
@@ -53,6 +52,7 @@ describe('CoWSwapVaultRelayerStub', async () => {
     await feedRegistry.waitForDeployment()
 
     await feedRegistry.connect(manager).setFeed(contracts.STETH, contracts.CHAINLINK_USD_QUOTE, {
+      aggregator: await feedRegistry.getAddress(), // Use registry address as aggregator
       roundId: 1n,
       answer: 1000n * 10n ** 18n,
       updatedAt: 0n,
@@ -61,6 +61,7 @@ describe('CoWSwapVaultRelayerStub', async () => {
       decimals: 18n,
     })
     await feedRegistry.connect(manager).setFeed(contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
+      aggregator: await feedRegistry.getAddress(), // Use registry address as aggregator
       roundId: 1n,
       answer: 1n * 10n ** 8n,
       updatedAt: 0n,

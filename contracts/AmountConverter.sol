@@ -5,11 +5,7 @@ pragma solidity 0.8.23;
 import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
 import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-/**
- * @title AmountConverter
- * @dev Converts an amount of one token into another using OracleRouter’s USD-anchored prices.
- *      No direct TOKEN/TOKEN feeds are queried here; the router handles TOKEN/USD or TOKEN/ETH→ETH/USD.
- */
+
 contract AmountConverter is IAmountConverter {
     IOracleRouter public immutable ORACLE_ROUTER;
 
@@ -30,12 +26,9 @@ contract AmountConverter is IAmountConverter {
     error SameTokensConversion();
     error InvalidDecimalsDifference(uint8 diff);
     error AmountTooLarge(uint256 amount);
+    error PriceFromUsdZero();
+    error PriceToUsdZero();
 
-    /**
-     * @param oracleRouter_ OracleRouter used for USD-anchored pricing and cached decimals.
-     * @param allowedTokensToSell_ Addresses allowed as input tokens.
-     * @param allowedTokensToBuy_  Addresses allowed as output tokens.
-     */
     constructor(
         address oracleRouter_,
         address[] memory allowedTokensToSell_,
@@ -62,48 +55,46 @@ contract AmountConverter is IAmountConverter {
         }
     }
 
-    /**
-     * @notice Calculates the expected amount of `tokenTo_` received for `amountFrom_` of `tokenFrom_`.
-     * @dev Uses OracleRouter to fetch USD-anchored prices for both tokens in one call. The router may reuse
-     *      a single ETH/USD read when both sides are *\ETH. After price ratio, aligns token decimals via
-     *      cached decimals from the router.
-     * @param tokenFrom_ The token being sold.
-     * @param tokenTo_   The token being bought.
-     * @param amountFrom_ Amount of `tokenFrom_` being sold.
-     * @return expectedOutputAmount The expected amount of `tokenTo_` to receive.
-     */
     function getExpectedOut(
         address tokenFrom_,
         address tokenTo_,
         uint256 amountFrom_
     ) external view returns (uint256 expectedOutputAmount) {
         if (tokenFrom_ == tokenTo_) revert SameTokensConversion();
-        if (allowedTokensToSell[tokenFrom_] == false) revert SellTokenNotAllowed(tokenFrom_);
-        if (allowedTokensToBuy[tokenTo_] == false) revert BuyTokenNotAllowed(tokenTo_);
+        if (!allowedTokensToSell[tokenFrom_]) revert SellTokenNotAllowed(tokenFrom_);
+        if (!allowedTokensToBuy[tokenTo_]) revert BuyTokenNotAllowed(tokenTo_);
         if (amountFrom_ == 0) revert InvalidAmount(amountFrom_);
         if (amountFrom_ > type(uint128).max) revert AmountTooLarge(amountFrom_);
 
         (
-            uint256 priceFromUSD,
-            uint256 priceToUSD,
+            uint256 priceFromUsd,
+            uint256 priceToUsd,
             uint8 decimalsOfSellToken,
             uint8 decimalsOfBuyToken
         ) = ORACLE_ROUTER.getPricesAndDecimals(tokenFrom_, tokenTo_);
 
-        bool scaleDown = decimalsOfSellToken >= decimalsOfBuyToken;
-        uint8 diff = scaleDown
+        if (priceFromUsd == 0) revert PriceFromUsdZero();
+        if (priceToUsd == 0) revert PriceToUsdZero();
+
+        bool sellHasMoreOrEqualDecimals = decimalsOfSellToken >= decimalsOfBuyToken;
+        uint8 decimalsDiff = sellHasMoreOrEqualDecimals
             ? (decimalsOfSellToken - decimalsOfBuyToken)
             : (decimalsOfBuyToken - decimalsOfSellToken);
-        if (diff > 38) revert InvalidDecimalsDifference(diff);
+        if (decimalsDiff > 38) revert InvalidDecimalsDifference(decimalsDiff);
 
-        uint256 raw = Math.mulDiv(amountFrom_, priceFromUSD, priceToUSD);
-
-        if (scaleDown) {
-            // Use Math.mulDiv for safe division to prevent overflow
-            expectedOutputAmount = Math.mulDiv(raw, 1, 10 ** diff);
+        if (sellHasMoreOrEqualDecimals) {
+            uint256 grossOutput = Math.mulDiv(amountFrom_, priceFromUsd, priceToUsd, Math.Rounding.Down);
+            expectedOutputAmount = (decimalsDiff == 0)
+                ? grossOutput
+                : grossOutput / (10 ** decimalsDiff);
         } else {
-            // Use Math.mulDiv for safe multiplication to prevent overflow
-            expectedOutputAmount = Math.mulDiv(raw, 10 ** diff, 1);
+            // Scale the input first to avoid overflow on multiplication by 10**diff.
+            uint256 pow10 = 10 ** decimalsDiff;
+            uint256 maxAmountFromBeforeScale = type(uint256).max / pow10;
+            if (amountFrom_ > maxAmountFromBeforeScale) revert AmountTooLarge(amountFrom_);
+
+            uint256 scaledAmountFrom = amountFrom_ * pow10;
+            expectedOutputAmount = Math.mulDiv(scaledAmountFrom, priceFromUsd, priceToUsd, Math.Rounding.Down);
         }
     }
 }

@@ -2,8 +2,9 @@ import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
-import { StonksFactory, StonksFactory__factory } from '../../typechain-types'
-
+import { StonksFactory, StonksFactory__factory, OracleRouter } from '../../typechain-types'
+import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
+import { getAllTestTokens, refreshTestFeedData } from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
 
 const contracts = getContracts()
@@ -12,16 +13,25 @@ describe('StonksFactory', function () {
   let subject: StonksFactory
   let snapshot: SnapshotRestorer
   let ContractFactory: StonksFactory__factory
+  let oracleRouter: OracleRouter
 
   this.beforeAll(async function () {
     snapshot = await takeSnapshot()
+
+    oracleRouter = await getTestOracleRouter({
+      tokens: getAllTestTokens(),
+      agent: contracts.AGENT,
+    })
+
+    await refreshTestFeedData(getAllTestTokens())
+
     ContractFactory = await ethers.getContractFactory('StonksFactory')
 
     subject = await ContractFactory.deploy(
       contracts.AGENT,
       contracts.SETTLEMENT,
       contracts.VAULT_RELAYER,
-      contracts.ORACLE_ROUTER
+      await oracleRouter.getAddress()
     )
     await subject.waitForDeployment()
   })
@@ -118,7 +128,7 @@ describe('StonksFactory', function () {
           tokenTo,
           amountConverter,
           orderSample,
-          contracts.ORACLE_ROUTER,
+          await oracleRouter.getAddress(),
           orderDuration,
           marginInBP,
           toleranceInBP
@@ -128,5 +138,6 @@ describe('StonksFactory', function () {
 
   this.afterAll(async function () {
     await snapshot.restore()
+    resetTestOracleRouter() // Clean up global state
   })
 })

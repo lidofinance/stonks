@@ -35,9 +35,9 @@ abstract contract AssetRecoverer is Ownable {
      */
     function recoverEther() external onlyAgentOrManager {
         uint256 amount = address(this).balance;
-        (bool success,) = AGENT.call{value: amount}("");
-        require(success);
         emit EtherRecovered(AGENT, amount);
+        (bool success,) = AGENT.call{value: amount}("");
+        require(success, "ETH transfer failed");
     }
 
     /**
@@ -47,8 +47,8 @@ abstract contract AssetRecoverer is Ownable {
      * Emits an ERC20Recovered event upon success.
      */
     function recoverERC20(address token_, uint256 amount_) public virtual onlyAgentOrManager {
-        IERC20(token_).safeTransfer(AGENT, amount_);
         emit ERC20Recovered(token_, AGENT, amount_);
+        IERC20(token_).safeTransfer(AGENT, amount_);
     }
 
     /**
@@ -58,8 +58,8 @@ abstract contract AssetRecoverer is Ownable {
      * Emits an ERC721Recovered event upon success.
      */
     function recoverERC721(address token_, uint256 tokenId_) external onlyAgentOrManager {
-        IERC721(token_).safeTransferFrom(address(this), AGENT, tokenId_);
         emit ERC721Recovered(token_, tokenId_, AGENT);
+        IERC721(token_).safeTransferFrom(address(this), AGENT, tokenId_);
     }
 
     /**
@@ -70,7 +70,7 @@ abstract contract AssetRecoverer is Ownable {
      */
     function recoverERC1155(address token_, uint256 tokenId_) external onlyAgentOrManager {
         uint256 amount = IERC1155(token_).balanceOf(address(this), tokenId_);
-        IERC1155(token_).safeTransferFrom(address(this), AGENT, tokenId_, amount, "");
         emit ERC1155Recovered(token_, tokenId_, AGENT, amount);
+        IERC1155(token_).safeTransferFrom(address(this), AGENT, tokenId_, amount, "");
     }
 }

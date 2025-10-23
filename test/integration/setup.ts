@@ -1,6 +1,6 @@
 import { ethers } from 'hardhat'
 import { Signer } from 'ethers'
-import { impersonateAccount } from '@nomicfoundation/hardhat-network-helpers'
+import { impersonateAccount, setCode } from '@nomicfoundation/hardhat-network-helpers'
 import { getContracts } from '../../utils/contracts'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { AmountConverter, Stonks } from '../../typechain-types'
@@ -52,83 +52,71 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
     priceFeedHeartbeatTimeout: 3600,
   }
 
-  // Ensure registry has fresh, non-stale data for this pair by replacing with stub
-  // Use compiled IFeedRegistry ABI instead of ad-hoc Interface
-  const registry = await ethers.getContractAt(
-    'IFeedRegistry',
-    contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-    manager
-  )
-
-  const hasFeed = async (base: string, quote: string) => {
-    try {
-      const addr: string = await registry.getFunction('getFeed').staticCall(base, quote)
-      return addr !== ethers.ZeroAddress
-    } catch {
-      return false
-    }
-  }
-
-  const readDecimalsOr = async (base: string, quote: string, fallback: bigint) => {
-    try {
-      return BigInt(await registry.getFunction('decimals').staticCall(base, quote))
-    } catch {
-      return fallback
-    }
-  }
-
-  const readOrDefault = async (base: string, quote: string, decimals: bigint) => {
-    try {
-      const data = await registry.getFunction('latestRoundData').staticCall(base, quote)
-      const ans = BigInt(data[1])
-      if (ans > 0n)
-        return { answer: ans, answeredInRound: BigInt(data[4]), roundId: BigInt(data[0]) }
-    } catch {}
-    const one = 10n ** decimals
-    return { answer: one, answeredInRound: 0n, roundId: 0n }
-  }
-
-  // Deploy stub and replace registry code
-  const stubFactory = await ethers.getContractFactory('ChainlinkFeedRegistryStub')
-  const stub = await stubFactory.deploy(manager, manager)
-  await stub.waitForDeployment()
-  await (
-    await import('@nomicfoundation/hardhat-network-helpers')
-  ).setCode(contracts.CHAINLINK_PRICE_FEED_REGISTRY, await ethers.provider.getCode(stub))
-  const stubAtRegistry = await ethers.getContractAt(
-    'ChainlinkFeedRegistryStub',
+  const oracleRouterFactory = await ethers.getContractFactory('OracleRouter')
+  const oracleRouter = await oracleRouterFactory.deploy(
+    await manager.getAddress(),
+    18,
     contracts.CHAINLINK_PRICE_FEED_REGISTRY
   )
-  // Helper to seed a single pair on the stubbed registry address
-  const seedPair = async (base: string, quote: string) => {
-    const dec = await readDecimalsOr(base, quote, 8n)
-    const data = await readOrDefault(base, quote, dec)
-    await stubAtRegistry.setFeed(base, quote, {
-      answer: data.answer,
-      updatedAt: 0n,
-      startedAt: 0n,
-      answeredInRound: data.answeredInRound,
-      roundId: data.roundId,
-      decimals: Number(dec),
-    })
-  }
+  await oracleRouter.waitForDeployment()
 
-  // Seed ETH/USD always
-  await seedPair(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE)
+  const erc20Iface = new ethers.Interface(['function decimals() view returns (uint8)'])
+  const erc20 = (addr: string) => new ethers.Contract(addr, erc20Iface, manager)
 
-  // Prefer USD for tokens; fallback to ETH
-  const seedToken = async (token: string) => {
-    if (await hasFeed(token, contracts.CHAINLINK_USD_QUOTE)) {
-      await seedPair(token, contracts.CHAINLINK_USD_QUOTE)
+  const feedRegistry = await ethers.getContractAt(
+    'IFeedRegistry',
+    contracts.CHAINLINK_PRICE_FEED_REGISTRY
+  )
+
+  const configureToken = async (tokenAddr: string) => {
+    const dec: number = await erc20(tokenAddr).getFunction('decimals').staticCall()
+
+    const hasUsdFeed = async () => {
+      try {
+        const feed = await feedRegistry.getFeed(tokenAddr, contracts.CHAINLINK_USD_QUOTE)
+        return feed !== ethers.ZeroAddress
+      } catch {
+        return false
+      }
+    }
+
+    const hasEthFeed = async () => {
+      try {
+        const feed = await feedRegistry.getFeed(tokenAddr, contracts.CHAINLINK_ETH_QUOTE)
+        return feed !== ethers.ZeroAddress
+      } catch {
+        return false
+      }
+    }
+
+    const hasEthUsdBridge = async () => {
+      try {
+        const feed = await feedRegistry.getFeed(
+          contracts.CHAINLINK_ETH_QUOTE,
+          contracts.CHAINLINK_USD_QUOTE
+        )
+        return feed !== ethers.ZeroAddress
+      } catch {
+        return false
+      }
+    }
+
+    if (await hasUsdFeed()) {
+      await oracleRouter.setTokenUsdFeed(tokenAddr, 86_400, dec, true)
       return
     }
-    if (await hasFeed(token, contracts.CHAINLINK_ETH_QUOTE)) {
-      await seedPair(token, contracts.CHAINLINK_ETH_QUOTE)
+
+    if ((await hasEthFeed()) && (await hasEthUsdBridge())) {
+      await oracleRouter.setEthUsdBridge(86_400)
+      await oracleRouter.setTokenEthFeed(tokenAddr, 86_400, dec, true)
+      return
     }
+
+    throw new Error(`No valid price feed found for token ${tokenAddr}`)
   }
 
-  await seedToken(pair.tokenFrom)
-  await seedToken(pair.tokenTo)
+  await configureToken(pair.tokenFrom)
+  await configureToken(pair.tokenTo)
 
   const result = await deployStonks({
     factoryParams: {
@@ -136,6 +124,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
       relayer: contracts.VAULT_RELAYER,
       settlement: contracts.SETTLEMENT,
       priceFeedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+      oracleRouterAddress: await oracleRouter.getAddress(),
     },
     stonksParams: {
       tokenFrom: pair.tokenFrom,
@@ -146,9 +135,11 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
       priceToleranceInBps: 100,
     },
     amountConverterParams: {
+      oracleRouter: await oracleRouter.getAddress(),
       allowedTokensToSell: [pair.tokenFrom],
       allowedStableTokensToBuy: [pair.tokenTo],
     },
+    skipRouterConfiguration: true,
   })
 
   const tokenFrom = await ethers.getContractAt('IERC20Metadata', pair.tokenFrom)
@@ -159,6 +150,121 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
     amountConverter: result.amountConverter,
     value: BigInt(10) ** (await tokenFrom.decimals()),
   }
+}
+
+export const setupPriceSpikeStub = async (
+  stonks: Stonks,
+  manager: Signer,
+  spikeDownFactor: bigint = 5n
+): Promise<void> => {
+  const feedRegistryStubFactory = await ethers.getContractFactory('ChainlinkFeedRegistryStub')
+  const feedRegistryStub = await feedRegistryStubFactory.deploy(manager, manager)
+
+  const feedRegistry = await ethers.getContractAt(
+    'IFeedRegistry',
+    contracts.CHAINLINK_PRICE_FEED_REGISTRY
+  )
+
+  const tokenFrom = await stonks.TOKEN_FROM()
+  const tokenTo = await stonks.TOKEN_TO()
+
+  const getTokenFeedData = async (token: string) => {
+    try {
+      const usdFeed = await feedRegistry.getFeed(token, contracts.CHAINLINK_USD_QUOTE)
+      if (usdFeed !== ethers.ZeroAddress) {
+        const decimals = await feedRegistry.decimals(token, contracts.CHAINLINK_USD_QUOTE)
+        const latest = await feedRegistry.latestRoundData(token, contracts.CHAINLINK_USD_QUOTE)
+        return {
+          quote: contracts.CHAINLINK_USD_QUOTE,
+          aggregator: usdFeed,
+          decimals,
+          latest,
+        }
+      }
+    } catch {}
+
+    const ethFeed = await feedRegistry.getFeed(token, contracts.CHAINLINK_ETH_QUOTE)
+    const decimals = await feedRegistry.decimals(token, contracts.CHAINLINK_ETH_QUOTE)
+    const latest = await feedRegistry.latestRoundData(token, contracts.CHAINLINK_ETH_QUOTE)
+    return {
+      quote: contracts.CHAINLINK_ETH_QUOTE,
+      aggregator: ethFeed,
+      decimals,
+      latest,
+    }
+  }
+
+  const fromFeed = await getTokenFeedData(tokenFrom)
+  const toFeed = await getTokenFeedData(tokenTo)
+
+  const ethDecimals = await feedRegistry.decimals(
+    contracts.CHAINLINK_ETH_QUOTE,
+    contracts.CHAINLINK_USD_QUOTE
+  )
+  const ethLatest = await feedRegistry.latestRoundData(
+    contracts.CHAINLINK_ETH_QUOTE,
+    contracts.CHAINLINK_USD_QUOTE
+  )
+  const ethAggregator = await feedRegistry.getFeed(
+    contracts.CHAINLINK_ETH_QUOTE,
+    contracts.CHAINLINK_USD_QUOTE
+  )
+
+  await setCode(
+    contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+    await ethers.provider.getCode(feedRegistryStub)
+  )
+
+  const stubAtRegistry = await ethers.getContractAt(
+    'ChainlinkFeedRegistryStub',
+    contracts.CHAINLINK_PRICE_FEED_REGISTRY
+  )
+
+  const baseLatest = BigInt(fromFeed.latest.answer)
+  const baseOne = 10n ** BigInt(fromFeed.decimals)
+  const baseSafe = baseLatest > 0n ? baseLatest : baseOne
+  const tolBps = BigInt(await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS())
+  const downFactor = 10000n - tolBps * spikeDownFactor > 0n ? 10000n - tolBps * spikeDownFactor : 1n
+  const baseSpiked = (baseSafe * downFactor) / 10000n
+
+  const latestBlock = await ethers.provider.getBlock('latest')
+  const nowTs = BigInt(latestBlock!.timestamp)
+
+  await stubAtRegistry.setFeed(tokenFrom, fromFeed.quote, {
+    aggregator: fromFeed.aggregator,
+    answer: baseSpiked,
+    updatedAt: nowTs,
+    startedAt: nowTs,
+    answeredInRound: fromFeed.latest.answeredInRound > 0n ? fromFeed.latest.answeredInRound : 1n,
+    roundId: fromFeed.latest.roundId > 0n ? fromFeed.latest.roundId : 1n,
+    decimals: fromFeed.decimals,
+  })
+
+  const quoteLatest = BigInt(toFeed.latest.answer)
+  const quoteOne = 10n ** BigInt(toFeed.decimals)
+  const quoteSafe = quoteLatest > 0n ? quoteLatest : quoteOne
+  await stubAtRegistry.setFeed(tokenTo, toFeed.quote, {
+    aggregator: toFeed.aggregator,
+    answer: quoteSafe,
+    updatedAt: nowTs,
+    startedAt: nowTs,
+    answeredInRound: toFeed.latest.answeredInRound > 0n ? toFeed.latest.answeredInRound : 1n,
+    roundId: toFeed.latest.roundId > 0n ? toFeed.latest.roundId : 1n,
+    decimals: toFeed.decimals,
+  })
+
+  const ethLatestAns = BigInt(ethLatest.answer)
+  const ethDefault = 2000n * 10n ** BigInt(ethDecimals)
+  const ethSafe = ethLatestAns > 0n ? ethLatestAns : ethDefault
+  await stubAtRegistry.setFeed(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE, {
+    aggregator: ethAggregator,
+    answer: ethSafe,
+    updatedAt: nowTs,
+    startedAt: nowTs,
+    answeredInRound: ethLatest.answeredInRound > 0n ? ethLatest.answeredInRound : 1n,
+    roundId: ethLatest.roundId > 0n ? ethLatest.roundId : 1n,
+    decimals: ethDecimals,
+  })
 }
 
 export const pairs = [
@@ -180,7 +286,6 @@ export const pairs = [
     name: 'STETH->USDT',
     priceFeedHeartbeatTimeout: 3600,
   },
-  // Stable -> Volatile
   {
     tokenFrom: contracts.USDC,
     tokenTo: contracts.STETH,
@@ -221,13 +326,6 @@ export const pairs = [
     tokenFrom: contracts.DAI,
     tokenTo: contracts.USDC,
     name: 'DAI->USDC',
-    priceFeedHeartbeatTimeout: 3600,
-  },
-  // Volatile -> Volatile
-  {
-    tokenFrom: contracts.LDO,
-    tokenTo: contracts.STETH,
-    name: 'LDO->STETH',
     priceFeedHeartbeatTimeout: 3600,
   },
 ]

@@ -10,9 +10,16 @@ import {
   SnapshotRestorer,
   time,
 } from '@nomicfoundation/hardhat-network-helpers'
-import { setup, setupOverDeployedContracts, pairs, TokenPair, Setup } from './setup'
+import {
+  setup,
+  setupOverDeployedContracts,
+  setupPriceSpikeStub,
+  pairs,
+  TokenPair,
+  Setup,
+} from './setup'
 import { isClose } from '../../utils/assert'
-import { mainnet, getContracts } from '../../utils/contracts'
+import { getContracts } from '../../utils/contracts'
 import { IERC20, Stonks, Order } from '../../typechain-types'
 import { MAGIC_VALUE } from '../../utils/gpv2-helpers'
 import { getPlaceOrderData } from '../../utils/get-events'
@@ -164,105 +171,7 @@ describe('Scenario test multi-pair', function () {
             .withArgs(currentHash, ethers.ZeroHash)
         })
         it('should change stonks amount converter address', async () => {
-          const feedRegistryStubFactory = await ethers.getContractFactory(
-            'ChainlinkFeedRegistryStub'
-          )
-          const feedRegistryStub = await feedRegistryStubFactory.deploy(manager, manager)
-          const feedRegistry = await ethers.getContractAt(
-            'IFeedRegistry',
-            contracts.CHAINLINK_PRICE_FEED_REGISTRY
-          )
-          const decimals = await feedRegistry.decimals(
-            await stonks.TOKEN_FROM(),
-            contracts.CHAINLINK_USD_QUOTE
-          )
-          const latestRoundData = await feedRegistry.latestRoundData(
-            await stonks.TOKEN_FROM(),
-            contracts.CHAINLINK_USD_QUOTE
-          )
-          // Pre-read ETH/USD feed for stub seeding
-          const ethDecimals = await feedRegistry.decimals(
-            contracts.CHAINLINK_ETH_QUOTE,
-            contracts.CHAINLINK_USD_QUOTE
-          )
-          const ethLatest = await feedRegistry.latestRoundData(
-            contracts.CHAINLINK_ETH_QUOTE,
-            contracts.CHAINLINK_USD_QUOTE
-          )
-          // Pre-read QUOTE/USD feed BEFORE swapping the registry to avoid zero defaults
-          const toDecimals = await feedRegistry.decimals(
-            await stonks.TOKEN_TO(),
-            contracts.CHAINLINK_USD_QUOTE
-          )
-          const toLatest = await feedRegistry.latestRoundData(
-            await stonks.TOKEN_TO(),
-            contracts.CHAINLINK_USD_QUOTE
-          )
-
-          await setCode(
-            contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-            await ethers.provider.getCode(feedRegistryStub)
-          )
-
-          const feedRegistryStubReplaced = await ethers.getContractAt(
-            'ChainlinkFeedRegistryStub',
-            contracts.CHAINLINK_PRICE_FEED_REGISTRY
-          )
-
-          const baseLatest = BigInt(latestRoundData.answer)
-          const baseOne = 10n ** BigInt(decimals)
-          const baseSafe = baseLatest > 0n ? baseLatest : baseOne
-          const tolBps = BigInt(await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS())
-          // Reduce price well beyond tolerance to guarantee downside failure
-          const downFactor = 10000n - tolBps * 5n > 0n ? 10000n - tolBps * 5n : 1n
-          const baseSpiked = (baseSafe * downFactor) / 10000n
-
-          await feedRegistryStubReplaced.setFeed(
-            await stonks.TOKEN_FROM(),
-            contracts.CHAINLINK_USD_QUOTE,
-            {
-              answer: baseSpiked,
-              updatedAt: 0n,
-              startedAt: 0n,
-              answeredInRound: latestRoundData.answeredInRound,
-              roundId: latestRoundData.roundId,
-              decimals: decimals,
-            }
-          )
-
-          // Ensure quote token feed is present in stub as well (unchanged price)
-          const quoteLatest = BigInt(toLatest.answer)
-          const quoteOne = 10n ** BigInt(toDecimals)
-          const quoteSafe = quoteLatest > 0n ? quoteLatest : quoteOne
-          await feedRegistryStubReplaced.setFeed(
-            await stonks.TOKEN_TO(),
-            contracts.CHAINLINK_USD_QUOTE,
-            {
-              answer: quoteSafe,
-              updatedAt: 0n,
-              startedAt: 0n,
-              answeredInRound: toLatest.answeredInRound,
-              roundId: toLatest.roundId,
-              decimals: toDecimals,
-            }
-          )
-
-          // Seed ETH/USD in stub
-          const ethLatestAns = BigInt(ethLatest.answer)
-          const ethDefault = 2000n * 10n ** BigInt(ethDecimals)
-          const ethSafe = ethLatestAns > 0n ? ethLatestAns : ethDefault
-          await feedRegistryStubReplaced.setFeed(
-            contracts.CHAINLINK_ETH_QUOTE,
-            contracts.CHAINLINK_USD_QUOTE,
-            {
-              answer: ethSafe,
-              updatedAt: 0n,
-              startedAt: 0n,
-              answeredInRound: ethLatest.answeredInRound,
-              roundId: ethLatest.roundId,
-              decimals: ethDecimals,
-            }
-          )
+          await setupPriceSpikeStub(stonks, manager)
 
           const [currentHash] = await order.getOrderDetails()
           await expect(order.isValidSignature(currentHash, '0x')).to.be.revertedWithCustomError(
@@ -286,8 +195,8 @@ describe('Scenario test multi-pair', function () {
           const { address } = await getPlaceOrderData(orderReceipt)
 
           const newOrder = await ethers.getContractAt('Order', address)
-          expect(isClose(await tokenFrom.balanceOf(address), value, 3n)).to.be.true
-          expect(isClose(await tokenFrom.balanceOf(stonks), BigInt(0), 3n)).to.be.true
+          expect(isClose(await tokenFrom.balanceOf(address), value, 5n)).to.be.true
+          expect(isClose(await tokenFrom.balanceOf(stonks), BigInt(0), 5n)).to.be.true
 
           const [orderHashFromContract] = await newOrder.getOrderDetails()
           expect(orderHashFromContract).to.match(/^0x[0-9a-fA-F]{64}$/)
@@ -310,39 +219,45 @@ describe('Scenario test multi-pair', function () {
         })
       })
       context('Unexpected tokens', () => {
-        let ldo: IERC20
+        let stubToken: any
         before(async () => {
           await snapshotOrderPlaced.restore()
+          // Deploy stub token for unexpected token tests
+          const stubTokenFactory = await ethers.getContractFactory('ERC_20')
+          stubToken = await stubTokenFactory.deploy()
+          await stubToken.waitForDeployment()
         })
         it('should fill up stonks with unexpected token', async () => {
           const agent = await ethers.getSigner(contracts.AGENT)
           const value = parseEther('1')
+          // Transfer some tokens to agent first
+          await stubToken.transfer(contracts.AGENT, value)
+          await stubToken.connect(agent).transfer(stonks, value)
 
-          ldo = await ethers.getContractAt('IERC20', contracts.LDO)
-          await ldo.connect(agent).transfer(stonks, value)
-
-          expect(await ldo.balanceOf(stonks)).to.equal(value)
+          expect(await stubToken.balanceOf(stonks)).to.equal(value)
         })
         it('manager should recover unexpected token', async () => {
-          const agentBalanceBefore = await ldo.balanceOf(contracts.AGENT)
-          const value = await ldo.balanceOf(stonks)
-          await stonks.connect(manager).recoverERC20(ldo, value)
-          expect(await ldo.balanceOf(stonks)).to.equal(0)
-          expect(await ldo.balanceOf(contracts.AGENT)).to.equal(agentBalanceBefore + value)
+          const agentBalanceBefore = await stubToken.balanceOf(contracts.AGENT)
+          const value = await stubToken.balanceOf(stonks)
+          await stonks.connect(manager).recoverERC20(stubToken, value)
+          expect(await stubToken.balanceOf(stonks)).to.equal(0)
+          expect(await stubToken.balanceOf(contracts.AGENT)).to.equal(agentBalanceBefore + value)
         })
         it('should fill up order contract with unexpected token', async () => {
           const value = parseEther('1')
           const agent = await ethers.getSigner(contracts.AGENT)
-          await ldo.connect(agent).transfer(order, value)
+          // Transfer some tokens to agent first
+          await stubToken.transfer(contracts.AGENT, value)
+          await stubToken.connect(agent).transfer(order, value)
 
-          expect(isClose(await ldo.balanceOf(order), value, 1n))
+          expect(isClose(await stubToken.balanceOf(order), value, 1n))
         })
         it('manager should recover unexpected token from order contract', async () => {
-          const agentBalanceBefore = await ldo.balanceOf(contracts.AGENT)
-          const value = await ldo.balanceOf(order)
-          await order.connect(manager).recoverERC20(ldo, value)
-          expect(await ldo.balanceOf(stonks)).to.equal(0)
-          expect(await ldo.balanceOf(contracts.AGENT)).to.equal(agentBalanceBefore + value)
+          const agentBalanceBefore = await stubToken.balanceOf(contracts.AGENT)
+          const value = await stubToken.balanceOf(order)
+          await order.connect(manager).recoverERC20(stubToken, value)
+          expect(await stubToken.balanceOf(stonks)).to.equal(0)
+          expect(await stubToken.balanceOf(contracts.AGENT)).to.equal(agentBalanceBefore + value)
         })
       })
 

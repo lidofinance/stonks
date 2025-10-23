@@ -1,0 +1,148 @@
+import { ethers } from 'hardhat'
+import { expect } from 'chai'
+import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
+import fc from 'fast-check'
+import { Stonks, AmountConverterTest } from '../../typechain-types'
+import { deployStonksWithTestOracle, resetTestOracleRouter } from '../../utils/test-oracle-router'
+import { refreshTestFeedData } from '../../utils/test-feed-registry'
+import { getContracts } from '../../utils/contracts'
+
+const contracts = getContracts()
+const MAX_BASIS_POINTS = 10000n
+
+describe('Stonks - Fuzz Tests', () => {
+  let stonks: Stonks
+  let amountConverter: AmountConverterTest
+  let snapshot: SnapshotRestorer
+
+  before(async () => {
+    snapshot = await takeSnapshot()
+
+    await refreshTestFeedData([contracts.STETH, contracts.DAI])
+
+    const signer = (await ethers.getSigners())[0]
+    const { stonks: stonksInstance, amountConverter: converter } = await deployStonksWithTestOracle(
+      {
+        factoryParams: {
+          agent: contracts.AGENT,
+          relayer: contracts.VAULT_RELAYER,
+          settlement: contracts.SETTLEMENT,
+          priceFeedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+        },
+        stonksParams: {
+          tokenFrom: contracts.STETH,
+          tokenTo: contracts.DAI,
+          manager: await signer.getAddress(),
+          marginInBps: 500,
+          orderDuration: 3600,
+          priceToleranceInBps: 100,
+          amountConverterAddress: undefined,
+        },
+        amountConverterParams: {
+          allowedTokensToSell: [contracts.STETH],
+          allowedStableTokensToBuy: [contracts.DAI],
+        },
+      }
+    )
+
+    stonks = stonksInstance
+    amountConverter = await ethers.getContractAt(
+      'AmountConverterTest',
+      await converter.getAddress()
+    )
+  })
+
+  describe('Margin calculations', () => {
+    it('should always apply margin correctly', async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.bigInt({ min: ethers.parseEther('0.01'), max: ethers.parseEther('1000') }),
+          async (amount) => {
+            const marginBps = await stonks.MARGIN_IN_BASIS_POINTS()
+            const estimated = await stonks.estimateTradeOutput(amount)
+
+            const rawOutput = await amountConverter.getExpectedOut(
+              contracts.STETH,
+              contracts.DAI,
+              amount
+            )
+
+            const expectedEstimate = (rawOutput * (MAX_BASIS_POINTS - marginBps)) / MAX_BASIS_POINTS
+            expect(estimated).to.equal(expectedEstimate)
+          }
+        ),
+        { numRuns: 20 }
+      )
+    })
+
+    it('should ensure margin reduces output', async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.bigInt({ min: ethers.parseEther('0.1'), max: ethers.parseEther('100') }),
+          async (amount) => {
+            const estimated = await stonks.estimateTradeOutput(amount)
+            const rawOutput = await amountConverter.getExpectedOut(
+              contracts.STETH,
+              contracts.DAI,
+              amount
+            )
+
+            expect(estimated).to.be.lt(rawOutput)
+
+            const margin = rawOutput - estimated
+            const marginBps = await stonks.MARGIN_IN_BASIS_POINTS()
+            const expectedMargin = (rawOutput * marginBps) / MAX_BASIS_POINTS
+
+            const diff = margin > expectedMargin ? margin - expectedMargin : expectedMargin - margin
+            expect(diff).to.be.lte(1n)
+          }
+        ),
+        { numRuns: 20 }
+      )
+    })
+
+    it('should maintain proportionality with margin', async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.bigInt({ min: ethers.parseEther('1'), max: ethers.parseEther('10') }),
+          async (amount) => {
+            const result1 = await stonks.estimateTradeOutput(amount)
+            const result2 = await stonks.estimateTradeOutput(amount * 2n)
+
+            const expected = result1 * 2n
+            const diff = result2 > expected ? result2 - expected : expected - result2
+            expect(diff).to.be.lte(2n)
+          }
+        ),
+        { numRuns: 20 }
+      )
+    })
+  })
+
+  describe('Amount bounds', () => {
+    it('should revert for zero amounts', async () => {
+      await expect(stonks.estimateTradeOutput(0)).to.be.revertedWithCustomError(
+        stonks,
+        'InvalidAmount'
+      )
+    })
+
+    it('should handle large amounts without overflow', async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.bigInt({ min: ethers.parseEther('1000'), max: ethers.parseEther('100000') }),
+          async (amount) => {
+            const result = await stonks.estimateTradeOutput(amount)
+            expect(result).to.be.gte(0)
+          }
+        ),
+        { numRuns: 10 }
+      )
+    })
+  })
+
+  after(async () => {
+    await snapshot.restore()
+    resetTestOracleRouter()
+  })
+})

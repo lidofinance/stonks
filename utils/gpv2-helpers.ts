@@ -1,8 +1,6 @@
 import { ethers } from 'hardhat'
 import { TransactionReceipt } from 'ethers'
 import { getPlaceOrderData } from './get-events'
-import { getContracts } from './contracts'
-import { Stonks, StonksTest } from '../typechain-types'
 
 export const MAX_BASIS_POINTS = BigInt(10000)
 export const MAGIC_VALUE = '0x1626ba7e'
@@ -14,11 +12,7 @@ export const orderPartials = {
   partiallyFillable: false,
 }
 
-export const formOrderHashFromTxReceipt = async (
-  receipt: TransactionReceipt,
-  stonks: Stonks | StonksTest
-) => {
-  // Use the order contract as the source of truth for the computed hash
+export const formOrderHashFromTxReceipt = async (receipt: TransactionReceipt) => {
   const { address: orderInstanceAddress } = await getPlaceOrderData(receipt)
   const order = await ethers.getContractAt('Order', orderInstanceAddress)
   const [orderHash] = await order.getOrderDetails()

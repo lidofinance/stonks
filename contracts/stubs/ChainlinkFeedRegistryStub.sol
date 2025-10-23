@@ -11,6 +11,7 @@ import {ManageableStub} from "./ManageableStub.sol";
 ///     to return preset answers.
 contract ChainlinkFeedRegistryStub is IFeedRegistry, ManageableStub {
     struct FeedStub {
+        address aggregator;
         uint80 roundId;
         uint80 answeredInRound;
         uint8 decimals;
@@ -23,8 +24,8 @@ contract ChainlinkFeedRegistryStub is IFeedRegistry, ManageableStub {
 
     constructor(address owner_, address manager_) ManageableStub(owner_, manager_) {}
 
-    function getFeed(address, address) external view returns (address) {
-        return address(this);
+    function getFeed(address base, address quote) external view returns (address) {
+        return feeds[base][quote].aggregator;
     }
 
     function decimals(address base, address quote) external view returns (uint8) {
@@ -54,7 +55,7 @@ contract ChainlinkFeedRegistryStub is IFeedRegistry, ManageableStub {
         updatedAt = feed.updatedAt == 0 ? block.timestamp : feed.updatedAt;
     }
 
-    function setFeed(address base, address quote, FeedStub calldata feed) external onlyManager {
+    function setFeed(address base, address quote, FeedStub calldata feed) external {
         feeds[base][quote] = feed;
         emit FeedSet(base, quote, feed);
     }
