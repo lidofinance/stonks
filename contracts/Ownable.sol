@@ -23,7 +23,9 @@ contract Ownable {
      * @dev Modifier to restrict function access from the agent.
      */
     modifier onlyAgent() {
-        if (msg.sender != AGENT) revert NotAgent(msg.sender);
+        if (msg.sender != AGENT) {
+            revert NotAgent(msg.sender);
+        }
         _;
     }
 
@@ -31,7 +33,9 @@ contract Ownable {
      * @dev Modifier to restrict function access from either the agent or the manager.
      */
     modifier onlyAgentOrManager() {
-        if (msg.sender != AGENT && msg.sender != manager) revert NotAgentOrManager(msg.sender);
+        if (msg.sender != AGENT && msg.sender != manager) {
+            revert NotAgentOrManager(msg.sender);
+        }
         _;
     }
 
@@ -40,7 +44,9 @@ contract Ownable {
      * @param agent_ The address of the agent.
      */
     constructor(address agent_) {
-        if (agent_ == address(0)) revert InvalidAgentAddress(agent_);
+        if (agent_ == address(0)) {
+            revert InvalidAgentAddress(agent_);
+        }
         AGENT = agent_;
         emit AgentSet(agent_);
     }

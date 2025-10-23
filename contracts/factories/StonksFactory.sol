@@ -44,10 +44,18 @@ contract StonksFactory {
      * @param oracleRouter_ Address of the oracle router contract
      */
     constructor(address agent_, address settlement_, address relayer_, address oracleRouter_) {
-        if (agent_ == address(0)) revert InvalidAgentAddress(agent_);
-        if (relayer_ == address(0)) revert InvalidRelayerAddress(relayer_);
-        if (settlement_ == address(0)) revert InvalidSettlementAddress(settlement_);
-        if (oracleRouter_ == address(0)) revert InvalidOracleRouterAddress(oracleRouter_);
+        if (agent_ == address(0)) {
+            revert InvalidAgentAddress(agent_);
+        }
+        if (relayer_ == address(0)) {
+            revert InvalidRelayerAddress(relayer_);
+        }
+        if (settlement_ == address(0)) {
+            revert InvalidSettlementAddress(settlement_);
+        }
+        if (oracleRouter_ == address(0)) {
+            revert InvalidOracleRouterAddress(oracleRouter_);
+        }
 
         AGENT = agent_;
         ORACLE_ROUTER = oracleRouter_;

@@ -6,9 +6,8 @@ import {AmountConverter} from "../AmountConverter.sol";
 
 /**
  * @title AmountConverterFactory
- * @notice Deploys new instances of the AmountConverter contract.
+ * @dev Deploys new instances of the AmountConverter contract with predefined configuration.
  */
-
 contract AmountConverterFactory {
     address public immutable FEED_REGISTRY;
     address public immutable ORACLE_ROUTER;
@@ -25,13 +24,16 @@ contract AmountConverterFactory {
     error InvalidOracleRouterAddress(address oracleRouter);
 
     /**
-     *
-     * @param feedRegistry_ The address of the Chainlink Feed Registry (https://docs.chain.link/data-feeds/feed-registry)
+     * @param feedRegistry_ The address of the Chainlink Feed Registry
      * @param oracleRouter_ The address of the OracleRouter contract
      */
     constructor(address feedRegistry_, address oracleRouter_) {
-        if (feedRegistry_ == address(0)) revert InvalidFeedRegistryAddress(feedRegistry_);
-        if (oracleRouter_ == address(0)) revert InvalidOracleRouterAddress(oracleRouter_);
+        if (feedRegistry_ == address(0)) {
+            revert InvalidFeedRegistryAddress(feedRegistry_);
+        }
+        if (oracleRouter_ == address(0)) {
+            revert InvalidOracleRouterAddress(oracleRouter_);
+        }
         FEED_REGISTRY = feedRegistry_;
         ORACLE_ROUTER = oracleRouter_;
         emit FeedRegistrySet(feedRegistry_);

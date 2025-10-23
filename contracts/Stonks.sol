@@ -96,13 +96,27 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         uint256 marginInBasisPoints_,
         uint256 priceToleranceInBasisPoints_
     ) AssetRecoverer(agent_) {
-        if (manager_ == address(0)) revert InvalidManagerAddress(manager_);
-        if (tokenFrom_ == address(0)) revert InvalidTokenFromAddress(tokenFrom_);
-        if (tokenTo_ == address(0)) revert InvalidTokenToAddress(tokenTo_);
-        if (tokenFrom_ == tokenTo_) revert TokensCannotBeSame();
-        if (amountConverter_ == address(0)) revert InvalidAmountConverterAddress(amountConverter_);
-        if (orderSample_ == address(0)) revert InvalidOrderSampleAddress(orderSample_);
-        if (oracleRouter_ == address(0)) revert InvalidOracleRouterAddress(oracleRouter_);
+        if (manager_ == address(0)) {
+            revert InvalidManagerAddress(manager_);
+        }
+        if (tokenFrom_ == address(0)) {
+            revert InvalidTokenFromAddress(tokenFrom_);
+        }
+        if (tokenTo_ == address(0)) {
+            revert InvalidTokenToAddress(tokenTo_);
+        }
+        if (tokenFrom_ == tokenTo_) {
+            revert TokensCannotBeSame();
+        }
+        if (amountConverter_ == address(0)) {
+            revert InvalidAmountConverterAddress(amountConverter_);
+        }
+        if (orderSample_ == address(0)) {
+            revert InvalidOrderSampleAddress(orderSample_);
+        }
+        if (oracleRouter_ == address(0)) {
+            revert InvalidOracleRouterAddress(oracleRouter_);
+        }
         if (
             orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS ||
             orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS
@@ -190,7 +204,9 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     function estimateTradeOutput(
         uint256 amount_
     ) public view returns (uint256 estimatedTradeOutput) {
-        if (amount_ == 0) revert InvalidAmount(amount_);
+        if (amount_ == 0) {
+            revert InvalidAmount(amount_);
+        }
 
         uint256 expectedBuyAmount = IAmountConverter(AMOUNT_CONVERTER).getExpectedOut(
             TOKEN_FROM,
@@ -200,7 +216,9 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
 
         // Use pair-specific margin if set; fallback to global otherwise.
         uint256 marginBpsLocal = pairMarginBps[keccak256(abi.encodePacked(TOKEN_FROM, TOKEN_TO))];
-        if (marginBpsLocal == 0) marginBpsLocal = MARGIN_IN_BASIS_POINTS;
+        if (marginBpsLocal == 0) {
+            marginBpsLocal = MARGIN_IN_BASIS_POINTS;
+        }
 
         estimatedTradeOutput =
             (expectedBuyAmount * (MAX_BASIS_POINTS - marginBpsLocal)) /
@@ -248,11 +266,15 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         uint256 minBuyAmount_,
         uint256 availableBalance_
     ) internal returns (address) {
-        if (minBuyAmount_ == 0) revert InvalidAmount(minBuyAmount_);
+        if (minBuyAmount_ == 0) {
+            revert InvalidAmount(minBuyAmount_);
+        }
         if (sellAmount_ < MIN_POSSIBLE_BALANCE)
             revert MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, sellAmount_);
 
-        if (sellAmount_ > availableBalance_) revert SellAmountExceedsBalance(availableBalance_, sellAmount_);
+        if (sellAmount_ > availableBalance_) {
+            revert SellAmountExceedsBalance(availableBalance_, sellAmount_);
+        }
 
         Order orderCopy = Order(Clones.clone(ORDER_SAMPLE));
         emit OrderContractCreated(address(orderCopy), minBuyAmount_);

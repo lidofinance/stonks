@@ -82,7 +82,9 @@ contract Order is IERC1271, AssetRecoverer {
      * @dev Pulls pair params from Stonks, asserts a quotable price path up front, computes amounts, and arms allowance.
      */
     function initialize(uint256 minBuyAmount_, address manager_) external {
-        if (initialized) revert OrderAlreadyInitialized();
+        if (initialized) {
+            revert OrderAlreadyInitialized();
+        }
 
         initialized = true;
         stonks = msg.sender;
@@ -142,8 +144,12 @@ contract Order is IERC1271, AssetRecoverer {
      * by solvers who cannot buy tokens at the limit price when market price is higher.
      */
     function isValidSignature(bytes32 hash_, bytes calldata) external view returns (bytes4 magicValue) {
-        if (hash_ != orderHash) revert InvalidOrderHash(orderHash, hash_);
-        if (validTo < block.timestamp) revert OrderExpired(validTo);
+        if (hash_ != orderHash) {
+            revert InvalidOrderHash(orderHash, hash_);
+        }
+        if (validTo < block.timestamp) {
+            revert OrderExpired(validTo);
+        }
 
         uint256 currentCalculatedBuyAmount = IStonks(stonks).estimateTradeOutput(sellAmount);
 

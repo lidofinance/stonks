@@ -95,17 +95,29 @@ contract OracleRouter is IOracleRouter, Ownable {
     error TokenDecimalsMismatch(uint8 erc20Decimals, uint8 providedDecimals);
 
     constructor(address ownerAgent, uint8 unitDecimals, address feedRegistry) Ownable(ownerAgent) {
-        if (unitDecimals == 0 || unitDecimals > MAX_DECIMALS) revert InvalidUnitDecimals();
-        if (feedRegistry == address(0)) revert ZeroAddress();
-        if (ownerAgent == address(0)) revert ZeroAddress();
+        if (unitDecimals == 0 || unitDecimals > MAX_DECIMALS) {
+            revert InvalidUnitDecimals();
+        }
+        if (feedRegistry == address(0)) {
+            revert ZeroAddress();
+        }
+        if (ownerAgent == address(0)) {
+            revert ZeroAddress();
+        }
 
         FEED_REGISTRY = feedRegistry;
         UNIT_DECIMALS = unitDecimals;
         UNIT = 10 ** unitDecimals;
     }
 
+    /**
+     * @notice Sets the ETH/USD bridge configuration for token price routing.
+     * @param maxStalenessSeconds Maximum allowed staleness for ETH/USD price feed.
+     */
     function setEthUsdBridge(uint32 maxStalenessSeconds) external onlyAgentOrManager {
-        if (maxStalenessSeconds == 0) revert ZeroStaleness();
+        if (maxStalenessSeconds == 0) {
+            revert ZeroStaleness();
+        }
 
         (
             address aggregator,
@@ -131,6 +143,9 @@ contract OracleRouter is IOracleRouter, Ownable {
         );
     }
 
+    /**
+     * @notice Synchronizes the ETH/USD bridge configuration with current feed registry state.
+     */
     function syncEthUsdBridge() external onlyAgentOrManager {
         (
             address aggregator,
@@ -158,6 +173,13 @@ contract OracleRouter is IOracleRouter, Ownable {
         );
     }
 
+    /**
+     * @notice Sets the USD feed configuration for a token.
+     * @param tokenAddress Address of the token to configure.
+     * @param maxStalenessSeconds Maximum allowed staleness for the price feed.
+     * @param providedTokenDecimals Number of decimals for the token.
+     * @param isActive Whether the token should be active for price queries.
+     */
     function setTokenUsdFeed(
         address tokenAddress,
         uint32 maxStalenessSeconds,
@@ -173,6 +195,13 @@ contract OracleRouter is IOracleRouter, Ownable {
         );
     }
 
+    /**
+     * @notice Sets the ETH feed configuration for a token.
+     * @param tokenAddress Address of the token to configure.
+     * @param maxStalenessSeconds Maximum allowed staleness for the price feed.
+     * @param providedTokenDecimals Number of decimals for the token.
+     * @param isActive Whether the token should be active for price queries.
+     */
     function setTokenEthFeed(
         address tokenAddress,
         uint32 maxStalenessSeconds,
@@ -188,17 +217,31 @@ contract OracleRouter is IOracleRouter, Ownable {
         );
     }
 
+    /**
+     * @notice Sets a custom staleness override for ETH/USD bridge when used for a specific token.
+     * @param tokenAddress Address of the token to configure.
+     * @param overrideSeconds Custom staleness threshold for this token's ETH/USD bridge usage.
+     */
     function setTokenEthUsdStalenessOverride(
         address tokenAddress,
         uint32 overrideSeconds
     ) external onlyAgentOrManager {
-        if (tokenAddress == address(0)) revert ZeroAddress();
+        if (tokenAddress == address(0)) {
+            revert ZeroAddress();
+        }
         tokenConfig[tokenAddress].ethUsdMaxStalenessOverrideSeconds = overrideSeconds;
         emit TokenEthUsdStalenessOverride(tokenAddress, overrideSeconds);
     }
 
+    /**
+     * @notice Sets the active status of a token configuration.
+     * @param tokenAddress Address of the token to configure.
+     * @param isActive Whether the token should be active for price queries.
+     */
     function setTokenActive(address tokenAddress, bool isActive) external onlyAgentOrManager {
-        if (tokenAddress == address(0)) revert ZeroAddress();
+        if (tokenAddress == address(0)) {
+            revert ZeroAddress();
+        }
         TokenConfig storage config = tokenConfig[tokenAddress];
         if (isActive) {
             if (config.tokenDecimals == 0 || config.primaryFeed.aggregator == address(0)) {
@@ -209,6 +252,13 @@ contract OracleRouter is IOracleRouter, Ownable {
         emit TokenActiveUpdated(tokenAddress, isActive);
     }
 
+    /**
+     * @notice Gets USD prices for two tokens.
+     * @param baseTokenAddress Address of the base token.
+     * @param quoteTokenAddress Address of the quote token.
+     * @return baseUsdPrice USD price of the base token.
+     * @return quoteUsdPrice USD price of the quote token.
+     */
     function getUsdPrices(
         address baseTokenAddress,
         address quoteTokenAddress
@@ -234,17 +284,37 @@ contract OracleRouter is IOracleRouter, Ownable {
         quoteUsdPrice = _usdPrice(quoteTokenAddress);
     }
 
+    /**
+     * @notice Gets the decimal places for two tokens.
+     * @param baseTokenAddress Address of the base token.
+     * @param quoteTokenAddress Address of the quote token.
+     * @return baseTokenDecimals Number of decimals for the base token.
+     * @return quoteTokenDecimals Number of decimals for the quote token.
+     */
     function getTokenDecimals(
         address baseTokenAddress,
         address quoteTokenAddress
     ) external view returns (uint8 baseTokenDecimals, uint8 quoteTokenDecimals) {
         baseTokenDecimals = tokenConfig[baseTokenAddress].tokenDecimals;
-        if (baseTokenDecimals == 0) revert TokenNotConfigured(baseTokenAddress);
+        if (baseTokenDecimals == 0) {
+            revert TokenNotConfigured(baseTokenAddress);
+        }
 
         quoteTokenDecimals = tokenConfig[quoteTokenAddress].tokenDecimals;
-        if (quoteTokenDecimals == 0) revert TokenNotConfigured(quoteTokenAddress);
+        if (quoteTokenDecimals == 0) {
+            revert TokenNotConfigured(quoteTokenAddress);
+        }
     }
 
+    /**
+     * @notice Gets USD prices and decimal places for two tokens.
+     * @param baseTokenAddress Address of the base token.
+     * @param quoteTokenAddress Address of the quote token.
+     * @return baseUsdPrice USD price of the base token.
+     * @return quoteUsdPrice USD price of the quote token.
+     * @return baseTokenDecimals Number of decimals for the base token.
+     * @return quoteTokenDecimals Number of decimals for the quote token.
+     */
     function getPricesAndDecimals(
         address baseTokenAddress,
         address quoteTokenAddress
@@ -261,21 +331,36 @@ contract OracleRouter is IOracleRouter, Ownable {
         (baseUsdPrice, quoteUsdPrice) = this.getUsdPrices(baseTokenAddress, quoteTokenAddress);
 
         baseTokenDecimals = tokenConfig[baseTokenAddress].tokenDecimals;
-        if (baseTokenDecimals == 0) revert TokenNotConfigured(baseTokenAddress);
+        if (baseTokenDecimals == 0) {
+            revert TokenNotConfigured(baseTokenAddress);
+        }
 
         quoteTokenDecimals = tokenConfig[quoteTokenAddress].tokenDecimals;
-        if (quoteTokenDecimals == 0) revert TokenNotConfigured(quoteTokenAddress);
+        if (quoteTokenDecimals == 0) {
+            revert TokenNotConfigured(quoteTokenAddress);
+        }
     }
 
+    /**
+     * @notice Checks if the ETH/USD bridge configuration is synchronized with the feed registry.
+     * @return True if the bridge configuration matches the current feed registry state.
+     */
     function isBridgeInSync() external view returns (bool) {
         (address aggregator, uint8 decimals) = _currentFeedMeta(ETH_DENOMINATION, USD_DENOMINATION);
         FeedConfig storage b = ethUsdBridge;
         return (aggregator == b.aggregator && decimals == b.aggregatorDecimals);
     }
 
+    /**
+     * @notice Checks if a token's feed configuration is synchronized with the feed registry.
+     * @param tokenAddress Address of the token to check.
+     * @return True if the token configuration matches the current feed registry state.
+     */
     function isFeedInSync(address tokenAddress) external view returns (bool) {
         TokenConfig storage c = tokenConfig[tokenAddress];
-        if (c.tokenDecimals == 0) return false;
+        if (c.tokenDecimals == 0) {
+            return false;
+        }
         address quote = c.primaryQuote == QuoteDenomination.USD
             ? USD_DENOMINATION
             : ETH_DENOMINATION;
@@ -284,9 +369,15 @@ contract OracleRouter is IOracleRouter, Ownable {
             decimals == c.primaryFeed.aggregatorDecimals);
     }
 
+    /**
+     * @notice Synchronizes a token's feed configuration with current feed registry state.
+     * @param tokenAddress Address of the token to synchronize.
+     */
     function syncTokenFeed(address tokenAddress) external onlyAgentOrManager {
         TokenConfig storage config = tokenConfig[tokenAddress];
-        if (config.tokenDecimals == 0) revert TokenNotConfigured(tokenAddress);
+        if (config.tokenDecimals == 0) {
+            revert TokenNotConfigured(tokenAddress);
+        }
 
         address quote = config.primaryQuote == QuoteDenomination.USD
             ? USD_DENOMINATION
@@ -322,7 +413,9 @@ contract OracleRouter is IOracleRouter, Ownable {
 
     function _usdPrice(address tokenAddress) internal view returns (uint256 price) {
         TokenConfig storage config = tokenConfig[tokenAddress];
-        if (!config.isActive) revert TokenNotConfigured(tokenAddress);
+        if (!config.isActive) {
+            revert TokenNotConfigured(tokenAddress);
+        }
 
         if (config.primaryQuote == QuoteDenomination.USD) {
             return _readNormalizedPrice(tokenAddress, USD_DENOMINATION, config.primaryFeed);
@@ -342,7 +435,9 @@ contract OracleRouter is IOracleRouter, Ownable {
         uint256 ethUsd
     ) internal view returns (uint256 price) {
         TokenConfig storage config = tokenConfig[tokenAddress];
-        if (!config.isActive) revert TokenNotConfigured(tokenAddress);
+        if (!config.isActive) {
+            revert TokenNotConfigured(tokenAddress);
+        }
         if (config.primaryQuote == QuoteDenomination.USD) {
             return _readNormalizedPrice(tokenAddress, USD_DENOMINATION, config.primaryFeed);
         }
@@ -356,7 +451,9 @@ contract OracleRouter is IOracleRouter, Ownable {
 
     function _readEthUsdWithCap(uint32 capSeconds) internal view returns (uint256) {
         FeedConfig storage bridge = ethUsdBridge;
-        if (bridge.aggregatorDecimals == 0) revert EthUsdBridgeMissing();
+        if (bridge.aggregatorDecimals == 0) {
+            revert EthUsdBridgeMissing();
+        }
 
         FeedConfig memory bridgeCopy = bridge;
         bridgeCopy.maxStalenessSeconds = capSeconds;
@@ -365,7 +462,9 @@ contract OracleRouter is IOracleRouter, Ownable {
 
     function _effectiveEthUsdStaleness(TokenConfig storage config) internal view returns (uint32) {
         uint32 overrideSeconds = config.ethUsdMaxStalenessOverrideSeconds;
-        if (overrideSeconds == 0) return ethUsdBridge.maxStalenessSeconds;
+        if (overrideSeconds == 0) {
+            return ethUsdBridge.maxStalenessSeconds;
+        }
         return
             overrideSeconds < ethUsdBridge.maxStalenessSeconds
                 ? overrideSeconds
@@ -395,7 +494,9 @@ contract OracleRouter is IOracleRouter, Ownable {
         (uint80 roundId, int256 rawAnswer, , uint256 updatedAt, uint80 answeredInRound) = registry
             .latestRoundData(baseToken, quoteToken);
 
-        if (rawAnswer <= 0) revert OracleBadAnswer(feedConfig.aggregator, rawAnswer);
+        if (rawAnswer <= 0) {
+            revert OracleBadAnswer(feedConfig.aggregator, rawAnswer);
+        }
         if (answeredInRound < roundId)
             revert OracleUnanswered(feedConfig.aggregator, roundId, answeredInRound);
 
@@ -424,11 +525,17 @@ contract OracleRouter is IOracleRouter, Ownable {
         uint8 providedTokenDecimals,
         bool isActive
     ) internal {
-        if (tokenAddress == address(0)) revert ZeroAddress();
-        if (maxStalenessSeconds == 0) revert ZeroStaleness();
+        if (tokenAddress == address(0)) {
+            revert ZeroAddress();
+        }
+        if (maxStalenessSeconds == 0) {
+            revert ZeroStaleness();
+        }
 
         uint8 erc20Decimals = IERC20Metadata(tokenAddress).decimals();
-        if (erc20Decimals == 0 || erc20Decimals > MAX_DECIMALS) revert InvalidTokenDecimals();
+        if (erc20Decimals == 0 || erc20Decimals > MAX_DECIMALS) {
+            revert InvalidTokenDecimals();
+        }
         if (providedTokenDecimals != 0 && providedTokenDecimals != erc20Decimals) {
             revert TokenDecimalsMismatch(erc20Decimals, providedTokenDecimals);
         }
@@ -487,10 +594,14 @@ contract OracleRouter is IOracleRouter, Ownable {
         IFeedRegistry registry = IFeedRegistry(FEED_REGISTRY);
 
         aggregator = registry.getFeed(baseToken, quoteToken);
-        if (aggregator == address(0)) revert FeedMissing(baseToken, quoteToken);
+        if (aggregator == address(0)) {
+            revert FeedMissing(baseToken, quoteToken);
+        }
 
         decimals = registry.decimals(baseToken, quoteToken);
-        if (decimals == 0 || decimals > MAX_DECIMALS) revert InvalidAggregatorDecimals();
+        if (decimals == 0 || decimals > MAX_DECIMALS) {
+            revert InvalidAggregatorDecimals();
+        }
 
         (scaleNumerator, scaleDenominator) = _computeScaleFactors(decimals);
     }
@@ -512,11 +623,15 @@ contract OracleRouter is IOracleRouter, Ownable {
         }
         if (feedDecimals < UNIT_DECIMALS) {
             uint8 upDiff = UNIT_DECIMALS - feedDecimals;
-            if (upDiff > 38) revert InvalidAggregatorDecimals();
+            if (upDiff > 38) {
+                revert InvalidAggregatorDecimals();
+            }
             return (uint128(10 ** upDiff), 1);
         }
         uint8 downDiff = feedDecimals - UNIT_DECIMALS;
-        if (downDiff > 38) revert InvalidAggregatorDecimals();
+        if (downDiff > 38) {
+            revert InvalidAggregatorDecimals();
+        }
         return (1, uint128(10 ** downDiff));
     }
 }
