@@ -165,7 +165,9 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
      * @param minBuyAmount_ Minimum amount of tokenTo to be received as a result of the trade.
      * @return Address of the newly created Order contract.
      */
-    function placeOrder(uint256 minBuyAmount_) external onlyAgentOrManager nonReentrant returns (address) {
+    function placeOrder(
+        uint256 minBuyAmount_
+    ) external onlyAgentOrManager nonReentrant returns (address) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
         return _placeOrder(balance, minBuyAmount_, balance);
     }

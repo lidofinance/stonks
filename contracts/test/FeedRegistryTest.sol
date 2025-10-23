@@ -24,13 +24,22 @@ contract FeedRegistryTest {
         return IFeedRegistry(FEED_REGISTRY).decimals(base, quote);
     }
 
-    function latestRoundData(address base, address quote)
+    function latestRoundData(
+        address base,
+        address quote
+    )
         external
         view
-        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
+        returns (
+            uint80 roundId,
+            int256 answer,
+            uint256 startedAt,
+            uint256 updatedAt,
+            uint80 answeredInRound
+        )
     {
-        (roundId, answer, startedAt, updatedAt, answeredInRound) =
-            IFeedRegistry(FEED_REGISTRY).latestRoundData(base, quote);
+        (roundId, answer, startedAt, updatedAt, answeredInRound) = IFeedRegistry(FEED_REGISTRY)
+            .latestRoundData(base, quote);
 
         if (heartbeat != 0) {
             updatedAt = block.timestamp - heartbeat;

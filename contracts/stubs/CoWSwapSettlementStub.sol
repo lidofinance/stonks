@@ -3,7 +3,7 @@
 
 pragma solidity 0.8.23;
 
-import {ICoWSwapSettlement} from '../interfaces/ICoWSwapSettlement.sol';
+import {ICoWSwapSettlement} from "../interfaces/ICoWSwapSettlement.sol";
 
 /// @title Stub for the CoWSwap's Settlement contract
 /// @notice Contract is supposed to be used with the Order contract
@@ -12,14 +12,14 @@ contract CoWSwapSettlementStub is ICoWSwapSettlement {
     /// @dev The EIP-712 domain type hash used for computing the domain separator.
     bytes32 private constant DOMAIN_TYPE_HASH =
         keccak256(
-            'EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)'
+            "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
         );
 
     /// @dev The EIP-712 domain name used for computing the domain separator.
-    bytes32 private constant DOMAIN_NAME = keccak256('Settlement Instance Stub');
+    bytes32 private constant DOMAIN_NAME = keccak256("Settlement Instance Stub");
 
     /// @dev The EIP-712 domain version used for computing the domain separator.
-    bytes32 private constant DOMAIN_VERSION = keccak256('v2');
+    bytes32 private constant DOMAIN_VERSION = keccak256("v2");
 
     /// @dev The domain separator used for signing orders that gets mixed in making signatures for
     /// different domains incompatible. This domain separator is computed following the EIP-712

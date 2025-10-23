@@ -143,7 +143,10 @@ contract Order is IERC1271, AssetRecoverer {
      * Note: Any price improvement is rejected because it makes the order unrealistic for fulfillment
      * by solvers who cannot buy tokens at the limit price when market price is higher.
      */
-    function isValidSignature(bytes32 hash_, bytes calldata) external view returns (bytes4 magicValue) {
+    function isValidSignature(
+        bytes32 hash_,
+        bytes calldata
+    ) external view returns (bytes4 magicValue) {
         if (hash_ != orderHash) {
             revert InvalidOrderHash(orderHash, hash_);
         }
@@ -161,28 +164,28 @@ contract Order is IERC1271, AssetRecoverer {
         // Reject any price improvement - makes order unfulfillable
         if (currentCalculatedBuyAmount > buyAmount) {
             revert PriceConditionChanged(
-                buyAmount,                           // Expected price (limit)
-                currentCalculatedBuyAmount          // Actual current price (better)
+                buyAmount, // Expected price (limit)
+                currentCalculatedBuyAmount // Actual current price (better)
             );
         }
 
         // Current price is worse than expected - check tolerance
         uint256 shortfall = buyAmount - currentCalculatedBuyAmount;
         uint256 priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
-        uint256 maxToleratedShortfall = (buyAmount * priceToleranceInBasisPoints) / MAX_BASIS_POINTS;
+        uint256 maxToleratedShortfall = (buyAmount * priceToleranceInBasisPoints) /
+            MAX_BASIS_POINTS;
 
         // Reject if beyond tolerance
         if (shortfall > maxToleratedShortfall) {
             revert PriceConditionChanged(
-                buyAmount - maxToleratedShortfall,  // Minimum acceptable price
-                currentCalculatedBuyAmount         // Actual current price
+                buyAmount - maxToleratedShortfall, // Minimum acceptable price
+                currentCalculatedBuyAmount // Actual current price
             );
         }
 
         // Accept if within tolerance
         return ERC1271_MAGIC_VALUE;
     }
-
 
     /**
      * @notice Retrieves the details of the placed order.

@@ -8,7 +8,10 @@ contract HashHelper {
     using GPv2Order for GPv2Order.Data;
     using GPv2Order for bytes;
 
-    function hash(GPv2Order.Data memory order, bytes32 domainSeparator) external pure returns (bytes32 orderDigest) {
+    function hash(
+        GPv2Order.Data memory order,
+        bytes32 domainSeparator
+    ) external pure returns (bytes32 orderDigest) {
         return order.hash(domainSeparator);
     }
 }

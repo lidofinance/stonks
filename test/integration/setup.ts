@@ -55,7 +55,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
   const oracleRouterFactory = await ethers.getContractFactory('OracleRouter')
   const oracleRouter = await oracleRouterFactory.deploy(
     await manager.getAddress(),
-    18,
+    8,
     contracts.CHAINLINK_PRICE_FEED_REGISTRY
   )
   await oracleRouter.waitForDeployment()

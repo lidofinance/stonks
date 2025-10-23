@@ -21,7 +21,12 @@ abstract contract AssetRecoverer is Ownable {
     event EtherRecovered(address indexed _recipient, uint256 _amount);
     event ERC20Recovered(address indexed _token, address indexed _recipient, uint256 _amount);
     event ERC721Recovered(address indexed _token, uint256 _tokenId, address indexed _recipient);
-    event ERC1155Recovered(address indexed _token, uint256 _tokenId, address indexed _recipient, uint256 _amount);
+    event ERC1155Recovered(
+        address indexed _token,
+        uint256 _tokenId,
+        address indexed _recipient,
+        uint256 _amount
+    );
 
     /**
      * @dev Sets the initial agent address.
@@ -36,7 +41,7 @@ abstract contract AssetRecoverer is Ownable {
     function recoverEther() external onlyAgentOrManager {
         uint256 amount = address(this).balance;
         emit EtherRecovered(AGENT, amount);
-        (bool success,) = AGENT.call{value: amount}("");
+        (bool success, ) = AGENT.call{value: amount}("");
         require(success, "ETH transfer failed");
     }
 

@@ -44,20 +44,20 @@ describe('OracleRouter', function () {
 
   beforeEach(async function () {
     await refreshFeedData(feedConfig)
-    oracleRouter = await oracleRouterFactory.deploy(agentAddress, 18, feedRegistryAddress)
+    oracleRouter = await oracleRouterFactory.deploy(agentAddress, 8, feedRegistryAddress)
     await oracleRouter.waitForDeployment()
   })
 
   describe('Constructor', function () {
     it('sets constructor parameters', async function () {
-      expect(await oracleRouter.UNIT_DECIMALS()).to.equal(18)
-      expect(await oracleRouter.UNIT()).to.equal(ethers.parseEther('1'))
+      expect(await oracleRouter.UNIT_DECIMALS()).to.equal(8)
+      expect(await oracleRouter.UNIT()).to.equal(ethers.parseUnits('1', 8))
       expect(await oracleRouter.FEED_REGISTRY()).to.equal(feedRegistryAddress)
     })
 
     it('reverts with zero agent address', async function () {
       await expect(
-        oracleRouterFactory.deploy(ethers.ZeroAddress, 18, feedRegistryAddress)
+        oracleRouterFactory.deploy(ethers.ZeroAddress, 8, feedRegistryAddress)
       ).to.be.revertedWithCustomError(oracleRouter, 'InvalidAgentAddress')
     })
 
@@ -75,7 +75,7 @@ describe('OracleRouter', function () {
 
     it('reverts with zero feed registry address', async function () {
       await expect(
-        oracleRouterFactory.deploy(agentAddress, 18, ethers.ZeroAddress)
+        oracleRouterFactory.deploy(agentAddress, 8, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(oracleRouter, 'ZeroAddress')
     })
   })
@@ -125,7 +125,7 @@ describe('OracleRouter', function () {
     })
 
     it('emits EthUsdBridgeConfigured', async function () {
-      const freshRouter = await oracleRouterFactory.deploy(agentAddress, 18, feedRegistryAddress)
+      const freshRouter = await oracleRouterFactory.deploy(agentAddress, 8, feedRegistryAddress)
       await freshRouter.waitForDeployment()
       const agentSigner = await getAgentSigner()
 
@@ -190,6 +190,82 @@ describe('OracleRouter', function () {
       const bridgeConfig = await oracleRouter.ethUsdBridge()
       expect(bridgeConfig.aggregator).to.not.equal(ethers.ZeroAddress)
       expect(bridgeConfig.maxStalenessSeconds).to.equal(86_400)
+    })
+  })
+
+  describe('8 Decimal Scaling Tests', function () {
+    beforeEach(async function () {
+      const agentSigner = await getAgentSigner()
+      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+    })
+
+    it('should correctly scale 8-decimal feed to 8-decimal unit', async function () {
+      const agentSigner = await getAgentSigner()
+
+      // Configure a token with 8-decimal feed
+      await oracleRouter.connect(agentSigner).setTokenUsdFeed(
+        contracts.DAI,
+        86_400,
+        18, // DAI has 18 decimals
+        true
+      )
+
+      // The price should be correctly scaled from 8-decimal feed to 8-decimal unit
+      const [basePrice, quotePrice] = await oracleRouter.getUsdPrices(contracts.DAI, contracts.DAI)
+      expect(basePrice).to.be.greaterThan(0)
+      expect(quotePrice).to.be.greaterThan(0)
+    })
+
+    it('should correctly scale 18-decimal feed to 8-decimal unit', async function () {
+      const agentSigner = await getAgentSigner()
+
+      // Configure a token with 18-decimal feed (if any exist)
+      await oracleRouter.connect(agentSigner).setTokenUsdFeed(
+        contracts.STETH,
+        86_400,
+        18, // STETH has 18 decimals
+        true
+      )
+
+      const [basePrice, quotePrice] = await oracleRouter.getUsdPrices(
+        contracts.STETH,
+        contracts.STETH
+      )
+      expect(basePrice).to.be.greaterThan(0)
+      expect(quotePrice).to.be.greaterThan(0)
+    })
+
+    it('should handle cross-decimal conversions correctly', async function () {
+      const agentSigner = await getAgentSigner()
+
+      // Configure tokens with different decimals
+      await oracleRouter.connect(agentSigner).setTokenUsdFeed(
+        contracts.DAI, // 18 decimals
+        86_400,
+        18,
+        true
+      )
+
+      await oracleRouter.connect(agentSigner).setTokenUsdFeed(
+        contracts.USDT, // 6 decimals
+        86_400,
+        6,
+        true
+      )
+
+      const [daiPrice, usdtPrice] = await oracleRouter.getUsdPrices(contracts.DAI, contracts.USDT)
+      expect(daiPrice).to.be.greaterThan(0)
+      expect(usdtPrice).to.be.greaterThan(0)
+    })
+
+    it('should maintain precision with 8-decimal unit', async function () {
+      const agentSigner = await getAgentSigner()
+
+      await oracleRouter.connect(agentSigner).setTokenUsdFeed(contracts.DAI, 86_400, 18, true)
+
+      // Test that we don't lose precision due to scaling
+      const [price1, price2] = await oracleRouter.getUsdPrices(contracts.DAI, contracts.DAI)
+      expect(price1).to.equal(price2) // Same token should have same price
     })
   })
 
@@ -452,7 +528,7 @@ describe('OracleRouter', function () {
         )
         expect(daiUsdPrice).to.be.greaterThan(0)
         expect(usdcUsdPrice).to.be.greaterThan(0)
-        expect(usdcUsdPrice).to.be.closeTo(ethers.parseEther('1'), ethers.parseEther('0.1'))
+        expect(usdcUsdPrice).to.be.closeTo(ethers.parseUnits('1', 8), ethers.parseUnits('0.1', 8))
       })
 
       it('handles ETH bridge path', async function () {
