@@ -17,15 +17,15 @@ export const getExpectedOut = async (
   ).getAddress()
   const feedRegistry = await ethers.getContractAt('IFeedRegistry', feedRegistryAddress)
 
-  const UNIT_DECIMALS = 18n
+  const PRICE_DECIMALS = 8n
 
   const readPriceNormalized = async (base: string, quote: string): Promise<bigint> => {
     const decimals = await feedRegistry.decimals(base, quote)
     const [, raw] = await feedRegistry.latestRoundData(base, quote)
     const d = BigInt(decimals)
-    if (d === UNIT_DECIMALS) return raw
-    if (d < UNIT_DECIMALS) return raw * 10n ** (UNIT_DECIMALS - d)
-    return raw / 10n ** (d - UNIT_DECIMALS)
+    if (d === PRICE_DECIMALS) return raw
+    if (d < PRICE_DECIMALS) return raw * 10n ** (PRICE_DECIMALS - d)
+    return raw / 10n ** (d - PRICE_DECIMALS)
   }
 
   const priceFromUSD = await readPriceNormalized(tokenFrom, contracts.CHAINLINK_USD_QUOTE)
@@ -38,12 +38,17 @@ export const getExpectedOut = async (
     await ethers.getContractAt('IERC20Metadata', tokenTo)
   ).decimals()
 
-  const raw = (amount * priceFromUSD) / priceToUSD
-
   const diff = BigInt(decimalsOfSellToken) - BigInt(decimalsOfBuyToken)
-  if (diff >= 0) {
-    return raw / 10n ** diff
+  const sellHasMoreOrEqualDecimals = diff >= 0n
+
+  if (sellHasMoreOrEqualDecimals) {
+    // Use mulDiv equivalent: (amount * priceFromUSD) / priceToUSD
+    const grossOutput = (amount * priceFromUSD) / priceToUSD
+    return diff === 0n ? grossOutput : grossOutput / 10n ** diff
   } else {
-    return raw * 10n ** -diff
+    // Scale the input first to avoid overflow
+    const pow10 = 10n ** -diff
+    const scaledAmount = amount * pow10
+    return (scaledAmount * priceFromUSD) / priceToUSD
   }
 }

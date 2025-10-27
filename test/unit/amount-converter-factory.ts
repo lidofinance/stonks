@@ -8,7 +8,11 @@ import {
   OracleRouter,
 } from '../../typechain-types'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
-import { getAllTestTokens, refreshTestFeedData } from '../../utils/test-feed-registry'
+import {
+  getAllTestTokens,
+  refreshTestFeedData,
+  resetTestFeedRegistryStub,
+} from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
 
 const contracts = getContracts()
@@ -73,5 +77,6 @@ describe('AmountConverterFactory', function () {
   this.afterAll(async function () {
     await snapshot.restore()
     resetTestOracleRouter() // Clean up global state
+    resetTestFeedRegistryStub()
   })
 })

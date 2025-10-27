@@ -4,7 +4,11 @@ import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network
 import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
 import { StonksFactory, StonksFactory__factory, OracleRouter } from '../../typechain-types'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
-import { getAllTestTokens, refreshTestFeedData } from '../../utils/test-feed-registry'
+import {
+  getAllTestTokens,
+  refreshTestFeedData,
+  resetTestFeedRegistryStub,
+} from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
 
 const contracts = getContracts()
@@ -138,6 +142,8 @@ describe('StonksFactory', function () {
 
   this.afterAll(async function () {
     await snapshot.restore()
+
     resetTestOracleRouter() // Clean up global state
+    resetTestFeedRegistryStub()
   })
 })

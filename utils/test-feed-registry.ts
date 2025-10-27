@@ -14,7 +14,7 @@ export type TestFeedRegistryConfig = {
 async function getRealPriceData(
   base: string,
   quote: string
-): Promise<{ answer: bigint; decimals: number } | null> {
+): Promise<{ answer: bigint; decimals: number; aggregator: string; timestamp: bigint } | null> {
   try {
     const registry = await ethers.getContractAt(
       'IFeedRegistry',
@@ -24,11 +24,13 @@ async function getRealPriceData(
     if (feed === ethers.ZeroAddress) return null
 
     const decimals = await registry.decimals(base, quote)
-    const [, answer] = await registry.latestRoundData(base, quote)
+    const [, answer, , updatedAt] = await registry.latestRoundData(base, quote)
 
     return {
       answer: BigInt(answer),
       decimals: Number(decimals),
+      aggregator: feed,
+      timestamp: BigInt(updatedAt),
     }
   } catch {
     return null
@@ -227,124 +229,7 @@ export async function refreshFeedData(
   }
 }
 
-export async function hasFeed(base: string, quote: string): Promise<boolean> {
-  try {
-    const registry = await ethers.getContractAt(
-      'IFeedRegistry',
-      contracts.CHAINLINK_PRICE_FEED_REGISTRY
-    )
-    const addr: string = await registry.getFunction('getFeed').staticCall(base, quote)
-    return addr !== ethers.ZeroAddress
-  } catch {
-    return false
-  }
-}
-
-export async function readDecimalsOr(
-  base: string,
-  quote: string,
-  fallback: bigint
-): Promise<bigint> {
-  try {
-    const registry = await ethers.getContractAt(
-      'IFeedRegistry',
-      contracts.CHAINLINK_PRICE_FEED_REGISTRY
-    )
-    return BigInt(await registry.getFunction('decimals').staticCall(base, quote))
-  } catch {
-    return fallback
-  }
-}
-
-export async function readOrDefault(
-  base: string,
-  quote: string,
-  decimals: bigint
-): Promise<{
-  answer: bigint
-  answeredInRound: bigint
-  roundId: bigint
-}> {
-  try {
-    const registry = await ethers.getContractAt(
-      'IFeedRegistry',
-      contracts.CHAINLINK_PRICE_FEED_REGISTRY
-    )
-    const data = await registry.getFunction('latestRoundData').staticCall(base, quote)
-    const ans = BigInt(data[1])
-    if (ans > 0n) {
-      const roundId = BigInt(data[0]) > 0n ? BigInt(data[0]) : 1n
-      const answeredInRound = BigInt(data[4]) > 0n ? BigInt(data[4]) : roundId
-      return { answer: ans, answeredInRound, roundId }
-    }
-  } catch {}
-  const one = 10n ** decimals
-  return { answer: one, answeredInRound: 1n, roundId: 1n }
-}
-
-export async function ensureTokenFeed(
-  config: TestFeedRegistryConfig,
-  token: string
-): Promise<void> {
-  const stubAtRegistry = await getTestFeedRegistryStub(config)
-
-  try {
-    if (await hasFeed(token, contracts.CHAINLINK_USD_QUOTE)) {
-      const dec = await readDecimalsOr(token, contracts.CHAINLINK_USD_QUOTE, 8n)
-      const data = await readOrDefault(token, contracts.CHAINLINK_USD_QUOTE, dec)
-      const roundId = data.roundId > 0n ? data.roundId : 1n
-      const answeredInRound = data.answeredInRound > 0n ? data.answeredInRound : roundId
-      await stubAtRegistry.setFeed(token, contracts.CHAINLINK_USD_QUOTE, {
-        aggregator: await stubAtRegistry.getAddress(),
-        answer: data.answer,
-        updatedAt: BigInt(2 ** 40),
-        startedAt: BigInt(2 ** 40),
-        answeredInRound,
-        roundId,
-        decimals: Number(dec),
-      })
-      return
-    }
-  } catch {}
-
-  try {
-    if (await hasFeed(token, contracts.CHAINLINK_ETH_QUOTE)) {
-      const dec = await readDecimalsOr(token, contracts.CHAINLINK_ETH_QUOTE, 18n)
-      const data = await readOrDefault(token, contracts.CHAINLINK_ETH_QUOTE, dec)
-      const roundId = data.roundId > 0n ? data.roundId : 1n
-      const answeredInRound = data.answeredInRound > 0n ? data.answeredInRound : roundId
-      await stubAtRegistry.setFeed(token, contracts.CHAINLINK_ETH_QUOTE, {
-        aggregator: await stubAtRegistry.getAddress(),
-        answer: data.answer,
-        updatedAt: BigInt(2 ** 40),
-        startedAt: BigInt(2 ** 40),
-        answeredInRound,
-        roundId,
-        decimals: Number(dec),
-      })
-      return
-    }
-  } catch {}
-
-  await stubAtRegistry.setFeed(token, contracts.CHAINLINK_USD_QUOTE, {
-    aggregator: await stubAtRegistry.getAddress(),
-    answer: 10n ** 8n,
-    updatedAt: BigInt(2 ** 40),
-    startedAt: BigInt(2 ** 40),
-    answeredInRound: 1n,
-    roundId: 1n,
-    decimals: 8,
-  })
-}
-
-export async function ensureTokenFeeds(
-  config: TestFeedRegistryConfig,
-  tokens: string[]
-): Promise<void> {
-  for (const token of tokens) {
-    await ensureTokenFeed(config, token)
-  }
-}
+// Removed fallback helpers: hasFeed, readDecimalsOr, readOrDefault
 
 export type FeedUpdateConfig = {
   answer?: bigint
@@ -366,20 +251,28 @@ export async function updateTokenFeed(
 
   const currentFeed = await stubAtRegistry.feeds(token, quote)
 
-  await stubAtRegistry.setFeed(token, quote, {
-    aggregator: updateConfig.aggregator || currentFeed.aggregator,
-    answer: updateConfig.answer !== undefined ? updateConfig.answer : currentFeed.answer,
-    updatedAt:
-      updateConfig.updatedAt !== undefined ? updateConfig.updatedAt : currentFeed.updatedAt,
-    startedAt:
-      updateConfig.startedAt !== undefined ? updateConfig.startedAt : currentFeed.startedAt,
-    answeredInRound:
-      updateConfig.answeredInRound !== undefined
-        ? updateConfig.answeredInRound
-        : currentFeed.answeredInRound,
-    roundId: updateConfig.roundId !== undefined ? updateConfig.roundId : currentFeed.roundId,
-    decimals: updateConfig.decimals !== undefined ? updateConfig.decimals : currentFeed.decimals,
-  })
+  // Check if feed exists (aggregator is not zero address)
+  const feedExists = currentFeed.aggregator !== ethers.ZeroAddress
+
+  if (!feedExists) {
+    throw new Error(`Feed ${token}/${quote} does not exist; seed feeds before updating`)
+  }
+
+  // no debug logs
+
+  const next = {
+    aggregator: updateConfig.aggregator ?? currentFeed.aggregator,
+    answer: updateConfig.answer ?? currentFeed.answer,
+    updatedAt: updateConfig.updatedAt ?? currentFeed.updatedAt,
+    startedAt: updateConfig.startedAt ?? currentFeed.startedAt,
+    answeredInRound: updateConfig.answeredInRound ?? currentFeed.answeredInRound,
+    roundId: updateConfig.roundId ?? currentFeed.roundId,
+    decimals: updateConfig.decimals ?? currentFeed.decimals,
+  }
+
+  await stubAtRegistry.setFeed(token, quote, next)
+
+  // no debug logs
 }
 
 export function getAllTestTokens(): string[] {

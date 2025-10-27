@@ -9,7 +9,11 @@ import {
 } from '@nomicfoundation/hardhat-network-helpers'
 import { Order, Stonks, HashHelper, AmountConverterTest, OracleRouter } from '../../typechain-types'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
-import { getAllTestTokens, refreshTestFeedData } from '../../utils/test-feed-registry'
+import {
+  getAllTestTokens,
+  refreshTestFeedData,
+  resetTestFeedRegistryStub,
+} from '../../utils/test-feed-registry'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { getContracts } from '../../utils/contracts'
 import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
@@ -352,5 +356,6 @@ describe('Order', async function () {
   this.afterAll(async function () {
     await snapshot.restore()
     resetTestOracleRouter() // Clean up global state
+    resetTestFeedRegistryStub()
   })
 })

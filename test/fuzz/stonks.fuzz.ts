@@ -4,7 +4,7 @@ import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network
 import fc from 'fast-check'
 import { Stonks, AmountConverterTest } from '../../typechain-types'
 import { deployStonksWithTestOracle, resetTestOracleRouter } from '../../utils/test-oracle-router'
-import { refreshTestFeedData } from '../../utils/test-feed-registry'
+import { refreshTestFeedData, resetTestFeedRegistryStub } from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
 
 const contracts = getContracts()
@@ -71,7 +71,7 @@ describe('Stonks - Fuzz Tests', () => {
             expect(estimated).to.equal(expectedEstimate)
           }
         ),
-        { numRuns: 20 }
+        { numRuns: 50 }
       )
     })
 
@@ -89,15 +89,15 @@ describe('Stonks - Fuzz Tests', () => {
 
             expect(estimated).to.be.lt(rawOutput)
 
-            const margin = rawOutput - estimated
             const marginBps = await stonks.MARGIN_IN_BASIS_POINTS()
-            const expectedMargin = (rawOutput * marginBps) / MAX_BASIS_POINTS
+            const expectedEstimated =
+              (rawOutput * (MAX_BASIS_POINTS - marginBps)) / MAX_BASIS_POINTS
 
-            const diff = margin > expectedMargin ? margin - expectedMargin : expectedMargin - margin
-            expect(diff).to.be.lte(1n)
+            // The estimated should exactly match the contract calculation
+            expect(estimated).to.equal(expectedEstimated)
           }
         ),
-        { numRuns: 20 }
+        { numRuns: 50 }
       )
     })
 
@@ -109,12 +109,20 @@ describe('Stonks - Fuzz Tests', () => {
             const result1 = await stonks.estimateTradeOutput(amount)
             const result2 = await stonks.estimateTradeOutput(amount * 2n)
 
-            const expected = result1 * 2n
-            const diff = result2 > expected ? result2 - expected : expected - result2
-            expect(diff).to.be.lte(2n)
+            // Calculate expected result2 using the same contract logic
+            const rawOutput2 = await amountConverter.getExpectedOut(
+              contracts.STETH,
+              contracts.DAI,
+              amount * 2n
+            )
+            const marginBps = await stonks.MARGIN_IN_BASIS_POINTS()
+            const expectedResult2 = (rawOutput2 * (MAX_BASIS_POINTS - marginBps)) / MAX_BASIS_POINTS
+
+            // The result2 should exactly match the expected calculation
+            expect(result2).to.equal(expectedResult2)
           }
         ),
-        { numRuns: 20 }
+        { numRuns: 50 }
       )
     })
   })
@@ -136,7 +144,7 @@ describe('Stonks - Fuzz Tests', () => {
             expect(result).to.be.gte(0)
           }
         ),
-        { numRuns: 10 }
+        { numRuns: 30 }
       )
     })
   })
@@ -144,5 +152,6 @@ describe('Stonks - Fuzz Tests', () => {
   after(async () => {
     await snapshot.restore()
     resetTestOracleRouter()
+    resetTestFeedRegistryStub()
   })
 })

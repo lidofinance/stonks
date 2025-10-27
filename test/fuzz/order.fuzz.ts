@@ -4,7 +4,11 @@ import { takeSnapshot, SnapshotRestorer, time } from '@nomicfoundation/hardhat-n
 import fc from 'fast-check'
 import { Order, Stonks } from '../../typechain-types'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
-import { getAllTestTokens, refreshTestFeedData } from '../../utils/test-feed-registry'
+import {
+  getAllTestTokens,
+  refreshTestFeedData,
+  resetTestFeedRegistryStub,
+} from '../../utils/test-feed-registry'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { getContracts } from '../../utils/contracts'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
@@ -83,7 +87,7 @@ describe('Order - Fuzz Tests', () => {
 
           await localSnapshot.restore()
         }),
-        { numRuns: 10 }
+        { numRuns: 30 }
       )
     })
 
@@ -102,7 +106,7 @@ describe('Order - Fuzz Tests', () => {
 
           await localSnapshot.restore()
         }),
-        { numRuns: 10 }
+        { numRuns: 30 }
       )
     })
   })
@@ -110,5 +114,6 @@ describe('Order - Fuzz Tests', () => {
   after(async () => {
     await snapshot.restore()
     resetTestOracleRouter()
+    resetTestFeedRegistryStub()
   })
 })

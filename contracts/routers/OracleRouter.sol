@@ -14,11 +14,11 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  * @notice Price router based on Chainlink Feed Registry with two hop options:
  *         - TOKEN/USD (preferred), or
  *         - TOKEN/ETH bridged via ETH/USD.
- *         All outputs are normalized to UNIT (10 ** UNIT_DECIMALS).
+ *         All outputs are normalized to PRICE_UNIT (10 ** PRICE_DECIMALS).
  */
 contract OracleRouter is IOracleRouter, Ownable {
-    uint8 public immutable UNIT_DECIMALS;
-    uint256 public immutable UNIT;
+    uint8 public immutable PRICE_DECIMALS;
+    uint256 public immutable PRICE_UNIT;
     address public immutable FEED_REGISTRY;
 
     address private constant USD_DENOMINATION = 0x0000000000000000000000000000000000000348;
@@ -106,8 +106,8 @@ contract OracleRouter is IOracleRouter, Ownable {
         }
 
         FEED_REGISTRY = feedRegistry;
-        UNIT_DECIMALS = unitDecimals;
-        UNIT = 10 ** unitDecimals;
+        PRICE_DECIMALS = unitDecimals;
+        PRICE_UNIT = 10 ** unitDecimals;
     }
 
     /**
@@ -427,7 +427,7 @@ contract OracleRouter is IOracleRouter, Ownable {
             config.primaryFeed
         );
         uint256 ethUsd = _readEthUsdWithCap(_effectiveEthUsdStaleness(config));
-        price = Math.mulDiv(tokenToEth, ethUsd, UNIT);
+        price = Math.mulDiv(tokenToEth, ethUsd, PRICE_UNIT);
     }
 
     function _usdPriceWithEth(
@@ -446,7 +446,7 @@ contract OracleRouter is IOracleRouter, Ownable {
             ETH_DENOMINATION,
             config.primaryFeed
         );
-        price = Math.mulDiv(tokenToEth, ethUsd, UNIT);
+        price = Math.mulDiv(tokenToEth, ethUsd, PRICE_UNIT);
     }
 
     function _readEthUsdWithCap(uint32 capSeconds) internal view returns (uint256) {
@@ -510,7 +510,7 @@ contract OracleRouter is IOracleRouter, Ownable {
 
         normalizedPrice = Math.mulDiv(uint256(rawAnswer), scaleNumerator, scaleDenominator);
         if (normalizedPrice == 0) {
-            revert OracleQuantizedToZero(feedConfig.aggregator, liveDecimals, UNIT_DECIMALS);
+            revert OracleQuantizedToZero(feedConfig.aggregator, liveDecimals, PRICE_DECIMALS);
         }
     }
 
@@ -618,17 +618,17 @@ contract OracleRouter is IOracleRouter, Ownable {
     function _computeScaleFactors(
         uint8 feedDecimals
     ) internal view returns (uint128 numerator, uint128 denominator) {
-        if (feedDecimals == UNIT_DECIMALS) {
+        if (feedDecimals == PRICE_DECIMALS) {
             return (1, 1);
         }
-        if (feedDecimals < UNIT_DECIMALS) {
-            uint8 upDiff = UNIT_DECIMALS - feedDecimals;
+        if (feedDecimals < PRICE_DECIMALS) {
+            uint8 upDiff = PRICE_DECIMALS - feedDecimals;
             if (upDiff > 38) {
                 revert InvalidAggregatorDecimals();
             }
             return (uint128(10 ** upDiff), 1);
         }
-        uint8 downDiff = feedDecimals - UNIT_DECIMALS;
+        uint8 downDiff = feedDecimals - PRICE_DECIMALS;
         if (downDiff > 38) {
             revert InvalidAggregatorDecimals();
         }

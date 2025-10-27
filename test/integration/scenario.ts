@@ -42,7 +42,6 @@ describe('Scenario test multi-pair', function () {
       let expectedBuyAmount: bigint
       let orderReceipt: TransactionReceipt
       let order: Order
-      // Always fetch the on-chain hash right before signature checks to avoid drift
 
       this.beforeAll(async () => {
         snapshot = await takeSnapshot()
@@ -63,6 +62,10 @@ describe('Scenario test multi-pair', function () {
 
         await setBalance(await manager.getAddress(), parseEther('100'))
         await setBalance(contracts.AGENT, parseEther('100'))
+      })
+
+      this.afterAll(async () => {
+        await snapshot.restore()
       })
 
       context('Setup', () => {
@@ -99,9 +102,7 @@ describe('Scenario test multi-pair', function () {
 
           const [orderHashFromContract] = await order.getOrderDetails()
           expect(orderHashFromContract).to.match(/^0x[0-9a-fA-F]{64}$/)
-        })
 
-        after(async () => {
           snapshotOrderPlaced = await takeSnapshot()
         })
       })
@@ -222,7 +223,7 @@ describe('Scenario test multi-pair', function () {
         let stubToken: any
         before(async () => {
           await snapshotOrderPlaced.restore()
-          // Deploy stub token for unexpected token tests
+
           const stubTokenFactory = await ethers.getContractFactory('ERC_20')
           stubToken = await stubTokenFactory.deploy()
           await stubToken.waitForDeployment()
@@ -230,7 +231,6 @@ describe('Scenario test multi-pair', function () {
         it('should fill up stonks with unexpected token', async () => {
           const agent = await ethers.getSigner(contracts.AGENT)
           const value = parseEther('1')
-          // Transfer some tokens to agent first
           await stubToken.transfer(contracts.AGENT, value)
           await stubToken.connect(agent).transfer(stonks, value)
 
@@ -246,7 +246,6 @@ describe('Scenario test multi-pair', function () {
         it('should fill up order contract with unexpected token', async () => {
           const value = parseEther('1')
           const agent = await ethers.getSigner(contracts.AGENT)
-          // Transfer some tokens to agent first
           await stubToken.transfer(contracts.AGENT, value)
           await stubToken.connect(agent).transfer(order, value)
 

@@ -50,8 +50,8 @@ describe('OracleRouter', function () {
 
   describe('Constructor', function () {
     it('sets constructor parameters', async function () {
-      expect(await oracleRouter.UNIT_DECIMALS()).to.equal(8)
-      expect(await oracleRouter.UNIT()).to.equal(ethers.parseUnits('1', 8))
+      expect(await oracleRouter.PRICE_DECIMALS()).to.equal(8)
+      expect(await oracleRouter.PRICE_UNIT()).to.equal(ethers.parseUnits('1', 8))
       expect(await oracleRouter.FEED_REGISTRY()).to.equal(feedRegistryAddress)
     })
 
@@ -190,6 +190,115 @@ describe('OracleRouter', function () {
       const bridgeConfig = await oracleRouter.ethUsdBridge()
       expect(bridgeConfig.aggregator).to.not.equal(ethers.ZeroAddress)
       expect(bridgeConfig.maxStalenessSeconds).to.equal(86_400)
+    })
+  })
+
+  describe('18 Decimal Scaling Tests', function () {
+    let oracleRouter18: OracleRouter
+
+    beforeEach(async function () {
+      await refreshFeedData(feedConfig)
+
+      // Deploy OracleRouter with 18 decimals
+      oracleRouter18 = await oracleRouterFactory.deploy(agentAddress, 18, feedRegistryAddress)
+      await oracleRouter18.waitForDeployment()
+
+      const agentSigner = await getAgentSigner()
+      await oracleRouter18.connect(agentSigner).setEthUsdBridge(86_400)
+    })
+
+    it('should correctly scale 8-decimal feed to 18-decimal unit', async function () {
+      const agentSigner = await getAgentSigner()
+
+      // Configure a token with 8-decimal feed
+      await oracleRouter18.connect(agentSigner).setTokenUsdFeed(
+        contracts.DAI,
+        86_400,
+        18, // DAI has 18 decimals
+        true
+      )
+
+      // The price should be correctly scaled from 8-decimal feed to 18-decimal unit
+      const [basePrice, quotePrice] = await oracleRouter18.getUsdPrices(
+        contracts.DAI,
+        contracts.DAI
+      )
+      expect(basePrice).to.be.greaterThan(0)
+      expect(quotePrice).to.be.greaterThan(0)
+    })
+
+    it('should correctly scale 18-decimal feed to 18-decimal unit', async function () {
+      const agentSigner = await getAgentSigner()
+
+      // Configure a token with 18-decimal feed (if any exist)
+      await oracleRouter18.connect(agentSigner).setTokenUsdFeed(
+        contracts.STETH,
+        86_400,
+        18, // STETH has 18 decimals
+        true
+      )
+
+      const [basePrice, quotePrice] = await oracleRouter18.getUsdPrices(
+        contracts.STETH,
+        contracts.STETH
+      )
+      expect(basePrice).to.be.greaterThan(0)
+      expect(quotePrice).to.be.greaterThan(0)
+    })
+
+    it('should handle cross-decimal conversions correctly with 18-decimal unit', async function () {
+      const agentSigner = await getAgentSigner()
+
+      // Configure tokens with different decimals
+      await oracleRouter18.connect(agentSigner).setTokenUsdFeed(
+        contracts.DAI, // 18 decimals
+        86_400,
+        18,
+        true
+      )
+
+      await oracleRouter18.connect(agentSigner).setTokenUsdFeed(
+        contracts.USDT, // 6 decimals
+        86_400,
+        6,
+        true
+      )
+
+      const [daiPrice, usdtPrice] = await oracleRouter18.getUsdPrices(contracts.DAI, contracts.USDT)
+      expect(daiPrice).to.be.greaterThan(0)
+      expect(usdtPrice).to.be.greaterThan(0)
+    })
+
+    it('should maintain precision with 18-decimal unit', async function () {
+      const agentSigner = await getAgentSigner()
+
+      await oracleRouter18.connect(agentSigner).setTokenUsdFeed(contracts.DAI, 86_400, 18, true)
+
+      // Test that we don't lose precision due to scaling
+      const [price1, price2] = await oracleRouter18.getUsdPrices(contracts.DAI, contracts.DAI)
+      expect(price1).to.equal(price2) // Same token should have same price
+    })
+
+    it('should have correct 18-decimal unit values', async function () {
+      expect(await oracleRouter18.PRICE_DECIMALS()).to.equal(18)
+      expect(await oracleRouter18.PRICE_UNIT()).to.equal(ethers.parseEther('1'))
+    })
+
+    it('should scale differently than 8-decimal router for same tokens', async function () {
+      const agentSigner = await getAgentSigner()
+
+      // Configure same token on both routers
+      await oracleRouter.connect(agentSigner).setTokenUsdFeed(contracts.DAI, 86_400, 18, true)
+
+      await oracleRouter18.connect(agentSigner).setTokenUsdFeed(contracts.DAI, 86_400, 18, true)
+
+      const [price8, _] = await oracleRouter.getUsdPrices(contracts.DAI, contracts.DAI)
+      const [price18, __] = await oracleRouter18.getUsdPrices(contracts.DAI, contracts.DAI)
+
+      // Prices should be different due to different decimal scaling
+      // 18-decimal router should have 10^10 times larger values than 8-decimal router
+      expect(price18).to.be.greaterThan(price8)
+      expect(price18).to.be.closeTo(price8 * BigInt(10 ** 10), price8 * BigInt(10 ** 9)) // Within 10% tolerance
     })
   })
 
@@ -864,11 +973,11 @@ describe('OracleRouter', function () {
   // -------- Quantization guard
 
   describe('OracleQuantizedToZero guard', function () {
-    it('reverts when normalization floors to zero at chosen UNIT', async function () {
+    it('reverts when normalization floors to zero at chosen PRICE_UNIT', async function () {
       const smallUnitFactory = await ethers.getContractFactory('OracleRouter')
       const smallUnitRouter = await smallUnitFactory.deploy(
         agentAddress,
-        2, // UNIT_DECIMALS = 2
+        2, // PRICE_DECIMALS = 2
         feedRegistryAddress
       )
       await smallUnitRouter.waitForDeployment()
@@ -883,7 +992,7 @@ describe('OracleRouter', function () {
 
       await feedRegistry.setFeed(contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
         aggregator: await feedRegistry.getAddress(),
-        answer: 1n, // tiny value with 18 decimals → 0 at UNIT=1e2
+        answer: 1n, // tiny value with 18 decimals → 0 at PRICE_UNIT=1e2
         updatedAt: getCurrentTimestamp(),
         startedAt: 0n,
         answeredInRound: 1n,

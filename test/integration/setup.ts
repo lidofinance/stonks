@@ -10,6 +10,7 @@ export type TokenPair = {
   tokenTo: string
   name?: string
   priceFeedHeartbeatTimeout: number
+  useEthBridge?: boolean // If true, use ETH/USD bridge instead of direct USD feed
 }
 export type Setup = {
   manager: Signer
@@ -60,63 +61,108 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
   )
   await oracleRouter.waitForDeployment()
 
-  const erc20Iface = new ethers.Interface(['function decimals() view returns (uint8)'])
-  const erc20 = (addr: string) => new ethers.Contract(addr, erc20Iface, manager)
+  const erc20Interface = new ethers.Interface(['function decimals() view returns (uint8)'])
+  const getErc20Contract = (addr: string) => new ethers.Contract(addr, erc20Interface, manager)
 
   const feedRegistry = await ethers.getContractAt(
     'IFeedRegistry',
     contracts.CHAINLINK_PRICE_FEED_REGISTRY
   )
 
-  const configureToken = async (tokenAddr: string) => {
-    const dec: number = await erc20(tokenAddr).getFunction('decimals').staticCall()
+  const getFeedInfo = async (
+    base: string,
+    quote: string
+  ): Promise<{
+    exists: boolean
+    age: number | null
+    aggregator: string
+    answer: bigint
+    isValid: boolean
+  }> => {
+    try {
+      const [roundId, answer, , updatedAt, answeredInRound] = await feedRegistry.latestRoundData(
+        base,
+        quote
+      )
+      const exists = true
+      const isValid = answeredInRound >= roundId && answer > 0n
+      const latestBlock = await ethers.provider.getBlock('latest')
+      const age = isValid ? latestBlock!.timestamp - Number(updatedAt) : null
+      const aggregator = await feedRegistry.getFeed(base, quote)
 
-    const hasUsdFeed = async () => {
-      try {
-        const feed = await feedRegistry.getFeed(tokenAddr, contracts.CHAINLINK_USD_QUOTE)
-        return feed !== ethers.ZeroAddress
-      } catch {
-        return false
+      return { exists, age, aggregator, answer, isValid }
+    } catch {
+      return {
+        exists: false,
+        age: null,
+        aggregator: ethers.ZeroAddress,
+        answer: 0n,
+        isValid: false,
       }
     }
-
-    const hasEthFeed = async () => {
-      try {
-        const feed = await feedRegistry.getFeed(tokenAddr, contracts.CHAINLINK_ETH_QUOTE)
-        return feed !== ethers.ZeroAddress
-      } catch {
-        return false
-      }
-    }
-
-    const hasEthUsdBridge = async () => {
-      try {
-        const feed = await feedRegistry.getFeed(
-          contracts.CHAINLINK_ETH_QUOTE,
-          contracts.CHAINLINK_USD_QUOTE
-        )
-        return feed !== ethers.ZeroAddress
-      } catch {
-        return false
-      }
-    }
-
-    if (await hasUsdFeed()) {
-      await oracleRouter.setTokenUsdFeed(tokenAddr, 86_400, dec, true)
-      return
-    }
-
-    if ((await hasEthFeed()) && (await hasEthUsdBridge())) {
-      await oracleRouter.setEthUsdBridge(86_400)
-      await oracleRouter.setTokenEthFeed(tokenAddr, 86_400, dec, true)
-      return
-    }
-
-    throw new Error(`No valid price feed found for token ${tokenAddr}`)
   }
 
-  await configureToken(pair.tokenFrom)
-  await configureToken(pair.tokenTo)
+  const configureToken = async (tokenAddr: string, useEthBridge: boolean = false) => {
+    const tokenDecimals: number = await getErc20Contract(tokenAddr)
+      .getFunction('decimals')
+      .staticCall()
+
+    if (useEthBridge) {
+      // Use ETH as bridge when direct USD feed isn't available or stale
+      const [ethInfo, bridgeInfo] = await Promise.all([
+        getFeedInfo(tokenAddr, contracts.CHAINLINK_ETH_QUOTE),
+        getFeedInfo(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE),
+      ])
+
+      if (
+        ethInfo.isValid &&
+        bridgeInfo.isValid &&
+        ethInfo.age !== null &&
+        bridgeInfo.age !== null &&
+        ethInfo.age <= pair.priceFeedHeartbeatTimeout &&
+        bridgeInfo.age <= pair.priceFeedHeartbeatTimeout
+      ) {
+        await oracleRouter.setEthUsdBridge(pair.priceFeedHeartbeatTimeout)
+        await oracleRouter.setTokenEthFeed(
+          tokenAddr,
+          pair.priceFeedHeartbeatTimeout,
+          tokenDecimals,
+          true
+        )
+        return
+      }
+
+      throw new Error(
+        `ETH bridge too stale for token ${tokenAddr}: ethAge=${ethInfo.age}s, bridgeAge=${bridgeInfo.age}s, timeout=${pair.priceFeedHeartbeatTimeout}s`
+      )
+    } else {
+      const [usdInfo] = await Promise.all([getFeedInfo(tokenAddr, contracts.CHAINLINK_USD_QUOTE)])
+
+      if (
+        usdInfo.isValid &&
+        usdInfo.age !== null &&
+        usdInfo.age <= pair.priceFeedHeartbeatTimeout
+      ) {
+        await oracleRouter.setTokenUsdFeed(
+          tokenAddr,
+          pair.priceFeedHeartbeatTimeout,
+          tokenDecimals,
+          true
+        )
+        return
+      }
+
+      throw new Error(
+        `USD feed too stale for token ${tokenAddr}: age=${usdInfo.age}s, timeout=${pair.priceFeedHeartbeatTimeout}s`
+      )
+    }
+  }
+
+  await configureToken(pair.tokenFrom, pair.useEthBridge ?? false)
+  await configureToken(pair.tokenTo, pair.useEthBridge ?? false)
+
+  // Fail fast if router can't read prices before deploying stonks
+  await oracleRouter.getUsdPrices(pair.tokenFrom, pair.tokenTo)
 
   const result = await deployStonks({
     factoryParams: {
@@ -165,37 +211,38 @@ export const setupPriceSpikeStub = async (
     contracts.CHAINLINK_PRICE_FEED_REGISTRY
   )
 
+  const oracleRouterAddress = await stonks.ORACLE_ROUTER()
+  const oracleRouter = await ethers.getContractAt('OracleRouter', oracleRouterAddress)
+
   const tokenFrom = await stonks.TOKEN_FROM()
   const tokenTo = await stonks.TOKEN_TO()
 
-  const getTokenFeedData = async (token: string) => {
-    try {
-      const usdFeed = await feedRegistry.getFeed(token, contracts.CHAINLINK_USD_QUOTE)
-      if (usdFeed !== ethers.ZeroAddress) {
-        const decimals = await feedRegistry.decimals(token, contracts.CHAINLINK_USD_QUOTE)
-        const latest = await feedRegistry.latestRoundData(token, contracts.CHAINLINK_USD_QUOTE)
-        return {
-          quote: contracts.CHAINLINK_USD_QUOTE,
-          aggregator: usdFeed,
-          decimals,
-          latest,
-        }
-      }
-    } catch {}
+  const fromConfig = await oracleRouter.tokenConfig(tokenFrom)
+  const toConfig = await oracleRouter.tokenConfig(tokenTo)
 
-    const ethFeed = await feedRegistry.getFeed(token, contracts.CHAINLINK_ETH_QUOTE)
-    const decimals = await feedRegistry.decimals(token, contracts.CHAINLINK_ETH_QUOTE)
-    const latest = await feedRegistry.latestRoundData(token, contracts.CHAINLINK_ETH_QUOTE)
+  const getTokenFeedData = async (
+    token: string,
+    config: any
+  ): Promise<{ quote: string; aggregator: string; decimals: number; latest: any }> => {
+    // Match the quote denomination that router is configured to use
+    const useEthBridge = config.primaryQuote === 1n
+    const quote = useEthBridge ? contracts.CHAINLINK_ETH_QUOTE : contracts.CHAINLINK_USD_QUOTE
+
+    const decimalsResult = await feedRegistry.decimals(token, quote)
+    const decimals = Number(decimalsResult)
+    const latest = await feedRegistry.latestRoundData(token, quote)
+    const aggregator = await feedRegistry.getFeed(token, quote)
+
     return {
-      quote: contracts.CHAINLINK_ETH_QUOTE,
-      aggregator: ethFeed,
+      quote,
+      aggregator,
       decimals,
       latest,
     }
   }
 
-  const fromFeed = await getTokenFeedData(tokenFrom)
-  const toFeed = await getTokenFeedData(tokenTo)
+  const fromFeed = await getTokenFeedData(tokenFrom, fromConfig)
+  const toFeed = await getTokenFeedData(tokenTo, toConfig)
 
   const ethDecimals = await feedRegistry.decimals(
     contracts.CHAINLINK_ETH_QUOTE,
@@ -220,6 +267,7 @@ export const setupPriceSpikeStub = async (
     contracts.CHAINLINK_PRICE_FEED_REGISTRY
   )
 
+  // Spike price down to trigger PriceConditionChanged
   const baseLatest = BigInt(fromFeed.latest.answer)
   const baseOne = 10n ** BigInt(fromFeed.decimals)
   const baseSafe = baseLatest > 0n ? baseLatest : baseOne
@@ -240,6 +288,7 @@ export const setupPriceSpikeStub = async (
     decimals: fromFeed.decimals,
   })
 
+  // Keep quote token at same price to isolate the spike effect
   const quoteLatest = BigInt(toFeed.latest.answer)
   const quoteOne = 10n ** BigInt(toFeed.decimals)
   const quoteSafe = quoteLatest > 0n ? quoteLatest : quoteOne
@@ -253,12 +302,10 @@ export const setupPriceSpikeStub = async (
     decimals: toFeed.decimals,
   })
 
-  const ethLatestAns = BigInt(ethLatest.answer)
-  const ethDefault = 2000n * 10n ** BigInt(ethDecimals)
-  const ethSafe = ethLatestAns > 0n ? ethLatestAns : ethDefault
+  // Keep bridge fresh to avoid staleness errors during price spike test
   await stubAtRegistry.setFeed(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE, {
     aggregator: ethAggregator,
-    answer: ethSafe,
+    answer: ethLatest.answer,
     updatedAt: nowTs,
     startedAt: nowTs,
     answeredInRound: ethLatest.answeredInRound > 0n ? ethLatest.answeredInRound : 1n,
@@ -272,19 +319,19 @@ export const pairs = [
     tokenFrom: contracts.STETH,
     tokenTo: contracts.DAI,
     name: 'STETH->DAI',
-    priceFeedHeartbeatTimeout: 3600,
+    priceFeedHeartbeatTimeout: 86400,
   },
   {
     tokenFrom: contracts.STETH,
     tokenTo: contracts.USDC,
     name: 'STETH->USDC',
-    priceFeedHeartbeatTimeout: 3600,
+    priceFeedHeartbeatTimeout: 86400,
   },
   {
     tokenFrom: contracts.STETH,
     tokenTo: contracts.USDT,
     name: 'STETH->USDT',
-    priceFeedHeartbeatTimeout: 3600,
+    priceFeedHeartbeatTimeout: 86400,
   },
   {
     tokenFrom: contracts.USDC,
@@ -320,12 +367,26 @@ export const pairs = [
     tokenFrom: contracts.DAI,
     tokenTo: contracts.USDT,
     name: 'DAI->USDT',
-    priceFeedHeartbeatTimeout: 3600,
+    priceFeedHeartbeatTimeout: 86400,
   },
   {
     tokenFrom: contracts.DAI,
     tokenTo: contracts.USDC,
     name: 'DAI->USDC',
-    priceFeedHeartbeatTimeout: 3600,
+    priceFeedHeartbeatTimeout: 86400,
+  },
+  {
+    tokenFrom: contracts.STETH,
+    tokenTo: contracts.DAI,
+    name: 'STETH->DAI (ETH Bridge)',
+    priceFeedHeartbeatTimeout: 86400,
+    useEthBridge: true,
+  },
+  {
+    tokenFrom: contracts.STETH,
+    tokenTo: contracts.USDC,
+    name: 'STETH->USDC (ETH Bridge)',
+    priceFeedHeartbeatTimeout: 86400,
+    useEthBridge: true,
   },
 ]

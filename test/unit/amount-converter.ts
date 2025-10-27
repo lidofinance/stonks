@@ -4,7 +4,7 @@ import { expect } from 'chai'
 
 import { IAmountConverter, OracleRouter } from '../../typechain-types'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
-import { refreshTestFeedData } from '../../utils/test-feed-registry'
+import { refreshTestFeedData, resetTestFeedRegistryStub } from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
 
@@ -18,8 +18,8 @@ describe('AmountConverter', () => {
   let router: OracleRouter
   let routerAddress: string
 
-  const USD = addresses.CHAINLINK_USD_QUOTE
-  const WETH = addresses.CHAINLINK_ETH_QUOTE
+  const USD_QUOTE = addresses.CHAINLINK_USD_QUOTE
+  const ETH_QUOTE = addresses.CHAINLINK_ETH_QUOTE
 
   const readTokenDecimals = async (token: string) => {
     const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
@@ -155,7 +155,7 @@ describe('AmountConverter', () => {
       const latest = await ethers.provider.getBlock('latest')
       const nowTs = BigInt(latest!.timestamp)
 
-      await stub.setFeed(addresses.STETH, WETH, {
+      await stub.setFeed(addresses.STETH, ETH_QUOTE, {
         aggregator: await stub.getAddress(),
         answer: 1n * 10n ** 18n,
         updatedAt: nowTs,
@@ -164,7 +164,7 @@ describe('AmountConverter', () => {
         roundId: 1n,
         decimals: 18,
       })
-      await stub.setFeed(WETH, USD, {
+      await stub.setFeed(ETH_QUOTE, USD_QUOTE, {
         aggregator: await stub.getAddress(),
         answer: 2000n * 10n ** 8n,
         updatedAt: nowTs,
@@ -250,8 +250,8 @@ describe('AmountConverter', () => {
       // Freshen both DAI/USD and ETH/USD to now, then advance time to exceed staleness
       const latest = await ethers.provider.getBlock('latest')
       const nowTs = BigInt(latest!.timestamp)
-      const daiUsd = await stub.feeds(addresses.DAI, USD)
-      await stub.setFeed(addresses.DAI, USD, {
+      const daiUsd = await stub.feeds(addresses.DAI, USD_QUOTE)
+      await stub.setFeed(addresses.DAI, USD_QUOTE, {
         aggregator: daiUsd.aggregator,
         answer: daiUsd.answer,
         updatedAt: nowTs,
@@ -277,8 +277,8 @@ describe('AmountConverter', () => {
       const latest = await ethers.provider.getBlock('latest')
       const nowTs = BigInt(latest!.timestamp)
 
-      const current = await stub.feeds(addresses.DAI, USD)
-      await stub.setFeed(addresses.DAI, USD, {
+      const current = await stub.feeds(addresses.DAI, USD_QUOTE)
+      await stub.setFeed(addresses.DAI, USD_QUOTE, {
         aggregator: current.aggregator,
         answer: 0n,
         updatedAt: nowTs,
@@ -321,5 +321,6 @@ describe('AmountConverter', () => {
   after(async () => {
     await snapshot.restore()
     resetTestOracleRouter()
+    resetTestFeedRegistryStub()
   })
 })

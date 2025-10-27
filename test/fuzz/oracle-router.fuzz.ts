@@ -16,6 +16,11 @@ const contracts = getContracts()
 describe('OracleRouter - Fuzz Tests', () => {
   let oracleRouter: OracleRouter
   let snapshot: SnapshotRestorer
+  const runs = 100
+  const currentChainTs = async (): Promise<bigint> => {
+    const blk = await ethers.provider.getBlock('latest')
+    return BigInt(blk!.timestamp)
+  }
 
   const feedConfig = {
     tokens: [contracts.STETH, contracts.DAI],
@@ -53,6 +58,8 @@ describe('OracleRouter - Fuzz Tests', () => {
         answer: 0n,
         updatedAt: nowTs,
         startedAt: nowTs,
+        roundId: 1n,
+        answeredInRound: 1n,
       })
 
       await expect(
@@ -70,6 +77,8 @@ describe('OracleRouter - Fuzz Tests', () => {
         answer: -1n,
         updatedAt: nowTs,
         startedAt: nowTs,
+        roundId: 1n,
+        answeredInRound: 1n,
       })
 
       await expect(
@@ -84,21 +93,37 @@ describe('OracleRouter - Fuzz Tests', () => {
         fc.asyncProperty(fc.bigInt({ min: 1n, max: 10n ** 18n }), async (price) => {
           const localSnapshot = await takeSnapshot()
 
-          const nowTs = BigInt(Math.floor(Date.now() / 1000))
+          const block = await ethers.provider.getBlock('latest')
+          const nowTs = BigInt(block!.timestamp)
           await updateTokenFeed(feedConfig, contracts.STETH, contracts.CHAINLINK_USD_QUOTE, {
             answer: price,
             updatedAt: nowTs,
             startedAt: nowTs,
-            answeredInRound: 1n,
             roundId: 1n,
+            answeredInRound: 1n,
+          })
+
+          // Also update DAI feed to ensure it has proper round data
+          await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
+            answer: 1000000000000000000n, // 1 USD in 18 decimals
+            updatedAt: nowTs,
+            startedAt: nowTs,
+            roundId: 1n,
+            answeredInRound: 1n,
           })
 
           const [stethPrice] = await oracleRouter.getUsdPrices(contracts.STETH, contracts.DAI)
-          expect(stethPrice).to.be.greaterThan(0)
+          // Feed has 8 decimals, router expects more, scale up
+          const feedDecimals = 8
+          const priceDecimals = await oracleRouter.PRICE_DECIMALS()
+          const scaleFactor = 10n ** BigInt(Math.abs(Number(feedDecimals) - Number(priceDecimals)))
+          const expectedPrice =
+            feedDecimals < priceDecimals ? price * scaleFactor : price / scaleFactor
+          expect(stethPrice).to.equal(expectedPrice)
 
           await localSnapshot.restore()
         }),
-        { numRuns: 10 }
+        { numRuns: runs }
       )
     })
   })
@@ -109,7 +134,8 @@ describe('OracleRouter - Fuzz Tests', () => {
         fc.asyncProperty(fc.bigInt({ min: 2n, max: 100n }), async (roundId) => {
           const localSnapshot = await takeSnapshot()
 
-          const nowTs = BigInt(Math.floor(Date.now() / 1000))
+          const block = await ethers.provider.getBlock('latest')
+          const nowTs = BigInt(block!.timestamp)
           await updateTokenFeed(feedConfig, contracts.STETH, contracts.CHAINLINK_USD_QUOTE, {
             roundId,
             answeredInRound: roundId - 1n,
@@ -123,7 +149,7 @@ describe('OracleRouter - Fuzz Tests', () => {
 
           await localSnapshot.restore()
         }),
-        { numRuns: 10 }
+        { numRuns: runs }
       )
     })
 
@@ -132,20 +158,160 @@ describe('OracleRouter - Fuzz Tests', () => {
         fc.asyncProperty(fc.bigInt({ min: 1n, max: 100n }), async (roundId) => {
           const localSnapshot = await takeSnapshot()
 
-          const nowTs = BigInt(Math.floor(Date.now() / 1000))
+          const block = await ethers.provider.getBlock('latest')
+          const nowTs = BigInt(block!.timestamp)
           await updateTokenFeed(feedConfig, contracts.STETH, contracts.CHAINLINK_USD_QUOTE, {
             roundId,
             answeredInRound: roundId,
             updatedAt: nowTs,
             startedAt: nowTs,
+            answer: 100000000n, // 1 USD in 8 decimals
+          })
+
+          // Also update DAI feed to ensure it has proper round data
+          await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
+            roundId,
+            answeredInRound: roundId,
+            updatedAt: nowTs,
+            startedAt: nowTs,
+            answer: 100000000n, // 1 USD in 8 decimals
           })
 
           const [price] = await oracleRouter.getUsdPrices(contracts.STETH, contracts.DAI)
-          expect(price).to.be.greaterThan(0)
+          // Both feeds have 8 decimals and answer 1 USD, so normalized = 1 * 10^10
+          const feedDecimals = 8
+          const priceDecimals = await oracleRouter.PRICE_DECIMALS()
+          const scaleFactor = 10n ** BigInt(Math.abs(Number(feedDecimals) - Number(priceDecimals)))
+          const expectedPrice =
+            feedDecimals < priceDecimals
+              ? 100000000n * scaleFactor // Scale up when feed has fewer decimals
+              : 100000000n / scaleFactor // Scale down when feed has more decimals
+          expect(price).to.equal(expectedPrice)
 
           await localSnapshot.restore()
         }),
-        { numRuns: 10 }
+        { numRuns: runs }
+      )
+    })
+  })
+
+  describe('ETH bridge and staleness', () => {
+    it('uses ETH/USD bridge and respects staleness cap', async () => {
+      const local = await takeSnapshot()
+      const stub = await getTestFeedRegistryStub(feedConfig)
+      const signer = await ethers.getImpersonatedSigner(contracts.AGENT)
+
+      // Configure bridge and set ETH-quoted feeds where available
+      await oracleRouter.connect(signer).setEthUsdBridge(86_400)
+      await oracleRouter.connect(signer).setTokenEthFeed(contracts.STETH, 86_400, 18, true)
+
+      const nowTs = await currentChainTs()
+
+      // Fresh ETH/USD → should succeed
+      await updateTokenFeed(
+        feedConfig,
+        contracts.CHAINLINK_ETH_QUOTE,
+        contracts.CHAINLINK_USD_QUOTE,
+        {
+          updatedAt: nowTs,
+          startedAt: nowTs,
+          roundId: 1n,
+          answeredInRound: 1n,
+        }
+      )
+
+      await expect(oracleRouter.getUsdPrices(contracts.STETH, contracts.DAI)).to.not.be.reverted
+
+      // Make ETH/USD stale beyond cap → should revert OracleStale
+      const stale = nowTs - 86_401n
+      await updateTokenFeed(
+        feedConfig,
+        contracts.CHAINLINK_ETH_QUOTE,
+        contracts.CHAINLINK_USD_QUOTE,
+        {
+          updatedAt: stale,
+          startedAt: stale,
+          roundId: 2n,
+          answeredInRound: 2n,
+        }
+      )
+
+      await expect(
+        oracleRouter.getUsdPrices(contracts.STETH, contracts.DAI)
+      ).to.be.revertedWithCustomError(oracleRouter, 'OracleStale')
+
+      await local.restore()
+    })
+
+    it('per-token ETH/USD staleness override applies (smaller cap)', async () => {
+      const local = await takeSnapshot()
+      const signer = await ethers.getImpersonatedSigner(contracts.AGENT)
+      await oracleRouter.connect(signer).setEthUsdBridge(86_400)
+      await oracleRouter.connect(signer).setTokenEthFeed(contracts.STETH, 86_400, 18, true)
+      // Override to tighter cap
+      await oracleRouter.connect(signer).setTokenEthUsdStalenessOverride(contracts.STETH, 60)
+
+      const nowTs = await currentChainTs()
+      // ETH/USD updated 61s ago → should be stale due to override
+      const ethAgo61 = nowTs - 61n
+      await updateTokenFeed(
+        feedConfig,
+        contracts.CHAINLINK_ETH_QUOTE,
+        contracts.CHAINLINK_USD_QUOTE,
+        {
+          updatedAt: ethAgo61,
+          startedAt: ethAgo61,
+          roundId: 3n,
+          answeredInRound: 3n,
+        }
+      )
+
+      await expect(
+        oracleRouter.getUsdPrices(contracts.STETH, contracts.DAI)
+      ).to.be.revertedWithCustomError(oracleRouter, 'OracleStale')
+
+      await local.restore()
+    })
+
+    it('direct USD feed staleness fuzz', async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.integer({ min: 1, max: 3_600 }),
+          fc.integer({ min: 30, max: 86_400 }),
+          async (ageSec, capSec) => {
+            const local = await takeSnapshot()
+            const signer = await ethers.getImpersonatedSigner(contracts.AGENT)
+            await oracleRouter.connect(signer).setTokenUsdFeed(contracts.STETH, 86_400, 18, true)
+            await oracleRouter.connect(signer).setTokenUsdFeed(contracts.DAI, capSec, 18, true)
+
+            const nowTs = await currentChainTs()
+            await updateTokenFeed(feedConfig, contracts.STETH, contracts.CHAINLINK_USD_QUOTE, {
+              updatedAt: nowTs,
+              startedAt: nowTs,
+              roundId: 1n,
+              answeredInRound: 1n,
+              answer: 100000000n,
+            })
+            const ts = nowTs - BigInt(ageSec)
+            await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
+              updatedAt: ts,
+              startedAt: ts,
+              roundId: 10n,
+              answeredInRound: 10n,
+              answer: 100000000n,
+            })
+
+            const call = oracleRouter.getUsdPrices(contracts.STETH, contracts.DAI)
+            if (ageSec > capSec) {
+              await expect(call).to.be.revertedWithCustomError(oracleRouter, 'OracleStale')
+            } else {
+              await expect(call).to.not.be.reverted
+            }
+
+            await local.restore()
+          }
+        ),
+        { numRuns: runs }
       )
     })
   })
