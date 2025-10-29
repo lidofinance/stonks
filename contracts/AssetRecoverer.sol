@@ -5,6 +5,7 @@ pragma solidity 0.8.23;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {Ownable} from "./Ownable.sol";
@@ -16,6 +17,7 @@ import {Ownable} from "./Ownable.sol";
  * @notice Assets can be sent only to the agent address.
  */
 abstract contract AssetRecoverer is Ownable {
+    using Address for address payable;
     using SafeERC20 for IERC20;
 
     event EtherRecovered(address indexed _recipient, uint256 _amount);
@@ -28,6 +30,8 @@ abstract contract AssetRecoverer is Ownable {
         uint256 _amount
     );
 
+    error ZeroAgentAddress();
+
     /**
      * @dev Sets the initial agent address.
      * @param agent_ The address of the Lido DAO treasury.
@@ -36,13 +40,17 @@ abstract contract AssetRecoverer is Ownable {
 
     /**
      * @dev Allows the agent or manager to recover Ether held by the contract.
+     * @notice Implements CEI pattern: Checks (authorization) -> Effects (events) -> Interactions (transfer)
      * Emits an EtherRecovered event upon success.
      */
     function recoverEther() external onlyAgentOrManager {
+        if (AGENT == address(0)) {
+            revert ZeroAgentAddress();
+        }
+
         uint256 amount = address(this).balance;
         emit EtherRecovered(AGENT, amount);
-        (bool success, ) = AGENT.call{value: amount}("");
-        require(success, "ETH transfer failed");
+        payable(AGENT).sendValue(amount);
     }
 
     /**
