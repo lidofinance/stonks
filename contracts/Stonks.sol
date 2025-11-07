@@ -155,7 +155,10 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
             maxImprovementInBasisPoints_ != type(uint256).max &&
             maxImprovementInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT
         ) {
-            revert MarginOverflowsAllowedLimit(BASIS_POINTS_PARAMETERS_LIMIT, maxImprovementInBasisPoints_);
+            revert MarginOverflowsAllowedLimit(
+                BASIS_POINTS_PARAMETERS_LIMIT,
+                maxImprovementInBasisPoints_
+            );
         }
 
         manager = manager_;

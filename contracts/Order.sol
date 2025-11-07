@@ -188,7 +188,7 @@ contract Order is IERC1271, AssetRecoverer {
 
         // Early revert if partial fills disabled and balance is insufficient (saves solver gas)
         if (!stonksContract.ALLOW_PARTIAL_FILL()) {
-            (address tokenFrom,,) = stonksContract.getOrderParameters();
+            (address tokenFrom, , ) = stonksContract.getOrderParameters();
             uint256 available = IERC20(tokenFrom).balanceOf(address(this));
             if (available < sellAmount) {
                 revert InsufficientSellBalance(sellAmount, available);
@@ -215,8 +215,11 @@ contract Order is IERC1271, AssetRecoverer {
             }
 
             // Compute improvement cap in a single mulDiv operation
-            uint256 maxAllowedBuyAmount =
-                Math.mulDiv(buyAmount, MAX_BASIS_POINTS + maxImprovementBps, MAX_BASIS_POINTS);
+            uint256 maxAllowedBuyAmount = Math.mulDiv(
+                buyAmount,
+                MAX_BASIS_POINTS + maxImprovementBps,
+                MAX_BASIS_POINTS
+            );
 
             if (currentEstimatedBuyAmount > maxAllowedBuyAmount) {
                 revert PriceImprovementExceedsLimit(maxAllowedBuyAmount, currentEstimatedBuyAmount);
@@ -236,11 +239,18 @@ contract Order is IERC1271, AssetRecoverer {
                 revert PriceShortfallExceedsTolerance(buyAmount, currentEstimatedBuyAmount);
             }
 
-            uint256 maxToleratedShortfall = Math.mulDiv(buyAmount, priceToleranceBps, MAX_BASIS_POINTS);
+            uint256 maxToleratedShortfall = Math.mulDiv(
+                buyAmount,
+                priceToleranceBps,
+                MAX_BASIS_POINTS
+            );
             uint256 minAcceptableBuyAmount = buyAmount - maxToleratedShortfall;
 
             if (currentEstimatedBuyAmount < minAcceptableBuyAmount) {
-                revert PriceShortfallExceedsTolerance(minAcceptableBuyAmount, currentEstimatedBuyAmount);
+                revert PriceShortfallExceedsTolerance(
+                    minAcceptableBuyAmount,
+                    currentEstimatedBuyAmount
+                );
             }
 
             return ERC1271_MAGIC_VALUE;
