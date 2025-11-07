@@ -6,13 +6,16 @@ import {AmountConverter} from "../AmountConverter.sol";
 
 /**
  * @title AmountConverterFactory
- * @dev Deploys new instances of the AmountConverter contract with predefined configuration.
+ * @notice Deploys new instances of the AmountConverter contract with predefined configuration.
  */
 contract AmountConverterFactory {
-    address public immutable FEED_REGISTRY;
+    // ==================== Immutables ====================
+
+    /// @notice Address of the OracleRouter contract.
     address public immutable ORACLE_ROUTER;
 
-    event FeedRegistrySet(address feedRegistry);
+    // ==================== Events ====================
+
     event AmountConverterDeployed(
         address indexed amountConverterAddress,
         address oracleRouter,
@@ -20,35 +23,34 @@ contract AmountConverterFactory {
         address[] allowedStableTokensToBuy
     );
 
-    error InvalidFeedRegistryAddress(address feedRegistry);
+    // ==================== Errors ====================
+
     error InvalidOracleRouterAddress(address oracleRouter);
 
+    // ==================== Constructor ====================
+
     /**
-     * @param feedRegistry_ The address of the Chainlink Feed Registry
      * @param oracleRouter_ The address of the OracleRouter contract
      */
-    constructor(address feedRegistry_, address oracleRouter_) {
-        if (feedRegistry_ == address(0)) {
-            revert InvalidFeedRegistryAddress(feedRegistry_);
-        }
+    constructor(address oracleRouter_) {
         if (oracleRouter_ == address(0)) {
             revert InvalidOracleRouterAddress(oracleRouter_);
         }
-        FEED_REGISTRY = feedRegistry_;
         ORACLE_ROUTER = oracleRouter_;
-        emit FeedRegistrySet(feedRegistry_);
     }
+
+    // ==================== External Functions ====================
 
     /**
      * @notice Deploys a new AmountConverter contract with specified parameters
      * @param allowedTokensToSell_ Array of addresses of tokens allowed to be sold
-     * @param allowedStableTokensToBuy_ Array of addresses of stable tokens allowed to be bought
+     * @param allowedStableTokensToBuy_ Array of addresses of tokens allowed to be bought
      * @return tokenAmountConverter The address of the newly deployed AmountConverter contract
      */
     function deployAmountConverter(
         address[] memory allowedTokensToSell_,
         address[] memory allowedStableTokensToBuy_
-    ) public returns (address tokenAmountConverter) {
+    ) external returns (address tokenAmountConverter) {
         tokenAmountConverter = address(
             new AmountConverter(ORACLE_ROUTER, allowedTokensToSell_, allowedStableTokensToBuy_)
         );

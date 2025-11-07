@@ -21,7 +21,6 @@ describe('AmountConverterFactory', function () {
   let subject: AmountConverterFactory
   let contractFactory: AmountConverterFactory__factory
   let oracleRouter: OracleRouter
-  let feedRegistryAddress: string
   let snapshot: SnapshotRestorer
 
   this.beforeAll(async function () {
@@ -33,34 +32,16 @@ describe('AmountConverterFactory', function () {
 
     await refreshTestFeedData(getAllTestTokens())
 
-    feedRegistryAddress = await oracleRouter.FEED_REGISTRY()
-
     contractFactory = await ethers.getContractFactory('AmountConverterFactory')
-    subject = await contractFactory.deploy(feedRegistryAddress, await oracleRouter.getAddress())
+    subject = await contractFactory.deploy(await oracleRouter.getAddress())
     await subject.waitForDeployment()
   })
 
   describe('initialization:', async function () {
-    it('should have right treasury address after deploy', async function () {
-      expect(await subject.FEED_REGISTRY()).to.equal(feedRegistryAddress)
-    })
-    it('should revert with zero feed registry address', async function () {
-      await expect(contractFactory.deploy(ethers.ZeroAddress, contracts.ORACLE_ROUTER))
-        .to.be.revertedWithCustomError(contractFactory, 'InvalidFeedRegistryAddress')
-        .withArgs(ethers.ZeroAddress)
-    })
     it('should revert with zero oracle router address', async function () {
-      await expect(contractFactory.deploy(feedRegistryAddress, ethers.ZeroAddress))
+      await expect(contractFactory.deploy(ethers.ZeroAddress))
         .to.be.revertedWithCustomError(contractFactory, 'InvalidOracleRouterAddress')
         .withArgs(ethers.ZeroAddress)
-    })
-    it('should emit FeedRegistrySet event on deployment', async function () {
-      const subject = await contractFactory.deploy(
-        feedRegistryAddress,
-        await oracleRouter.getAddress()
-      )
-      const tx = subject.deploymentTransaction()
-      await expect(tx).to.emit(subject, 'FeedRegistrySet').withArgs(feedRegistryAddress)
     })
   })
   describe('amount converter deployment:', async function () {

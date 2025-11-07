@@ -111,6 +111,8 @@ describe('StonksFactory', function () {
       const orderDuration = 3600
       const marginInBP = 100
       const toleranceInBP = 200
+      const maxImprovementInBP = 0
+      const allowPartialFill = false
 
       await expect(
         subject.deployStonks(
@@ -120,7 +122,9 @@ describe('StonksFactory', function () {
           amountConverter,
           orderDuration,
           marginInBP,
-          toleranceInBP
+          toleranceInBP,
+          maxImprovementInBP,
+          allowPartialFill
         )
       )
         .to.emit(subject, 'StonksDeployed')
@@ -135,7 +139,9 @@ describe('StonksFactory', function () {
           await oracleRouter.getAddress(),
           orderDuration,
           marginInBP,
-          toleranceInBP
+          toleranceInBP,
+          maxImprovementInBP,
+          allowPartialFill
         )
     })
   })

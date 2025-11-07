@@ -1,7 +1,7 @@
 const defaultDelta = 4n
 
 export const isClose = function (actual: bigint, expected: bigint, delta: bigint = defaultDelta) {
-  const diff = Math.abs(Number(actual - expected))
+  const diff = actual > expected ? actual - expected : expected - actual
 
-  return diff <= delta && diff >= 0
+  return diff <= delta
 }

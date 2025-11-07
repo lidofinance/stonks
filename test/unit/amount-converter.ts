@@ -108,7 +108,7 @@ describe('AmountConverter', () => {
     it('reverts when tokenFrom equals tokenTo', async () => {
       await expect(
         converter.getExpectedOut(addresses.STETH, addresses.STETH, 1)
-      ).to.be.revertedWithCustomError(converter, 'SameTokensConversion')
+      ).to.be.revertedWithCustomError(converter, 'TokensCannotBeSame')
     })
 
     it('matches Chainlink helper for stETH → DAI (18 → 18)', async () => {
@@ -191,11 +191,8 @@ describe('AmountConverter', () => {
         amountToSell
       )
 
-      const [stethUsdPrice, daiUsdPrice] = await router.getUsdPrices(addresses.STETH, addresses.DAI)
-      const [sellDecimals, buyDecimals] = await router.getTokenDecimals(
-        addresses.STETH,
-        addresses.DAI
-      )
+      const [stethUsdPrice, daiUsdPrice, sellDecimals, buyDecimals] =
+        await router.getPricesAndDecimals(addresses.STETH, addresses.DAI)
 
       const raw = (amountToSell * stethUsdPrice) / daiUsdPrice
       const expected =
@@ -299,7 +296,7 @@ describe('AmountConverter', () => {
       const tooLarge = 2n ** 128n + 1n
       await expect(
         converter.getExpectedOut(addresses.STETH, addresses.DAI, tooLarge)
-      ).to.be.revertedWithCustomError(converter, 'AmountTooLarge')
+      ).to.be.revertedWithCustomError(converter, 'AmountFromTooLarge')
     })
   })
 

@@ -20,17 +20,19 @@ abstract contract AssetRecoverer is Ownable {
     using Address for address payable;
     using SafeERC20 for IERC20;
 
-    event EtherRecovered(address indexed _recipient, uint256 _amount);
-    event ERC20Recovered(address indexed _token, address indexed _recipient, uint256 _amount);
-    event ERC721Recovered(address indexed _token, uint256 _tokenId, address indexed _recipient);
+    // ==================== Events ====================
+
+    event EtherRecovered(address indexed recipient, uint256 amount);
+    event ERC20Recovered(address indexed token, address indexed recipient, uint256 amount);
+    event ERC721Recovered(address indexed token, uint256 tokenId, address indexed recipient);
     event ERC1155Recovered(
-        address indexed _token,
-        uint256 _tokenId,
-        address indexed _recipient,
-        uint256 _amount
+        address indexed token,
+        uint256 tokenId,
+        address indexed recipient,
+        uint256 amount
     );
 
-    error ZeroAgentAddress();
+    // ==================== Constructor ====================
 
     /**
      * @dev Sets the initial agent address.
@@ -38,30 +40,17 @@ abstract contract AssetRecoverer is Ownable {
      */
     constructor(address agent_) Ownable(agent_) {}
 
+    // ==================== External Functions ====================
+
     /**
      * @dev Allows the agent or manager to recover Ether held by the contract.
      * @notice Implements CEI pattern: Checks (authorization) -> Effects (events) -> Interactions (transfer)
      * Emits an EtherRecovered event upon success.
      */
     function recoverEther() external onlyAgentOrManager {
-        if (AGENT == address(0)) {
-            revert ZeroAgentAddress();
-        }
-
         uint256 amount = address(this).balance;
         emit EtherRecovered(AGENT, amount);
         payable(AGENT).sendValue(amount);
-    }
-
-    /**
-     * @dev Allows the agent or manager to recover ERC20 tokens held by the contract.
-     * @param token_ The address of the ERC20 token to recover.
-     * @param amount_ The amount of the ERC20 token to recover.
-     * Emits an ERC20Recovered event upon success.
-     */
-    function recoverERC20(address token_, uint256 amount_) public virtual onlyAgentOrManager {
-        emit ERC20Recovered(token_, AGENT, amount_);
-        IERC20(token_).safeTransfer(AGENT, amount_);
     }
 
     /**
@@ -85,5 +74,18 @@ abstract contract AssetRecoverer is Ownable {
         uint256 amount = IERC1155(token_).balanceOf(address(this), tokenId_);
         emit ERC1155Recovered(token_, tokenId_, AGENT, amount);
         IERC1155(token_).safeTransferFrom(address(this), AGENT, tokenId_, amount, "");
+    }
+
+    // ==================== Public Functions ====================
+
+    /**
+     * @dev Allows the agent or manager to recover ERC20 tokens held by the contract.
+     * @param token_ The address of the ERC20 token to recover.
+     * @param amount_ The amount of the ERC20 token to recover.
+     * Emits an ERC20Recovered event upon success.
+     */
+    function recoverERC20(address token_, uint256 amount_) public virtual onlyAgentOrManager {
+        emit ERC20Recovered(token_, AGENT, amount_);
+        IERC20(token_).safeTransfer(AGENT, amount_);
     }
 }

@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+
 import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
 import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title AmountConverter
@@ -12,15 +13,26 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  *      of Token A into the amount of Token B based on oracle router prices.
  */
 contract AmountConverter is IAmountConverter {
+    // ==================== Immutables ====================
+
+    /// @notice Oracle router contract used for fetching token prices.
     IOracleRouter public immutable ORACLE_ROUTER;
 
+    // ==================== Storage Variables ====================
+
+    /// @notice Mapping indicating which tokens are allowed to be sold.
     mapping(address tokenToSell => bool allowed) public allowedTokensToSell;
+    /// @notice Mapping indicating which tokens are allowed to be bought.
     mapping(address tokenToBuy => bool allowed) public allowedTokensToBuy;
+
+    // ==================== Events ====================
 
     event AllowedTokenToSellAdded(address tokenAddress);
     event AllowedTokenToBuyAdded(address tokenAddress);
 
-    error InvalidOracleRouterAddress(address oracleRouterAddress);
+    // ==================== Errors ====================
+
+    error InvalidOracleRouterAddress(address oracleRouter);
     error InvalidAllowedTokenToBuy(address allowedTokenToBuy);
     error InvalidAllowedTokenToSell(address allowedTokenToSell);
     error InvalidAmount(uint256 amount);
@@ -28,11 +40,13 @@ contract AmountConverter is IAmountConverter {
     error InvalidTokensToBuyArrayLength();
     error SellTokenNotAllowed(address tokenFrom);
     error BuyTokenNotAllowed(address tokenTo);
-    error SameTokensConversion();
+    error TokensCannotBeSame();
     error InvalidDecimalsDifference(uint8 diff);
-    error AmountTooLarge(uint256 amount);
+    error AmountFromTooLarge(uint256 amount);
     error PriceFromUsdZero();
     error PriceToUsdZero();
+
+    // ==================== Constructor ====================
 
     /**
      * @param oracleRouter_ Oracle router for price fetching
@@ -57,11 +71,11 @@ contract AmountConverter is IAmountConverter {
         ORACLE_ROUTER = IOracleRouter(oracleRouter_);
 
         for (uint256 i; i < allowedTokensToBuy_.length; ) {
-            if (allowedTokensToBuy_[i] == address(0))
+            if (allowedTokensToBuy_[i] == address(0)) {
                 revert InvalidAllowedTokenToBuy(allowedTokensToBuy_[i]);
+            }
 
             allowedTokensToBuy[allowedTokensToBuy_[i]] = true;
-
             emit AllowedTokenToBuyAdded(allowedTokensToBuy_[i]);
 
             unchecked {
@@ -70,15 +84,20 @@ contract AmountConverter is IAmountConverter {
         }
 
         for (uint256 i; i < allowedTokensToSell_.length; ) {
-            if (allowedTokensToSell_[i] == address(0))
+            if (allowedTokensToSell_[i] == address(0)) {
                 revert InvalidAllowedTokenToSell(allowedTokensToSell_[i]);
+            }
+
             allowedTokensToSell[allowedTokensToSell_[i]] = true;
             emit AllowedTokenToSellAdded(allowedTokensToSell_[i]);
+
             unchecked {
                 ++i;
             }
         }
     }
+
+    // ==================== External View Functions ====================
 
     /**
      * @notice Calculates the expected amount of `tokenTo_` that one would receive for a given amount of `tokenFrom_`.
@@ -95,7 +114,7 @@ contract AmountConverter is IAmountConverter {
         uint256 amountFrom_
     ) external view returns (uint256 expectedOutputAmount) {
         if (tokenFrom_ == tokenTo_) {
-            revert SameTokensConversion();
+            revert TokensCannotBeSame();
         }
         if (!allowedTokensToSell[tokenFrom_]) {
             revert SellTokenNotAllowed(tokenFrom_);
@@ -107,7 +126,7 @@ contract AmountConverter is IAmountConverter {
             revert InvalidAmount(amountFrom_);
         }
         if (amountFrom_ > type(uint128).max) {
-            revert AmountTooLarge(amountFrom_);
+            revert AmountFromTooLarge(amountFrom_);
         }
 
         (
@@ -128,6 +147,7 @@ contract AmountConverter is IAmountConverter {
         uint8 decimalsDiff = sellHasMoreOrEqualDecimals
             ? (decimalsOfSellToken - decimalsOfBuyToken)
             : (decimalsOfBuyToken - decimalsOfSellToken);
+
         if (decimalsDiff > 38) {
             revert InvalidDecimalsDifference(decimalsDiff);
         }
@@ -146,8 +166,9 @@ contract AmountConverter is IAmountConverter {
             // Scale the input first to avoid overflow on multiplication by 10**diff.
             uint256 pow10 = 10 ** decimalsDiff;
             uint256 maxAmountFromBeforeScale = type(uint256).max / pow10;
+
             if (amountFrom_ > maxAmountFromBeforeScale) {
-                revert AmountTooLarge(amountFrom_);
+                revert AmountFromTooLarge(amountFrom_);
             }
 
             uint256 scaledAmountFrom = amountFrom_ * pow10;

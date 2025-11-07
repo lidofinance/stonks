@@ -267,7 +267,7 @@ export const setupPriceSpikeStub = async (
     contracts.CHAINLINK_PRICE_FEED_REGISTRY
   )
 
-  // Spike price down to trigger PriceConditionChanged
+  // Spike price down to trigger PriceShortfallExceedsTolerance
   const baseLatest = BigInt(fromFeed.latest.answer)
   const baseOne = 10n ** BigInt(fromFeed.decimals)
   const baseSafe = baseLatest > 0n ? baseLatest : baseOne

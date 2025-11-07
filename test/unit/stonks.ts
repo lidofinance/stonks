@@ -81,8 +81,10 @@ describe('Stonks', function () {
       orderSample: ContractFactory[5]
       oracleRouter: ContractFactory[6]
       orderDurationInSeconds: ContractFactory[7]
-      marginInBasisPoints: ContractFactory[9]
+      marginInBasisPoints: ContractFactory[8]
       priceToleranceInBasisPoints: ContractFactory[9]
+      maxImprovementInBasisPoints: ContractFactory[10]
+      allowPartialFill: ContractFactory[11]
     }
 
     this.beforeAll(async function () {
@@ -107,6 +109,8 @@ describe('Stonks', function () {
         orderDurationInSeconds: 60,
         marginInBasisPoints: 1000,
         priceToleranceInBasisPoints: 999,
+        maxImprovementInBasisPoints: 0,
+        allowPartialFill: false,
         oracleRouter,
       } as const
     })
@@ -122,7 +126,9 @@ describe('Stonks', function () {
         validParams.oracleRouter,
         validParams.orderDurationInSeconds,
         validParams.marginInBasisPoints,
-        validParams.priceToleranceInBasisPoints
+        validParams.priceToleranceInBasisPoints,
+        validParams.maxImprovementInBasisPoints,
+        validParams.allowPartialFill
       )
 
       const [tokenFrom, tokenTo, orderDurationInSeconds] = await stonks.getOrderParameters()
@@ -145,7 +151,9 @@ describe('Stonks', function () {
         validParams.oracleRouter,
         validParams.orderDurationInSeconds,
         validParams.marginInBasisPoints,
-        validParams.priceToleranceInBasisPoints
+        validParams.priceToleranceInBasisPoints,
+        validParams.maxImprovementInBasisPoints,
+        validParams.allowPartialFill
       )
 
       await expect(stonksLocal.deploymentTransaction())
@@ -179,7 +187,9 @@ describe('Stonks', function () {
           validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
-          validParams.priceToleranceInBasisPoints
+          validParams.priceToleranceInBasisPoints,
+          validParams.maxImprovementInBasisPoints,
+          validParams.allowPartialFill
         )
       )
         .to.be.revertedWithCustomError(AssetRecovererFactory, 'InvalidAgentAddress')
@@ -197,7 +207,9 @@ describe('Stonks', function () {
           validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
-          validParams.priceToleranceInBasisPoints
+          validParams.priceToleranceInBasisPoints,
+          validParams.maxImprovementInBasisPoints,
+          validParams.allowPartialFill
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'InvalidManagerAddress')
@@ -215,7 +227,9 @@ describe('Stonks', function () {
           validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
-          validParams.priceToleranceInBasisPoints
+          validParams.priceToleranceInBasisPoints,
+          validParams.maxImprovementInBasisPoints,
+          validParams.allowPartialFill
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'InvalidTokenFromAddress')
@@ -233,7 +247,9 @@ describe('Stonks', function () {
           validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
-          validParams.priceToleranceInBasisPoints
+          validParams.priceToleranceInBasisPoints,
+          validParams.maxImprovementInBasisPoints,
+          validParams.allowPartialFill
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'InvalidTokenToAddress')
@@ -251,7 +267,9 @@ describe('Stonks', function () {
           validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
-          validParams.priceToleranceInBasisPoints
+          validParams.priceToleranceInBasisPoints,
+          validParams.maxImprovementInBasisPoints,
+          validParams.allowPartialFill
         )
       ).to.be.revertedWithCustomError(ContractFactory, 'TokensCannotBeSame')
     })
@@ -267,7 +285,9 @@ describe('Stonks', function () {
           validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
-          validParams.priceToleranceInBasisPoints
+          validParams.priceToleranceInBasisPoints,
+          validParams.maxImprovementInBasisPoints,
+          validParams.allowPartialFill
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'InvalidAmountConverterAddress')
@@ -285,7 +305,9 @@ describe('Stonks', function () {
           validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
-          validParams.priceToleranceInBasisPoints
+          validParams.priceToleranceInBasisPoints,
+          validParams.maxImprovementInBasisPoints,
+          validParams.allowPartialFill
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderSampleAddress')
@@ -303,7 +325,9 @@ describe('Stonks', function () {
           validParams.oracleRouter,
           59,
           validParams.marginInBasisPoints,
-          validParams.priceToleranceInBasisPoints
+          validParams.priceToleranceInBasisPoints,
+          validParams.maxImprovementInBasisPoints,
+          validParams.allowPartialFill
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
@@ -321,7 +345,9 @@ describe('Stonks', function () {
           validParams.oracleRouter,
           60 * 60 * 24 + 1,
           validParams.marginInBasisPoints,
-          validParams.priceToleranceInBasisPoints
+          validParams.priceToleranceInBasisPoints,
+          validParams.maxImprovementInBasisPoints,
+          validParams.allowPartialFill
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'InvalidOrderDuration')
@@ -339,7 +365,9 @@ describe('Stonks', function () {
           validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           1001,
-          validParams.priceToleranceInBasisPoints
+          validParams.priceToleranceInBasisPoints,
+          validParams.maxImprovementInBasisPoints,
+          validParams.allowPartialFill
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'MarginOverflowsAllowedLimit')
@@ -357,7 +385,9 @@ describe('Stonks', function () {
           validParams.oracleRouter,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
-          1001
+          1001,
+          validParams.maxImprovementInBasisPoints,
+          validParams.allowPartialFill
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'PriceToleranceOverflowsAllowedLimit')
@@ -375,7 +405,9 @@ describe('Stonks', function () {
           ethers.ZeroAddress,
           validParams.orderDurationInSeconds,
           validParams.marginInBasisPoints,
-          validParams.priceToleranceInBasisPoints
+          validParams.priceToleranceInBasisPoints,
+          validParams.maxImprovementInBasisPoints,
+          validParams.allowPartialFill
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'InvalidOracleRouterAddress')
@@ -442,7 +474,7 @@ describe('Stonks', function () {
         amount,
         address: await subject.getAddress(),
       })
-      expect(isClose(await steth.balanceOf(subject), amount, 1n)).to.be.true
+      expect(isClose(await steth.balanceOf(subject), amount, 2n)).to.be.true
 
       const expectedBuyAmount = await subject.estimateTradeOutputFromCurrentBalance()
       const tx = await subject.placeOrder(expectedBuyAmount)

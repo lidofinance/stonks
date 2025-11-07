@@ -84,7 +84,7 @@ describe('Scenario test multi-pair', function () {
           const transferTx = await token.transfer(stonks, value)
           await transferTx.wait()
 
-          expect(isClose(await token.balanceOf(stonks), value, 1n)).to.be.true
+          expect(isClose(await token.balanceOf(stonks), value, 2n)).to.be.true
         })
 
         it('manager should successfully place an order', async () => {
@@ -97,7 +97,8 @@ describe('Scenario test multi-pair', function () {
           const { address } = await getPlaceOrderData(orderReceipt)
 
           order = await ethers.getContractAt('Order', address)
-          expect(isClose(await tokenFrom.balanceOf(address), value, 2n)).to.be.true
+          // stETH shares-based rounding: allow 4 wei tolerance for cumulative transfer precision loss
+          expect(isClose(await tokenFrom.balanceOf(address), value, 4n)).to.be.true
           expect(isClose(await tokenFrom.balanceOf(stonks), BigInt(0), 2n)).to.be.true
 
           const [orderHashFromContract] = await order.getOrderDetails()
@@ -177,7 +178,7 @@ describe('Scenario test multi-pair', function () {
           const [currentHash] = await order.getOrderDetails()
           await expect(order.isValidSignature(currentHash, '0x')).to.be.revertedWithCustomError(
             order,
-            'PriceConditionChanged'
+            'PriceShortfallExceedsTolerance'
           )
         })
         it('should be possible to recover tokenFrom after price spike', async () => {

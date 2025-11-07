@@ -3,12 +3,9 @@ import { AmountConverterFactory } from '../../typechain-types'
 
 type ReturnType = { amountConverterFactory: AmountConverterFactory }
 
-export async function deployAmountConverterFactory(
-  feedRegistry: string,
-  oracleRouter: string
-): Promise<ReturnType> {
+export async function deployAmountConverterFactory(oracleRouter: string): Promise<ReturnType> {
   const ContractFactory = await ethers.getContractFactory('AmountConverterFactory')
-  const amountConverterFactory = await ContractFactory.deploy(feedRegistry, oracleRouter)
+  const amountConverterFactory = await ContractFactory.deploy(oracleRouter)
 
   await amountConverterFactory.waitForDeployment()
   return { amountConverterFactory }

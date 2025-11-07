@@ -76,7 +76,7 @@ describe('OracleRouter', function () {
     it('reverts with zero feed registry address', async function () {
       await expect(
         oracleRouterFactory.deploy(agentAddress, 8, ethers.ZeroAddress)
-      ).to.be.revertedWithCustomError(oracleRouter, 'ZeroAddress')
+      ).to.be.revertedWithCustomError(oracleRouter, 'InvalidFeedRegistryAddress')
     })
   })
 
@@ -138,7 +138,7 @@ describe('OracleRouter', function () {
       const agentSigner = await getAgentSigner()
       await expect(
         oracleRouter.connect(agentSigner).setEthUsdBridge(0)
-      ).to.be.revertedWithCustomError(oracleRouter, 'ZeroStaleness')
+      ).to.be.revertedWithCustomError(oracleRouter, 'InvalidStaleness')
     })
 
     it('reverts when ETH/USD feed is missing', async function () {
@@ -410,14 +410,14 @@ describe('OracleRouter', function () {
         const agentSigner = await getAgentSigner()
         await expect(
           oracleRouter.connect(agentSigner).setTokenUsdFeed(ethers.ZeroAddress, 86_400, 18, true)
-        ).to.be.revertedWithCustomError(oracleRouter, 'ZeroAddress')
+        ).to.be.revertedWithCustomError(oracleRouter, 'InvalidTokenAddress')
       })
 
       it('reverts with zero staleness', async function () {
         const agentSigner = await getAgentSigner()
         await expect(
           oracleRouter.connect(agentSigner).setTokenUsdFeed(contracts.DAI, 0, 18, true)
-        ).to.be.revertedWithCustomError(oracleRouter, 'ZeroStaleness')
+        ).to.be.revertedWithCustomError(oracleRouter, 'InvalidStaleness')
       })
 
       it('reverts when USD feed is missing', async function () {
@@ -513,7 +513,7 @@ describe('OracleRouter', function () {
         const agentSigner = await getAgentSigner()
         await expect(
           oracleRouter.connect(agentSigner).setTokenActive(ethers.ZeroAddress, true)
-        ).to.be.revertedWithCustomError(oracleRouter, 'ZeroAddress')
+        ).to.be.revertedWithCustomError(oracleRouter, 'InvalidTokenAddress')
       })
 
       it('reverts when activating unconfigured token', async function () {
@@ -535,7 +535,7 @@ describe('OracleRouter', function () {
         await expect(
           oracleRouter.connect(agentSigner).setTokenEthUsdStalenessOverride(contracts.DAI, 43_200)
         )
-          .to.emit(oracleRouter, 'TokenEthUsdStalenessOverride')
+          .to.emit(oracleRouter, 'TokenEthUsdStalenessOverridden')
           .withArgs(contracts.DAI, 43_200)
 
         const tokenConfig = await oracleRouter.tokenConfig(contracts.DAI)
@@ -548,7 +548,7 @@ describe('OracleRouter', function () {
           oracleRouter
             .connect(agentSigner)
             .setTokenEthUsdStalenessOverride(ethers.ZeroAddress, 43_200)
-        ).to.be.revertedWithCustomError(oracleRouter, 'ZeroAddress')
+        ).to.be.revertedWithCustomError(oracleRouter, 'InvalidTokenAddress')
       })
 
       it('reverts when called by non-agent', async function () {
@@ -650,32 +650,20 @@ describe('OracleRouter', function () {
       })
     })
 
-    describe('getTokenDecimals', function () {
-      it('returns correct token decimals', async function () {
-        const [daiDecimals, usdcDecimals] = await oracleRouter.getTokenDecimals(
-          contracts.DAI,
-          contracts.USDC
-        )
+    describe('getPricesAndDecimals', function () {
+      it('returns correct prices and decimals', async function () {
+        const [daiPrice, usdcPrice, daiDecimals, usdcDecimals] =
+          await oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC)
         expect(daiDecimals).to.equal(18)
         expect(usdcDecimals).to.equal(6)
+        expect(daiPrice).to.be.gt(0)
+        expect(usdcPrice).to.be.gt(0)
       })
 
       it('reverts for unconfigured token', async function () {
         await expect(
-          oracleRouter.getTokenDecimals(contracts.LDO, contracts.DAI)
+          oracleRouter.getPricesAndDecimals(contracts.LDO, contracts.DAI)
         ).to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
-      })
-    })
-
-    describe('getPricesAndDecimals', function () {
-      it('returns both prices and decimals', async function () {
-        const [daiUsdPrice, usdcUsdPrice, daiDecimals, usdcDecimals] =
-          await oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC)
-
-        expect(daiUsdPrice).to.be.greaterThan(0)
-        expect(usdcUsdPrice).to.be.greaterThan(0)
-        expect(daiDecimals).to.equal(18)
-        expect(usdcDecimals).to.equal(6)
       })
     })
   })

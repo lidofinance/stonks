@@ -20,6 +20,8 @@ export type DeployStonksParams = {
     orderDuration: number
     marginInBps: number
     priceToleranceInBps: number
+    maxImprovementInBps?: number
+    allowPartialFill?: boolean
     amountConverterAddress?: string
   }
   amountConverterParams: {
@@ -44,6 +46,8 @@ export async function deployStonks({
     orderDuration,
     marginInBps,
     priceToleranceInBps,
+    maxImprovementInBps = 0,
+    allowPartialFill = false,
   },
   amountConverterParams,
   skipRouterConfiguration = false,
@@ -122,10 +126,7 @@ export async function deployStonks({
     }
 
     // Deploy AmountConverterFactory with the oracle router
-    const { amountConverterFactory } = await deployAmountConverterFactory(
-      priceFeedRegistry,
-      oracleRouterAddressLocal
-    )
+    const { amountConverterFactory } = await deployAmountConverterFactory(oracleRouterAddressLocal)
 
     const deployTokenConverterTX = await amountConverterFactory.deployAmountConverter(
       amountConverterParams.allowedTokensToSell,
@@ -150,7 +151,9 @@ export async function deployStonks({
     await amountConverter.getAddress(),
     orderDuration,
     marginInBps,
-    priceToleranceInBps
+    priceToleranceInBps,
+    maxImprovementInBps,
+    allowPartialFill
   )
   const receipt = await deployStonksTx.wait()
 

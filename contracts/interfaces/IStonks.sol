@@ -12,5 +12,9 @@ interface IStonks {
 
     function getPriceTolerance() external view returns (uint256);
 
-    function estimateTradeOutput(uint256 amount) external view returns (uint256);
+    function getMaxImprovementBps() external view returns (uint256);
+
+    function estimateTradeOutput(uint256 amount_) external view returns (uint256);
+
+    function ALLOW_PARTIAL_FILL() external view returns (bool);
 }

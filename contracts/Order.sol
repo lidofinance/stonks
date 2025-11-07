@@ -11,6 +11,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {GPv2Order} from "./lib/GPv2Order.sol";
 import {AssetRecoverer} from "./AssetRecoverer.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
+
 /**
  * @title CoW Protocol Programmatic Order
  * @dev Handles the execution of individual trading order for the Stonks contract on CoW Protocol.
@@ -27,25 +28,38 @@ contract Order is IERC1271, AssetRecoverer {
     using GPv2Order for GPv2Order.Data;
     using SafeERC20 for IERC20;
 
+    // ==================== Constants ====================
+
     // bytes4(keccak256("isValidSignature(bytes32,bytes)")
     bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
     uint256 private constant MIN_POSSIBLE_BALANCE = 10;
-    uint256 private constant MAX_BASIS_POINTS = 10_000;
+    uint256 private constant MAX_BASIS_POINTS = 1e4;
     bytes32 private constant APP_DATA = keccak256("{}");
 
+    // ==================== Immutables ====================
+
+    /// @notice Address of the CoW Protocol relayer contract handling order execution.
     address public immutable RELAYER;
+    /// @notice EIP-712 domain separator used for order signature validation.
     bytes32 public immutable DOMAIN_SEPARATOR;
+
+    // ==================== Storage Variables ====================
 
     uint256 private sellAmount;
     uint256 private buyAmount;
     bytes32 private orderHash;
+    /// @notice Address of the Stonks contract that created this order.
     address public stonks;
     uint32 private validTo;
     bool private initialized;
 
+    // ==================== Events ====================
+
     event RelayerSet(address relayer);
     event DomainSeparatorSet(bytes32 domainSeparator);
     event OrderCreated(address indexed order, bytes32 orderHash, GPv2Order.Data orderData);
+
+    // ==================== Errors ====================
 
     error OrderAlreadyInitialized();
     error OrderExpired(uint256 validTo);
@@ -53,7 +67,12 @@ contract Order is IERC1271, AssetRecoverer {
     error CannotRecoverTokenFrom(address token);
     error InvalidOrderHash(bytes32 expected, bytes32 actual);
     error OrderNotExpired(uint256 validTo, uint256 currentTimestamp);
-    error PriceConditionChanged(uint256 maxAcceptedAmount, uint256 actualAmount);
+    error PriceImprovementExceedsLimit(uint256 maxAllowedBuyAmount, uint256 actualBuyAmount);
+    error PriceImprovementRejectedInStrictMode(uint256 expectedBuyAmount, uint256 actualBuyAmount);
+    error PriceShortfallExceedsTolerance(uint256 minAcceptableBuyAmount, uint256 actualBuyAmount);
+    error InsufficientSellBalance(uint256 required, uint256 available);
+
+    // ==================== Constructor ====================
 
     /**
      * @param agent_ The agent's address with control over the contract.
@@ -74,6 +93,8 @@ contract Order is IERC1271, AssetRecoverer {
         emit RelayerSet(relayer_);
         emit DomainSeparatorSet(domainSeparator_);
     }
+
+    // ==================== External Functions ====================
 
     /**
      * @notice Initializes the contract for trading by defining order parameters and approving tokens.
@@ -102,6 +123,8 @@ contract Order is IERC1271, AssetRecoverer {
         // Floor for the CoW order; Stonks uses router-based any-to-any quoting.
         buyAmount = Math.max(IStonks(stonks).estimateTradeOutput(sellAmount), minBuyAmount_);
 
+        bool partiallyFillable_ = IStonks(stonks).ALLOW_PARTIAL_FILL();
+
         GPv2Order.Data memory order = GPv2Order.Data({
             sellToken: IERC20Metadata(tokenFrom),
             buyToken: IERC20Metadata(tokenTo),
@@ -113,7 +136,7 @@ contract Order is IERC1271, AssetRecoverer {
             // Zero-fee → limit order semantics per CoW; solver pays gas via surplus.
             feeAmount: 0,
             kind: GPv2Order.KIND_SELL,
-            partiallyFillable: false,
+            partiallyFillable: partiallyFillable_,
             sellTokenBalance: GPv2Order.BALANCE_ERC20,
             buyTokenBalance: GPv2Order.BALANCE_ERC20
         });
@@ -125,6 +148,8 @@ contract Order is IERC1271, AssetRecoverer {
         emit OrderCreated(address(this), orderHash, order);
     }
 
+    // ==================== External View Functions ====================
+
     /**
      * @notice Validates the order's signature and ensures compliance with price and timing constraints.
      * @param hash_ The hash of the order for validation.
@@ -132,16 +157,19 @@ contract Order is IERC1271, AssetRecoverer {
      * @dev Checks include:
      *      - Matching the provided hash with the stored order hash.
      *      - Confirming order validity within the specified timeframe (`validTo`).
-     *      - Price validation: protects against both price improvements and unfavorable moves beyond tolerance.
+     *      - Price validation: protects against extreme price improvements and unfavorable moves beyond tolerance.
      *
      * Price Logic:
      * - ACCEPT: Current price equals expected price (perfect match)
-     * - REJECT: Current price is better than expected (any improvement makes order unfulfillable)
+     * - ACCEPT: Current price is better than expected (if within improvement cap)
+     * - REJECT: Current price is much better than expected (beyond improvement cap, likely oracle manipulation)
      * - ACCEPT: Current price is slightly worse than expected (within tolerance)
      * - REJECT: Current price is much worse than expected (beyond tolerance)
      *
-     * Note: Any price improvement is rejected because it makes the order unrealistic for fulfillment
-     * by solvers who cannot buy tokens at the limit price when market price is higher.
+     * Improvement Modes:
+     * - type(uint256).max: Accept any improvement (no cap)
+     * - 0: Reject all improvements (strict mode)
+     * - > 0: Accept improvements up to the specified basis points cap
      */
     function isValidSignature(
         bytes32 hash_,
@@ -150,41 +178,73 @@ contract Order is IERC1271, AssetRecoverer {
         if (hash_ != orderHash) {
             revert InvalidOrderHash(orderHash, hash_);
         }
-        if (validTo < block.timestamp) {
+
+        uint256 currentTimestamp = block.timestamp;
+        if (validTo < currentTimestamp) {
             revert OrderExpired(validTo);
         }
 
-        uint256 currentCalculatedBuyAmount = IStonks(stonks).estimateTradeOutput(sellAmount);
+        IStonks stonksContract = IStonks(stonks);
 
-        // Perfect match - accept
-        if (currentCalculatedBuyAmount == buyAmount) {
+        // Early revert if partial fills disabled and balance is insufficient (saves solver gas)
+        if (!stonksContract.ALLOW_PARTIAL_FILL()) {
+            (address tokenFrom,,) = stonksContract.getOrderParameters();
+            uint256 available = IERC20(tokenFrom).balanceOf(address(this));
+            if (available < sellAmount) {
+                revert InsufficientSellBalance(sellAmount, available);
+            }
+        }
+
+        uint256 currentEstimatedBuyAmount = stonksContract.estimateTradeOutput(sellAmount);
+
+        if (currentEstimatedBuyAmount == buyAmount) {
             return ERC1271_MAGIC_VALUE;
         }
 
-        // Reject any price improvement - makes order unfulfillable
-        if (currentCalculatedBuyAmount > buyAmount) {
-            revert PriceConditionChanged(
-                buyAmount, // Expected price (limit)
-                currentCalculatedBuyAmount // Actual current price (better)
-            );
+        if (currentEstimatedBuyAmount > buyAmount) {
+            uint256 maxImprovementBps = stonksContract.getMaxImprovementBps();
+
+            // No cap: accept any improvement
+            if (maxImprovementBps == type(uint256).max) {
+                return ERC1271_MAGIC_VALUE;
+            }
+
+            // Strict mode: reject any improvement
+            if (maxImprovementBps == 0) {
+                revert PriceImprovementRejectedInStrictMode(buyAmount, currentEstimatedBuyAmount);
+            }
+
+            // Compute improvement cap in a single mulDiv operation
+            uint256 maxAllowedBuyAmount =
+                Math.mulDiv(buyAmount, MAX_BASIS_POINTS + maxImprovementBps, MAX_BASIS_POINTS);
+
+            if (currentEstimatedBuyAmount > maxAllowedBuyAmount) {
+                revert PriceImprovementExceedsLimit(maxAllowedBuyAmount, currentEstimatedBuyAmount);
+            }
+
+            return ERC1271_MAGIC_VALUE;
+        } else {
+            uint256 priceToleranceBps = stonksContract.getPriceTolerance();
+
+            // Strict shortfall mode: reject any shortfall
+            if (priceToleranceBps == 0) {
+                revert PriceShortfallExceedsTolerance(buyAmount, currentEstimatedBuyAmount);
+            }
+
+            // Defensive check: ensure BPS doesn't exceed MAX_BASIS_POINTS (should be validated in constructor)
+            if (priceToleranceBps > MAX_BASIS_POINTS) {
+                revert PriceShortfallExceedsTolerance(buyAmount, currentEstimatedBuyAmount);
+            }
+
+            uint256 maxToleratedShortfall = Math.mulDiv(buyAmount, priceToleranceBps, MAX_BASIS_POINTS);
+            uint256 minAcceptableBuyAmount = buyAmount - maxToleratedShortfall;
+
+            if (currentEstimatedBuyAmount < minAcceptableBuyAmount) {
+                revert PriceShortfallExceedsTolerance(minAcceptableBuyAmount, currentEstimatedBuyAmount);
+            }
+
+            return ERC1271_MAGIC_VALUE;
         }
-
-        // Current price is worse than expected - check tolerance
-        uint256 shortfall = buyAmount - currentCalculatedBuyAmount;
-        uint256 priceToleranceInBasisPoints = IStonks(stonks).getPriceTolerance();
-        uint256 maxToleratedShortfall = (buyAmount * priceToleranceInBasisPoints) /
-            MAX_BASIS_POINTS;
-
-        // Reject if beyond tolerance
-        if (shortfall > maxToleratedShortfall) {
-            revert PriceConditionChanged(
-                buyAmount - maxToleratedShortfall, // Minimum acceptable price
-                currentCalculatedBuyAmount // Actual current price
-            );
-        }
-
-        // Accept if within tolerance
-        return ERC1271_MAGIC_VALUE;
     }
 
     /**
@@ -231,6 +291,8 @@ contract Order is IERC1271, AssetRecoverer {
 
         IERC20(tokenFrom).safeTransfer(stonks, balance);
     }
+
+    // ==================== Public Functions ====================
 
     /**
      * @notice Facilitates the recovery of ERC20 tokens from the contract, except for the token involved in the order.

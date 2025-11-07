@@ -239,7 +239,7 @@ describe('Order', async function () {
       const [currentHash] = await subject.getOrderDetails()
 
       await expect(subject.isValidSignature(currentHash, '0x'))
-        .to.be.revertedWithCustomError(subject, 'PriceConditionChanged')
+        .to.be.revertedWithCustomError(subject, 'PriceShortfallExceedsTolerance')
         .withArgs(minAcceptable, currentCalculated)
     })
 

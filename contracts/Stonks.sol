@@ -28,29 +28,42 @@ import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
 contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    uint16 private constant MAX_BASIS_POINTS = 10_000;
-    uint16 private constant BASIS_POINTS_PARAMETERS_LIMIT = 1_000;
+    // ==================== Constants ====================
+
+    uint16 private constant MAX_BASIS_POINTS = 1e4;
+    uint16 private constant BASIS_POINTS_PARAMETERS_LIMIT = 1e3;
 
     uint256 private constant MIN_POSSIBLE_BALANCE = 10;
     uint256 private constant MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS = 1 minutes;
     uint256 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 1 days;
 
-    address public immutable AMOUNT_CONVERTER;
-    address public immutable ORDER_SAMPLE;
-    address public immutable TOKEN_FROM;
-    address public immutable TOKEN_TO;
-    uint256 public immutable ORDER_DURATION_IN_SECONDS;
-    uint256 public immutable MARGIN_IN_BASIS_POINTS;
-    uint256 public immutable PRICE_TOLERANCE_IN_BASIS_POINTS;
+    // ==================== Immutables ====================
 
-    // Router used for quotability checks
+    /// @notice Address of the AmountConverter contract used for price calculations.
+    address public immutable AMOUNT_CONVERTER;
+    /// @notice Address of the Order contract implementation used as a template for cloning.
+    address public immutable ORDER_SAMPLE;
+    /// @notice Address of the token being sold in trades.
+    address public immutable TOKEN_FROM;
+    /// @notice Address of the token being bought in trades.
+    address public immutable TOKEN_TO;
+    /// @notice Duration in seconds for which orders remain valid.
+    uint256 public immutable ORDER_DURATION_IN_SECONDS;
+    /// @notice Margin in basis points subtracted from expected output to account for fees and volatility.
+    uint256 public immutable MARGIN_IN_BASIS_POINTS;
+    /// @notice Complement of margin in basis points (10000 - MARGIN_IN_BASIS_POINTS).
+    uint256 public immutable MARGIN_DIFFERENCE_IN_BASIS_POINTS;
+    /// @notice Price tolerance in basis points allowed for price changes before order becomes invalid.
+    uint256 public immutable PRICE_TOLERANCE_IN_BASIS_POINTS;
+    /// @notice Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode).
+    uint256 public immutable MAX_IMPROVEMENT_IN_BASIS_POINTS;
+    /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
+    bool public immutable ALLOW_PARTIAL_FILL;
+
+    /// @notice Oracle router contract used for quotability checks.
     IOracleRouter public immutable ORACLE_ROUTER;
 
-    // Pair-profiled tolerance override (bps); 0 means "use global"
-    mapping(bytes32 pairId => uint256 toleranceBps) private pairToleranceBps;
-
-    // NEW: Pair-profiled margin override (bps); 0 means "use global"
-    mapping(bytes32 pairId => uint256 marginBps) private pairMarginBps;
+    // ==================== Events ====================
 
     event AmountConverterSet(address amountConverter);
     event OrderSampleSet(address orderSample);
@@ -60,25 +73,25 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     event MarginInBasisPointsSet(uint256 marginInBasisPoints);
     event PriceToleranceInBasisPointsSet(uint256 priceToleranceInBasisPoints);
     event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
-
     event OracleRouterSet(address oracleRouter);
-    event PairPriceToleranceSet(address tokenFrom, address tokenTo, uint256 basisPoints);
-    // NEW
-    event PairMarginSet(address tokenFrom, address tokenTo, uint256 basisPoints);
+
+    // ==================== Errors ====================
 
     error InvalidManagerAddress(address manager);
     error InvalidTokenFromAddress(address tokenFrom);
     error InvalidTokenToAddress(address tokenTo);
     error InvalidAmountConverterAddress(address amountConverter);
     error InvalidOrderSampleAddress(address orderSample);
+    error InvalidOracleRouterAddress(address oracleRouter);
     error TokensCannotBeSame();
     error InvalidOrderDuration(uint256 min, uint256 max, uint256 received);
     error MarginOverflowsAllowedLimit(uint256 limit, uint256 received);
     error PriceToleranceOverflowsAllowedLimit(uint256 limit, uint256 received);
     error MinimumPossibleBalanceNotMet(uint256 min, uint256 received);
     error InvalidAmount(uint256 amount);
-    error InvalidOracleRouterAddress(address oracleRouter);
     error SellAmountExceedsBalance(uint256 available, uint256 requested);
+
+    // ==================== Constructor ====================
 
     /**
      * @notice Initializes the Stonks contract with key trading parameters.
@@ -94,7 +107,9 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         address oracleRouter_,
         uint256 orderDurationInSeconds_,
         uint256 marginInBasisPoints_,
-        uint256 priceToleranceInBasisPoints_
+        uint256 priceToleranceInBasisPoints_,
+        uint256 maxImprovementInBasisPoints_,
+        bool allowPartialFill_
     ) AssetRecoverer(agent_) {
         if (manager_ == address(0)) {
             revert InvalidManagerAddress(manager_);
@@ -136,6 +151,12 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
                 priceToleranceInBasisPoints_
             );
         }
+        if (
+            maxImprovementInBasisPoints_ != type(uint256).max &&
+            maxImprovementInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT
+        ) {
+            revert MarginOverflowsAllowedLimit(BASIS_POINTS_PARAMETERS_LIMIT, maxImprovementInBasisPoints_);
+        }
 
         manager = manager_;
         ORDER_SAMPLE = orderSample_;
@@ -144,7 +165,10 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         TOKEN_TO = tokenTo_;
         ORDER_DURATION_IN_SECONDS = orderDurationInSeconds_;
         MARGIN_IN_BASIS_POINTS = marginInBasisPoints_;
+        MARGIN_DIFFERENCE_IN_BASIS_POINTS = MAX_BASIS_POINTS - MARGIN_IN_BASIS_POINTS;
         PRICE_TOLERANCE_IN_BASIS_POINTS = priceToleranceInBasisPoints_;
+        MAX_IMPROVEMENT_IN_BASIS_POINTS = maxImprovementInBasisPoints_;
+        ALLOW_PARTIAL_FILL = allowPartialFill_;
         ORACLE_ROUTER = IOracleRouter(oracleRouter_);
 
         emit ManagerSet(manager_);
@@ -158,6 +182,8 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         emit OracleRouterSet(oracleRouter_);
     }
 
+    // ==================== External Functions ====================
+
     /**
      * @notice Initiates a new trading order by creating an Order contract clone with the current token balance.
      * @dev Transfers the tokenFrom balance to the new Order instance and initializes it with the Stonks' manager settings for execution.
@@ -167,7 +193,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
      */
     function placeOrder(
         uint256 minBuyAmount_
-    ) external onlyAgentOrManager nonReentrant returns (address) {
+    ) external nonReentrant onlyAgentOrManager returns (address) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
         return _placeOrder(balance, minBuyAmount_, balance);
     }
@@ -181,10 +207,59 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     function placeOrderWithAmount(
         uint256 sellAmount_,
         uint256 minBuyAmount_
-    ) external onlyAgentOrManager nonReentrant returns (address) {
+    ) external nonReentrant onlyAgentOrManager returns (address) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
         return _placeOrder(sellAmount_, minBuyAmount_, balance);
     }
+
+    // ==================== External View Functions ====================
+
+    /**
+     * @notice Estimates trade output based on current input token balance.
+     * @dev Uses current balance for output estimation via `estimateTradeOutput`.
+     * @return Estimated trade output amount.
+     */
+    function estimateTradeOutputFromCurrentBalance() external view returns (uint256) {
+        uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
+        return estimateTradeOutput(balance);
+    }
+
+    /**
+     * @notice Returns trading parameters from Stonks for use in the Order contract.
+     * @dev Facilitates gas efficiency by allowing Order to access existing parameters in Stonks without redundant storage.
+     * @return Tuple of order parameters (tokenFrom, tokenTo, orderDurationInSeconds).
+     */
+    function getOrderParameters() external view returns (address, address, uint256) {
+        return (TOKEN_FROM, TOKEN_TO, ORDER_DURATION_IN_SECONDS);
+    }
+
+    /**
+     * @notice Returns price tolerance parameter from Stonks for use in the Order contract.
+     * @dev Facilitates gas efficiency by allowing Order to access existing parameters in Stonks without redundant storage.
+     * @return Price tolerance in basis points.
+     */
+    function getPriceTolerance() external view returns (uint256) {
+        return PRICE_TOLERANCE_IN_BASIS_POINTS;
+    }
+
+    /**
+     * @notice Returns maximum price improvement parameter from Stonks for use in the Order contract.
+     * @dev Facilitates gas efficiency by allowing Order to access existing parameters in Stonks without redundant storage.
+     * @return Maximum improvement in basis points (type(uint256).max = no cap, 0 = strict mode).
+     */
+    function getMaxImprovementBps() external view returns (uint256) {
+        return MAX_IMPROVEMENT_IN_BASIS_POINTS;
+    }
+
+    /**
+     * @notice Asserts that a price path exists for the pair; used by Order to fail fast.
+     * @dev Reads via OracleRouter which reverts if a token is not configured or the bridge is missing.
+     */
+    function assertQuotable() external view {
+        ORACLE_ROUTER.getUsdPrices(TOKEN_FROM, TOKEN_TO); // reverts internally if unquotable
+    }
+
+    // ==================== Public Functions ====================
 
     /**
      * @notice Estimates output amount for a given trade input amount.
@@ -216,52 +291,12 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
             amount_
         );
 
-        // Use pair-specific margin if set; fallback to global otherwise.
-        uint256 marginBpsLocal = pairMarginBps[keccak256(abi.encodePacked(TOKEN_FROM, TOKEN_TO))];
-        if (marginBpsLocal == 0) {
-            marginBpsLocal = MARGIN_IN_BASIS_POINTS;
-        }
-
         estimatedTradeOutput =
-            (expectedBuyAmount * (MAX_BASIS_POINTS - marginBpsLocal)) /
+            (expectedBuyAmount * MARGIN_DIFFERENCE_IN_BASIS_POINTS) /
             MAX_BASIS_POINTS;
     }
 
-    /**
-     * @notice Estimates trade output based on current input token balance.
-     * @dev Uses current balance for output estimation via `estimateTradeOutput`.
-     * @return Estimated trade output amount.
-     */
-    function estimateTradeOutputFromCurrentBalance() external view returns (uint256) {
-        uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
-        return estimateTradeOutput(balance);
-    }
-
-    /**
-     * @notice Returns trading parameters from Stonks for use in the Order contract.
-     * @dev Facilitates gas efficiency by allowing Order to access existing parameters in Stonks without redundant storage.
-     * @return Tuple of order parameters (tokenFrom, tokenTo, orderDurationInSeconds).
-     */
-    function getOrderParameters() external view returns (address, address, uint256) {
-        return (TOKEN_FROM, TOKEN_TO, ORDER_DURATION_IN_SECONDS);
-    }
-
-    /**
-     * @notice Returns price tolerance parameter from Stonks for use in the Order contract.
-     * @dev Facilitates gas efficiency by allowing Order to access existing parameters in Stonks without redundant storage.
-     * @return Price tolerance in basis points.
-     */
-    function getPriceTolerance() external view returns (uint256) {
-        return PRICE_TOLERANCE_IN_BASIS_POINTS;
-    }
-
-    /**
-     * @notice Asserts that a price path exists for the pair; used by Order to fail fast.
-     * @dev Reads via OracleRouter which reverts if a token is not configured or the bridge is missing.
-     */
-    function assertQuotable() external view {
-        ORACLE_ROUTER.getUsdPrices(TOKEN_FROM, TOKEN_TO); // reverts internally if unquotable
-    }
+    // ==================== Internal Functions ====================
 
     function _placeOrder(
         uint256 sellAmount_,
@@ -271,8 +306,10 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         if (minBuyAmount_ == 0) {
             revert InvalidAmount(minBuyAmount_);
         }
-        if (sellAmount_ < MIN_POSSIBLE_BALANCE)
+
+        if (sellAmount_ < MIN_POSSIBLE_BALANCE) {
             revert MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, sellAmount_);
+        }
 
         if (sellAmount_ > availableBalance_) {
             revert SellAmountExceedsBalance(availableBalance_, sellAmount_);

@@ -4,8 +4,8 @@ pragma solidity 0.8.23;
 
 interface IAmountConverter {
     function getExpectedOut(
-        address sellToken,
-        address buyToken,
-        uint256 amount
+        address tokenFrom_,
+        address tokenTo_,
+        uint256 amountFrom_
     ) external view returns (uint256);
 }

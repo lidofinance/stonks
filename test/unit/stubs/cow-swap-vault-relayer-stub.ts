@@ -90,15 +90,17 @@ describe('CoWSwapVaultRelayerStub', async () => {
 
     stonks = await new Stonks__factory(deployer).deploy(
       contracts.AGENT,
-      manager,
+      manager.address,
       contracts.STETH,
       contracts.DAI,
-      amountConverter,
-      orderSample,
-      oracleRouter,
+      await amountConverter.getAddress(),
+      await orderSample.getAddress(),
+      await oracleRouter.getAddress(),
       3600,
       1_00,
-      50
+      50,
+      0,
+      false
     )
     await stonks.waitForDeployment()
 
