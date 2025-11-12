@@ -51,7 +51,8 @@ describe('Order - Price Improvement & Partial Fills', async function () {
     const amountConverterTestLocal = await amountConverterTestFactory.deploy(
       await oracleRouterLocal.getAddress(),
       [contracts.STETH],
-      [contracts.DAI]
+      [contracts.DAI],
+      false
     )
     await amountConverterTestLocal.waitForDeployment()
 
@@ -122,7 +123,8 @@ describe('Order - Price Improvement & Partial Fills', async function () {
     amountConverterTest = await amountConverterTestFactory.deploy(
       await oracleRouter.getAddress(),
       [contracts.STETH],
-      [contracts.DAI]
+      [contracts.DAI],
+      false
     )
     await amountConverterTest.waitForDeployment()
 
@@ -171,7 +173,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
     orderHash = await formOrderHashFromTxReceipt(placeOrderTxReceipt)
   })
 
-  describe('New Getters', function () {
+  describe('Getters', function () {
     it('should return maxImprovementInBasisPoints from getMaxImprovementBps', async function () {
       const maxImprovementBps = await stonks.getMaxImprovementBps()
       expect(maxImprovementBps).to.equal(100n)
@@ -253,7 +255,8 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       const amountConverterTestLocal = await amountConverterTestFactory.deploy(
         await oracleRouterLocal.getAddress(),
         [contracts.STETH],
-        [contracts.DAI]
+        [contracts.DAI],
+        false
       )
       await amountConverterTestLocal.waitForDeployment()
 
@@ -323,7 +326,8 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       const amountConverterTestLocal = await amountConverterTestFactory.deploy(
         await oracleRouterLocal.getAddress(),
         [contracts.STETH],
-        [contracts.DAI]
+        [contracts.DAI],
+        false
       )
       await amountConverterTestLocal.waitForDeployment()
 
@@ -436,7 +440,8 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       const amountConverterTestLocal = await amountConverterTestFactory.deploy(
         await oracleRouterLocal.getAddress(),
         [contracts.STETH],
-        [contracts.DAI]
+        [contracts.DAI],
+        false
       )
       await amountConverterTestLocal.waitForDeployment()
 

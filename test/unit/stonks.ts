@@ -61,6 +61,7 @@ describe('Stonks', function () {
       amountConverterParams: {
         allowedTokensToSell: [contracts.STETH],
         allowedStableTokensToBuy: [contracts.DAI],
+        useEthAnchor: false,
       },
     })
 

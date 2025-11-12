@@ -9,7 +9,7 @@ interface IOracleRouter {
         address quoteTokenAddress_
     ) external view returns (uint256 baseUsdPrice, uint256 quoteUsdPrice);
 
-    function getPricesAndDecimals(
+    function getUsdPricesAndDecimals(
         address baseTokenAddress_,
         address quoteTokenAddress_
     )
@@ -18,6 +18,19 @@ interface IOracleRouter {
         returns (
             uint256 baseUsdPrice,
             uint256 quoteUsdPrice,
+            uint8 baseTokenDecimals,
+            uint8 quoteTokenDecimals
+        );
+
+    function getEthPricesAndDecimals(
+        address baseTokenAddress_,
+        address quoteTokenAddress_
+    )
+        external
+        view
+        returns (
+            uint256 baseEthPrice,
+            uint256 quoteEthPrice,
             uint8 baseTokenDecimals,
             uint8 quoteTokenDecimals
         );

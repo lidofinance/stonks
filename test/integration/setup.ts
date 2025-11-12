@@ -162,7 +162,11 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
   await configureToken(pair.tokenTo, pair.useEthBridge ?? false)
 
   // Fail fast if router can't read prices before deploying stonks
-  await oracleRouter.getUsdPrices(pair.tokenFrom, pair.tokenTo)
+  if (pair.useEthBridge) {
+    await oracleRouter.getEthPricesAndDecimals(pair.tokenFrom, pair.tokenTo)
+  } else {
+    await oracleRouter.getUsdPrices(pair.tokenFrom, pair.tokenTo)
+  }
 
   const result = await deployStonks({
     factoryParams: {
@@ -184,6 +188,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
       oracleRouter: await oracleRouter.getAddress(),
       allowedTokensToSell: [pair.tokenFrom],
       allowedStableTokensToBuy: [pair.tokenTo],
+      useEthAnchor: pair.useEthBridge ?? false,
     },
     skipRouterConfiguration: true,
   })

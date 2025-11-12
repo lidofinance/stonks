@@ -10,231 +10,254 @@ import { getContracts } from '../../utils/contracts'
 const addresses = getContracts()
 
 describe('AmountConverter - Fuzz Tests', () => {
-  let converter: AmountConverterTest
   let snapshot: SnapshotRestorer
   let router: OracleRouter
+  let agentAddress: string
+
+  const getAgentSigner = async () => {
+    const agentSigner = await ethers.getImpersonatedSigner(agentAddress)
+    await ethers.provider.send('hardhat_setBalance', [agentAddress, '0x1000000000000000000'])
+    return agentSigner
+  }
 
   before(async () => {
     snapshot = await takeSnapshot()
 
     router = await getTestOracleRouter({
-      tokens: [addresses.STETH, addresses.DAI, addresses.USDC],
+      tokens: [addresses.STETH, addresses.LDO, addresses.DAI, addresses.USDC],
       useRealPrices: true,
     })
 
-    await refreshTestFeedData([addresses.STETH, addresses.DAI, addresses.USDC])
+    agentAddress = await router.AGENT()
 
-    const factory = await ethers.getContractFactory('AmountConverterTest')
-    converter = await factory.deploy(
-      await router.getAddress(),
-      [addresses.STETH, addresses.DAI, addresses.USDC],
-      [addresses.DAI, addresses.USDC]
-    )
-    await converter.waitForDeployment()
+    await refreshTestFeedData([addresses.STETH, addresses.LDO, addresses.DAI, addresses.USDC])
+
+    const agent = await getAgentSigner()
+    await router.connect(agent).setTokenEthFeed(addresses.STETH, 86400, 18, true)
+    await router.connect(agent).setTokenEthFeed(addresses.LDO, 86400, 18, true)
   })
 
   beforeEach(async () => {
-    await refreshTestFeedData([addresses.STETH, addresses.DAI, addresses.USDC])
+    await refreshTestFeedData([addresses.STETH, addresses.LDO, addresses.DAI, addresses.USDC])
   })
 
-  describe('Decimal scaling invariants', () => {
-    let routerAddress: string
-    let priceFromUsd: bigint
-    let priceToUsd: bigint
-    let decimalsFrom: bigint
-    let decimalsTo: bigint
+  const testConfigs = [
+    {
+      mode: 'USD-anchored',
+      useEthAnchor: false,
+      tokenFrom: addresses.DAI,
+      tokenTo: addresses.USDC,
+      tokenAlt: addresses.DAI,
+      getPrices: async (from: string, to: string) => router.getUsdPricesAndDecimals(from, to),
+    },
+    {
+      mode: 'ETH-anchored',
+      useEthAnchor: true,
+      tokenFrom: addresses.STETH,
+      tokenTo: addresses.LDO,
+      tokenAlt: addresses.LDO,
+      getPrices: async (from: string, to: string) => router.getEthPricesAndDecimals(from, to),
+    },
+  ]
 
-    before(async () => {
-      routerAddress = await router.getAddress()
-      const [priceFromUsd_, priceToUsd_, decimalsFrom_, decimalsTo_] =
-        await router.getPricesAndDecimals(addresses.STETH, addresses.USDC)
-      priceFromUsd = priceFromUsd_
-      priceToUsd = priceToUsd_
-      decimalsFrom = decimalsFrom_
-      decimalsTo = decimalsTo_
-    })
-    it('should never overflow for valid uint128 amounts', async () => {
-      await fc.assert(
-        fc.asyncProperty(fc.bigInt({ min: 1n, max: 2n ** 128n - 1n }), async (amount) => {
-          const result = await converter.getExpectedOut(addresses.STETH, addresses.DAI, amount)
-          expect(result).to.be.gte(0)
-        }),
-        { numRuns: 50 }
-      )
-    })
+  testConfigs.forEach(({ mode, useEthAnchor, tokenFrom, tokenTo, tokenAlt, getPrices }) => {
+    describe(`${mode}`, () => {
+      let converter: AmountConverterTest
+      let priceFromUsd: bigint
+      let priceToUsd: bigint
+      let decimalsFrom: bigint
+      let decimalsTo: bigint
 
-    it('should maintain proportionality: 2x input ≈ 2x output', async () => {
-      await fc.assert(
-        fc.asyncProperty(
-          fc.bigInt({ min: 1000n, max: ethers.parseEther('1000') }),
-          async (amount) => {
-            const result1 = await converter.getExpectedOut(addresses.STETH, addresses.DAI, amount)
-            const result2 = await converter.getExpectedOut(
-              addresses.STETH,
-              addresses.DAI,
-              amount * 2n
+      before(async () => {
+        const factory = await ethers.getContractFactory('AmountConverterTest')
+        converter = await factory.deploy(
+          await router.getAddress(),
+          [tokenFrom, tokenTo, tokenAlt],
+          [tokenFrom, tokenTo, tokenAlt],
+          useEthAnchor
+        )
+        await converter.waitForDeployment()
+
+        const [priceFrom_, priceTo_, decimalsFrom_, decimalsTo_] = await getPrices(
+          tokenFrom,
+          tokenTo
+        )
+        priceFromUsd = priceFrom_
+        priceToUsd = priceTo_
+        decimalsFrom = decimalsFrom_
+        decimalsTo = decimalsTo_
+      })
+
+      const calculateExpectedOut = (amount: bigint): bigint => {
+        const decimalsDiff =
+          decimalsFrom >= decimalsTo ? decimalsFrom - decimalsTo : decimalsTo - decimalsFrom
+
+        if (decimalsFrom >= decimalsTo) {
+          const grossOutput = (amount * priceFromUsd) / priceToUsd
+          return decimalsDiff === 0n ? grossOutput : grossOutput / 10n ** decimalsDiff
+        } else {
+          const pow10 = 10n ** decimalsDiff
+          const scaledAmount = amount * pow10
+          return (scaledAmount * priceFromUsd) / priceToUsd
+        }
+      }
+
+      describe('Decimal scaling invariants', () => {
+        it('should never overflow for valid uint128 amounts', async () => {
+          await fc.assert(
+            fc.asyncProperty(fc.bigInt({ min: 1n, max: 2n ** 128n - 1n }), async (amount) => {
+              const result = await converter.getExpectedOut(tokenFrom, tokenTo, amount)
+              const expected = calculateExpectedOut(amount)
+              expect(result).to.equal(expected)
+            }),
+            { numRuns: 50 }
+          )
+        })
+
+        it('should maintain proportionality: 2x input ≈ 2x output', async () => {
+          // Use higher minimum for USD mode to avoid rounding to 0 with 18→6 decimal conversions
+          const minAmount = useEthAnchor ? 1000n : ethers.parseEther('0.01') // 0.01 DAI minimum
+          await fc.assert(
+            fc.asyncProperty(
+              fc.bigInt({ min: minAmount, max: ethers.parseEther('1000') }),
+              async (amount) => {
+                const result1 = await converter.getExpectedOut(tokenFrom, tokenTo, amount)
+                const result2 = await converter.getExpectedOut(tokenFrom, tokenTo, amount * 2n)
+
+                if (result1 === 0n) return // Skip if amount too small to convert
+
+                // Verify proportionality: 2x input should yield approximately 2x output
+                // Allow small rounding differences due to integer division
+                const tolerance = result1 / 1000n // 0.1% tolerance
+                const expected2 = result1 * 2n
+                const diff = result2 > expected2 ? result2 - expected2 : expected2 - result2
+                expect(diff).to.be.lte(tolerance)
+              }
+            ),
+            { numRuns: 100 }
+          )
+        })
+
+        it('should maintain consistent price ratio', async () => {
+          await fc.assert(
+            fc.asyncProperty(
+              fc.tuple(
+                fc.bigInt({ min: ethers.parseEther('1'), max: ethers.parseEther('10') }),
+                fc.bigInt({ min: ethers.parseEther('1'), max: ethers.parseEther('10') })
+              ),
+              async ([amount1, amount2]) => {
+                const [priceFrom, priceTo, decimalsFrom, decimalsTo] = await getPrices(
+                  tokenFrom,
+                  tokenTo
+                )
+
+                const decimalsDiff =
+                  decimalsFrom >= decimalsTo ? decimalsFrom - decimalsTo : decimalsTo - decimalsFrom
+                const sellHasMoreOrEqualDecimals = decimalsFrom >= decimalsTo
+
+                let expected1: bigint, expected2: bigint
+
+                if (sellHasMoreOrEqualDecimals) {
+                  const grossOutput1 = (amount1 * priceFrom) / priceTo
+                  const grossOutput2 = (amount2 * priceFrom) / priceTo
+                  expected1 =
+                    decimalsDiff === 0n ? grossOutput1 : grossOutput1 / 10n ** BigInt(decimalsDiff)
+                  expected2 =
+                    decimalsDiff === 0n ? grossOutput2 : grossOutput2 / 10n ** BigInt(decimalsDiff)
+                } else {
+                  const pow10 = 10n ** BigInt(decimalsDiff)
+                  const scaledAmount1 = amount1 * pow10
+                  const scaledAmount2 = amount2 * pow10
+                  const grossOutput1 = (scaledAmount1 * priceFrom) / priceTo
+                  const grossOutput2 = (scaledAmount2 * priceFrom) / priceTo
+                  expected1 = grossOutput1
+                  expected2 = grossOutput2
+                }
+
+                if (expected1 === 0n || expected2 === 0n) {
+                  return true
+                }
+
+                const actual1 = await converter.getExpectedOut(tokenFrom, tokenTo, amount1)
+                const actual2 = await converter.getExpectedOut(tokenFrom, tokenTo, amount2)
+
+                expect(actual1).to.equal(
+                  expected1,
+                  `Amount1: Expected ${expected1}, Got ${actual1}`
+                )
+                expect(actual2).to.equal(
+                  expected2,
+                  `Amount2: Expected ${expected2}, Got ${actual2}`
+                )
+
+                const ratio1 = (actual1 * 10000n) / amount1
+                const ratio2 = (actual2 * 10000n) / amount2
+                expect(ratio1).to.equal(
+                  ratio2,
+                  'Price ratios should be identical for same token pair'
+                )
+              }
+            ),
+            { numRuns: 100 }
+          )
+        })
+      })
+
+      describe('Reversibility and boundary quantization', () => {
+        it('should not increase amount on round-trip conversion', async () => {
+          await fc.assert(
+            fc.asyncProperty(
+              fc.bigInt({ min: 10n, max: ethers.parseEther('1000') }),
+              async (amount) => {
+                const outToTarget = await converter.getExpectedOut(tokenFrom, tokenTo, amount)
+                if (outToTarget === 0n) return true
+                const backToSource = await converter.getExpectedOut(tokenTo, tokenFrom, outToTarget)
+                expect(backToSource).to.be.lte(amount)
+              }
+            ),
+            { numRuns: 100 }
+          )
+        })
+
+        if (decimalsFrom > decimalsTo) {
+          it('quantization boundary: smallest amount that yields non-zero output', async () => {
+            const decimalsDiff = decimalsFrom - decimalsTo
+            const minGrossOutput = 10n ** decimalsDiff
+            const amount = (minGrossOutput * priceToUsd + (priceFromUsd - 1n)) / priceFromUsd
+            const output = await converter.getExpectedOut(tokenFrom, tokenAlt, amount)
+            expect(output).to.be.gte(1n)
+            const outputAtBoundary = await converter.getExpectedOut(
+              tokenFrom,
+              tokenAlt,
+              amount - 1n
             )
+            expect(outputAtBoundary).to.equal(0n)
+          })
+        }
+      })
 
-            // Compute expected independently to avoid compounding rounding
-            const [priceFromUsd, priceToUsd] = await router.getUsdPrices(
-              addresses.STETH,
-              addresses.DAI
-            )
-            const expected1 = (amount * priceFromUsd) / priceToUsd
-            const expected2 = (amount * 2n * priceFromUsd) / priceToUsd
-            // Check both independently to avoid compounding rounding errors
-            expect(result1).to.equal(expected1)
-            expect(result2).to.equal(expected2)
-          }
-        ),
-        { numRuns: 100 }
-      )
-    })
+      describe('Boundary conditions', () => {
+        it('should handle minimum amounts', async () => {
+          const amount = 1n
+          const result = await converter.getExpectedOut(tokenFrom, tokenTo, amount)
+          const expected = calculateExpectedOut(amount)
+          expect(result).to.equal(expected)
+        })
 
-    it('should handle cross-decimal conversions (18→6) with quantization boundary', async () => {
-      await fc.assert(
-        fc.asyncProperty(
-          fc.bigInt({ min: ethers.parseUnits('1', 6), max: ethers.parseEther('100') }),
-          async (amount) => {
-            // Calculate expected output using the exact AmountConverter logic
-            const decimalsDiff = decimalsFrom - decimalsTo // 18 - 6 = 12
-            const grossOutput = (amount * priceFromUsd) / priceToUsd
-            const expectedOutput = grossOutput / 10n ** BigInt(decimalsDiff)
-
-            // Guard against scenarios that would cause zero output
-            // This happens when grossOutput < 10^decimalsDiff
-            const minGrossOutputForNonZero = 10n ** BigInt(decimalsDiff)
-            if (grossOutput < minGrossOutputForNonZero) {
-              return true // Skip this scenario - it would result in zero
-            }
-
-            const actualOutput = await converter.getExpectedOut(
-              addresses.STETH,
-              addresses.USDC,
-              amount
-            )
-
-            // The actual output should exactly match the expected calculation
-            expect(actualOutput).to.equal(
-              expectedOutput,
-              `Expected: ${expectedOutput}, Got: ${actualOutput}, Amount: ${amount}, GrossOutput: ${grossOutput}`
-            )
-          }
-        ),
-        { numRuns: 100 }
-      )
-    })
-
-    it('should maintain consistent price ratio', async () => {
-      await fc.assert(
-        fc.asyncProperty(
-          fc.tuple(
-            fc.bigInt({ min: ethers.parseEther('1'), max: ethers.parseEther('10') }),
-            fc.bigInt({ min: ethers.parseEther('1'), max: ethers.parseEther('10') })
-          ),
-          async ([amount1, amount2]) => {
-            const [priceFromUsd, priceToUsd, decimalsFrom, decimalsTo] =
-              await router.getPricesAndDecimals(addresses.STETH, addresses.DAI)
-
-            // Calculate expected outputs using the exact AmountConverter logic
-            const decimalsDiff =
-              decimalsFrom >= decimalsTo ? decimalsFrom - decimalsTo : decimalsTo - decimalsFrom
-            const sellHasMoreOrEqualDecimals = decimalsFrom >= decimalsTo
-
-            let expected1: bigint, expected2: bigint
-
-            if (sellHasMoreOrEqualDecimals) {
-              const grossOutput1 = (amount1 * priceFromUsd) / priceToUsd
-              const grossOutput2 = (amount2 * priceFromUsd) / priceToUsd
-              expected1 =
-                decimalsDiff === 0n ? grossOutput1 : grossOutput1 / 10n ** BigInt(decimalsDiff)
-              expected2 =
-                decimalsDiff === 0n ? grossOutput2 : grossOutput2 / 10n ** BigInt(decimalsDiff)
-            } else {
-              const pow10 = 10n ** BigInt(decimalsDiff)
-              const scaledAmount1 = amount1 * pow10
-              const scaledAmount2 = amount2 * pow10
-              const grossOutput1 = (scaledAmount1 * priceFromUsd) / priceToUsd
-              const grossOutput2 = (scaledAmount2 * priceFromUsd) / priceToUsd
-              expected1 = grossOutput1
-              expected2 = grossOutput2
-            }
-
-            // Guard against scenarios that would cause zero output
-            if (expected1 === 0n || expected2 === 0n) {
-              return true // Skip scenarios that would result in zero
-            }
-
-            const actual1 = await converter.getExpectedOut(addresses.STETH, addresses.DAI, amount1)
-            const actual2 = await converter.getExpectedOut(addresses.STETH, addresses.DAI, amount2)
-
-            // Both actual results should exactly match their expected calculations
-            expect(actual1).to.equal(expected1, `Amount1: Expected ${expected1}, Got ${actual1}`)
-            expect(actual2).to.equal(expected2, `Amount2: Expected ${expected2}, Got ${actual2}`)
-
-            // The price ratios should be identical (no tolerance needed for exact calculations)
-            const ratio1 = (actual1 * 10000n) / amount1
-            const ratio2 = (actual2 * 10000n) / amount2
-            expect(ratio1).to.equal(ratio2, 'Price ratios should be identical for same token pair')
-          }
-        ),
-        { numRuns: 100 }
-      )
-    })
-  })
-
-  describe('Reversibility and boundary quantization', () => {
-    it('USDC -> DAI -> USDC should not increase amount (with rounding down)', async () => {
-      await fc.assert(
-        fc.asyncProperty(
-          // USDC has 6 decimals; keep amounts in realistic range in 6-dec units
-          fc.bigInt({ min: 10n, max: ethers.parseUnits('1000000', 6) }),
-          async (amount) => {
-            const outToDai = await converter.getExpectedOut(addresses.USDC, addresses.DAI, amount)
-            if (outToDai === 0n) return true
-            const backToSteth = await converter.getExpectedOut(
-              addresses.DAI,
-              addresses.USDC,
-              outToDai
-            )
-            expect(backToSteth).to.be.lte(amount)
-          }
-        ),
-        { numRuns: 100 }
-      )
-    })
-
-    it('quantization boundary: smallest amount that yields non-zero for 18->6', async () => {
-      const [priceFromUsd, priceToUsd] = await router.getUsdPrices(addresses.STETH, addresses.USDC)
-      const decimalsDiff = 18n - 6n
-      const minGrossOutput = 10n ** decimalsDiff
-      // Find minimal amount where (amount * pf) / pt >= 10^diff
-      const amount = (minGrossOutput * priceToUsd + (priceFromUsd - 1n)) / priceFromUsd
-      const output = await converter.getExpectedOut(addresses.STETH, addresses.USDC, amount)
-      expect(output).to.be.gte(1n)
-      const outputAtBoundary = await converter.getExpectedOut(
-        addresses.STETH,
-        addresses.USDC,
-        amount - 1n
-      )
-      expect(outputAtBoundary).to.equal(0n)
-    })
-  })
-
-  describe('Boundary conditions', () => {
-    it('should handle minimum amounts', async () => {
-      const result = await converter.getExpectedOut(addresses.STETH, addresses.DAI, 1n)
-      expect(result).to.be.gte(0)
-    })
-
-    it('should handle amounts near uint128 max', async () => {
-      await fc.assert(
-        fc.asyncProperty(fc.bigInt({ min: 2n ** 127n, max: 2n ** 128n - 1n }), async (amount) => {
-          const result = await converter.getExpectedOut(addresses.STETH, addresses.DAI, amount)
-          expect(result).to.be.gte(0)
-        }),
-        { numRuns: 20 }
-      )
+        it('should handle amounts near uint128 max', async () => {
+          await fc.assert(
+            fc.asyncProperty(
+              fc.bigInt({ min: 2n ** 127n, max: 2n ** 128n - 1n }),
+              async (amount) => {
+                const result = await converter.getExpectedOut(tokenFrom, tokenTo, amount)
+                const expected = calculateExpectedOut(amount)
+                expect(result).to.equal(expected)
+              }
+            ),
+            { numRuns: 20 }
+          )
+        })
+      })
     })
   })
 

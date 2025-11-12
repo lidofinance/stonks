@@ -77,7 +77,8 @@ describe('CoWSwapVaultRelayerStub', async () => {
     const amountConverter = await new AmountConverter__factory(deployer).deploy(
       await oracleRouter.getAddress(),
       [contracts.STETH],
-      [contracts.DAI]
+      [contracts.DAI],
+      false
     )
     await amountConverter.waitForDeployment()
 

@@ -32,17 +32,18 @@ describe('AmountConverter', () => {
     factory = await ethers.getContractFactory('AmountConverter')
 
     router = await getTestOracleRouter({
-      tokens: [addresses.STETH, addresses.DAI, addresses.USDC, addresses.USDT],
+      tokens: [addresses.DAI, addresses.USDC, addresses.USDT],
       useRealPrices: true,
     })
     routerAddress = await router.getAddress()
 
-    await refreshTestFeedData([addresses.STETH, addresses.DAI, addresses.USDC, addresses.USDT])
+    await refreshTestFeedData([addresses.DAI, addresses.USDC, addresses.USDT])
 
     converter = await factory.deploy(
       routerAddress,
-      [addresses.STETH, addresses.DAI, addresses.USDC, addresses.USDT],
-      [addresses.DAI, addresses.USDC, addresses.USDT]
+      [addresses.DAI, addresses.USDC, addresses.USDT],
+      [addresses.DAI, addresses.USDC, addresses.USDT],
+      false
     )
     await converter.waitForDeployment()
   })
@@ -53,7 +54,8 @@ describe('AmountConverter', () => {
         factory.deploy(
           ethers.ZeroAddress,
           [addresses.STETH, addresses.DAI, addresses.USDC, addresses.USDT],
-          [addresses.DAI, addresses.USDC, addresses.USDT]
+          [addresses.DAI, addresses.USDC, addresses.USDT],
+          false
         )
       )
         .to.be.revertedWithCustomError(factory, 'InvalidOracleRouterAddress')
@@ -62,25 +64,25 @@ describe('AmountConverter', () => {
 
     it('reverts on empty allowedTokensToSell', async () => {
       await expect(
-        factory.deploy(routerAddress, [], [addresses.DAI, addresses.USDC, addresses.USDT])
+        factory.deploy(routerAddress, [], [addresses.DAI, addresses.USDC, addresses.USDT], false)
       ).to.be.revertedWithCustomError(factory, 'InvalidTokensToSellArrayLength')
     })
     it('reverts on empty allowedTokensToBuy', async () => {
       await expect(
-        factory.deploy(routerAddress, [addresses.STETH, addresses.DAI], [])
+        factory.deploy(routerAddress, [addresses.DAI], [], false)
       ).to.be.revertedWithCustomError(factory, 'InvalidTokensToBuyArrayLength')
     })
 
     it('reverts on zero address in allowedTokensToSell', async () => {
       await expect(
-        factory.deploy(routerAddress, [addresses.STETH, ethers.ZeroAddress], [addresses.DAI])
+        factory.deploy(routerAddress, [addresses.DAI, ethers.ZeroAddress], [addresses.USDC], false)
       )
         .to.be.revertedWithCustomError(factory, 'InvalidAllowedTokenToSell')
         .withArgs(ethers.ZeroAddress)
     })
 
     it('reverts on zero address in allowedTokensToBuy', async () => {
-      await expect(factory.deploy(routerAddress, [addresses.STETH], [ethers.ZeroAddress]))
+      await expect(factory.deploy(routerAddress, [addresses.DAI], [ethers.ZeroAddress], false))
         .to.be.revertedWithCustomError(factory, 'InvalidAllowedTokenToBuy')
         .withArgs(ethers.ZeroAddress)
     })
@@ -88,7 +90,7 @@ describe('AmountConverter', () => {
 
   describe('getExpectedOut:', () => {
     it('reverts when amount is zero', async () => {
-      await expect(converter.getExpectedOut(addresses.STETH, addresses.DAI, 0))
+      await expect(converter.getExpectedOut(addresses.DAI, addresses.USDC, 0))
         .to.be.revertedWithCustomError(converter, 'InvalidAmount')
         .withArgs(0)
     })
@@ -100,25 +102,26 @@ describe('AmountConverter', () => {
     })
 
     it('reverts when tokenTo is not allowed', async () => {
-      await expect(converter.getExpectedOut(addresses.STETH, addresses.LDO, 1))
+      const notAllowedToken = addresses.AGENT // Use any address not in allowlist
+      await expect(converter.getExpectedOut(addresses.DAI, notAllowedToken, 1))
         .to.be.revertedWithCustomError(converter, 'BuyTokenNotAllowed')
-        .withArgs(addresses.LDO)
+        .withArgs(notAllowedToken)
     })
 
     it('reverts when tokenFrom equals tokenTo', async () => {
       await expect(
-        converter.getExpectedOut(addresses.STETH, addresses.STETH, 1)
+        converter.getExpectedOut(addresses.DAI, addresses.DAI, 1)
       ).to.be.revertedWithCustomError(converter, 'TokensCannotBeSame')
     })
 
-    it('matches Chainlink helper for stETH → DAI (18 → 18)', async () => {
-      const amountToSell = ethers.parseEther('1')
+    it('matches Chainlink helper for DAI → USDC (18 → 6)', async () => {
+      const amountToSell = ethers.parseEther('1000')
       const amountFromContract = await converter.getExpectedOut(
-        addresses.STETH,
         addresses.DAI,
+        addresses.USDC,
         amountToSell
       )
-      const amountFromHelper = await getExpectedOut(addresses.STETH, addresses.DAI, amountToSell)
+      const amountFromHelper = await getExpectedOut(addresses.DAI, addresses.USDC, amountToSell)
       expect(amountFromContract.toString()).to.equal(amountFromHelper.toString())
     })
 
@@ -144,88 +147,27 @@ describe('AmountConverter', () => {
       expect(amountFromContract.toString()).to.equal(amountFromHelper.toString())
     })
 
-    it('uses ETH bridge path when configured (stETH/ETH * ETH/USD)', async () => {
-      const localSnapshot = await takeSnapshot()
-
-      await refreshTestFeedData([addresses.STETH, addresses.DAI])
-
-      const registryAddr = await router.FEED_REGISTRY()
-      const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
-
-      const latest = await ethers.provider.getBlock('latest')
-      const nowTs = BigInt(latest!.timestamp)
-
-      await stub.setFeed(addresses.STETH, ETH_QUOTE, {
-        aggregator: await stub.getAddress(),
-        answer: 1n * 10n ** 18n,
-        updatedAt: nowTs,
-        startedAt: nowTs,
-        answeredInRound: 1n,
-        roundId: 1n,
-        decimals: 18,
-      })
-      await stub.setFeed(ETH_QUOTE, USD_QUOTE, {
-        aggregator: await stub.getAddress(),
-        answer: 2000n * 10n ** 8n,
-        updatedAt: nowTs,
-        startedAt: nowTs,
-        answeredInRound: 1n,
-        roundId: 1n,
-        decimals: 8,
-      })
-
-      const tokenDecimals = await readTokenDecimals(addresses.STETH)
-      await router.setTokenEthFeed(addresses.STETH, 86_400, tokenDecimals, true)
-
-      const bridgeConverter = await factory.deploy(
-        await router.getAddress(),
-        [addresses.STETH, addresses.DAI],
-        [addresses.DAI]
-      )
-      await bridgeConverter.waitForDeployment()
-
-      const amountToSell = ethers.parseEther('1')
-      const amountFromContract = await bridgeConverter.getExpectedOut(
-        addresses.STETH,
-        addresses.DAI,
-        amountToSell
-      )
-
-      const [stethUsdPrice, daiUsdPrice, sellDecimals, buyDecimals] =
-        await router.getPricesAndDecimals(addresses.STETH, addresses.DAI)
-
-      const raw = (amountToSell * stethUsdPrice) / daiUsdPrice
-      const expected =
-        sellDecimals >= buyDecimals
-          ? raw / 10n ** BigInt(sellDecimals - buyDecimals)
-          : raw * 10n ** BigInt(buyDecimals - sellDecimals)
-
-      expect(amountFromContract.toString()).to.equal(expected.toString())
-
-      await localSnapshot.restore()
-    })
-
     it('should handle very small amounts', async () => {
-      await refreshTestFeedData([addresses.STETH, addresses.DAI])
+      await refreshTestFeedData([addresses.DAI, addresses.USDC])
       const tinyAmount = 1n
-      const result = await converter.getExpectedOut(addresses.STETH, addresses.DAI, tinyAmount)
-      const expectedResult = await getExpectedOut(addresses.STETH, addresses.DAI, tinyAmount)
+      const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, tinyAmount)
+      const expectedResult = await getExpectedOut(addresses.DAI, addresses.USDC, tinyAmount)
       expect(result).to.equal(expectedResult)
     })
 
     it('should handle very large valid amounts', async () => {
-      await refreshTestFeedData([addresses.STETH, addresses.DAI])
+      await refreshTestFeedData([addresses.DAI, addresses.USDC])
       const largeAmount = ethers.parseEther('100000')
-      const result = await converter.getExpectedOut(addresses.STETH, addresses.DAI, largeAmount)
-      const expectedResult = await getExpectedOut(addresses.STETH, addresses.DAI, largeAmount)
+      const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, largeAmount)
+      const expectedResult = await getExpectedOut(addresses.DAI, addresses.USDC, largeAmount)
       expect(result).to.equal(expectedResult)
     })
 
     it('should handle amount at uint128 boundary', async () => {
-      await refreshTestFeedData([addresses.STETH, addresses.DAI])
+      await refreshTestFeedData([addresses.DAI, addresses.USDC])
       const maxUint128 = 2n ** 128n - 1n
-      const result = await converter.getExpectedOut(addresses.STETH, addresses.DAI, maxUint128)
-      const expectedResult = await getExpectedOut(addresses.STETH, addresses.DAI, maxUint128)
+      const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, maxUint128)
+      const expectedResult = await getExpectedOut(addresses.DAI, addresses.USDC, maxUint128)
       expect(result).to.equal(expectedResult)
     })
 
@@ -265,28 +207,31 @@ describe('AmountConverter', () => {
       ).to.be.revertedWithCustomError(router, 'OracleStale')
     })
 
-    it('bubbles router OracleBadAnswer when tokenTo/USD answer is zero', async () => {
-      await refreshTestFeedData([addresses.STETH, addresses.DAI])
+    it('bubbles router OracleBadAnswer when tokenFrom/USD answer is zero', async () => {
+      // First refresh both feeds to ensure they're not stale
+      await refreshTestFeedData([addresses.DAI, addresses.USDC])
 
       const registryAddr = await router.FEED_REGISTRY()
       const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
 
+      // Set DAI answer to 0 with far future timestamp to trigger OracleBadAnswer
+      // Using tokenFrom instead of tokenTo to test the other path
       const latest = await ethers.provider.getBlock('latest')
-      const nowTs = BigInt(latest!.timestamp)
+      const farFutureTs = BigInt(latest!.timestamp) + 1000000n
 
       const current = await stub.feeds(addresses.DAI, USD_QUOTE)
       await stub.setFeed(addresses.DAI, USD_QUOTE, {
         aggregator: current.aggregator,
         answer: 0n,
-        updatedAt: nowTs,
-        startedAt: nowTs,
+        updatedAt: farFutureTs,
+        startedAt: farFutureTs,
         answeredInRound: current.answeredInRound,
         roundId: current.roundId,
         decimals: current.decimals,
       })
 
       await expect(
-        converter.getExpectedOut(addresses.STETH, addresses.DAI, ethers.parseEther('1'))
+        converter.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1'))
       ).to.be.revertedWithCustomError(router, 'OracleBadAnswer')
 
       await refreshTestFeedData([addresses.DAI])
@@ -295,14 +240,27 @@ describe('AmountConverter', () => {
     it('reverts with AmountTooLarge when input exceeds uint128 limit', async () => {
       const tooLarge = 2n ** 128n + 1n
       await expect(
-        converter.getExpectedOut(addresses.STETH, addresses.DAI, tooLarge)
+        converter.getExpectedOut(addresses.DAI, addresses.USDC, tooLarge)
       ).to.be.revertedWithCustomError(converter, 'AmountFromTooLarge')
     })
   })
 
   describe('events:', () => {
-    it('constructor emits allowlist events', async () => {
-      const local = await factory.deploy(routerAddress, [addresses.STETH], [addresses.DAI])
+    it('constructor emits allowlist events (USD mode)', async () => {
+      const local = await factory.deploy(routerAddress, [addresses.DAI], [addresses.USDC], false)
+      await local.waitForDeployment()
+
+      await expect(local.deploymentTransaction())
+        .to.emit(local, 'AllowedTokenToSellAdded')
+        .withArgs(addresses.DAI)
+
+      await expect(local.deploymentTransaction())
+        .to.emit(local, 'AllowedTokenToBuyAdded')
+        .withArgs(addresses.USDC)
+    })
+
+    it('constructor emits allowlist events (ETH anchor mode)', async () => {
+      const local = await factory.deploy(routerAddress, [addresses.STETH], [addresses.LDO], true)
       await local.waitForDeployment()
 
       await expect(local.deploymentTransaction())
@@ -311,7 +269,23 @@ describe('AmountConverter', () => {
 
       await expect(local.deploymentTransaction())
         .to.emit(local, 'AllowedTokenToBuyAdded')
-        .withArgs(addresses.DAI)
+        .withArgs(addresses.LDO)
+    })
+  })
+
+  describe('USE_ETH_ANCHOR immutable:', () => {
+    it('should be false when deployed with useEthAnchor=false', async () => {
+      const local = await factory.deploy(routerAddress, [addresses.DAI], [addresses.USDC], false)
+      await local.waitForDeployment()
+
+      expect(await local.USE_ETH_ANCHOR()).to.be.false
+    })
+
+    it('should be true when deployed with useEthAnchor=true', async () => {
+      const local = await factory.deploy(routerAddress, [addresses.STETH], [addresses.LDO], true)
+      await local.waitForDeployment()
+
+      expect(await local.USE_ETH_ANCHOR()).to.be.true
     })
   })
 

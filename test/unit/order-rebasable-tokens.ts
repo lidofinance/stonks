@@ -84,10 +84,14 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
 
     await refreshTestFeedData([contracts.STETH, contracts.LDO])
 
+    await oracleRouter.setTokenEthFeed(contracts.STETH, 86400, 18, true)
+    await oracleRouter.setTokenEthFeed(contracts.LDO, 86400, 18, true)
+
     amountConverterTest = await amountConverterTestFactory.deploy(
       await oracleRouter.getAddress(),
       [contracts.STETH],
-      [contracts.LDO]
+      [contracts.LDO],
+      true
     )
     await amountConverterTest.waitForDeployment()
 
@@ -115,6 +119,7 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
         oracleRouter: await oracleRouter.getAddress(),
         allowedTokensToSell: [contracts.STETH],
         allowedStableTokensToBuy: [contracts.LDO],
+        useEthAnchor: true,
       },
     })
 
@@ -142,6 +147,7 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
         oracleRouter: await oracleRouter.getAddress(),
         allowedTokensToSell: [contracts.STETH],
         allowedStableTokensToBuy: [contracts.LDO],
+        useEthAnchor: true,
       },
     })
 
@@ -288,7 +294,8 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
       await simulateNegativeRebase(tokenFrom, orderAddress, rebaseAmount)
 
       const newBalance = await token.balanceOf(orderAddress)
-      expect(newBalance).to.be.equal(initialBalance - rebaseAmount)
+      // Allow 1 wei tolerance due to stETH shares rounding
+      expect(newBalance).to.be.closeTo(initialBalance - rebaseAmount, 1n)
 
       // Order should still be valid
       const [currentHash] = await orderPartial.getOrderDetails()

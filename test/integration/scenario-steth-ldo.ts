@@ -688,7 +688,10 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         this.skip()
       }
 
-      expect(balanceAfter).to.be.gte(0n)
+      const expectedMin = 0n
+      const expectedMax = 9n
+      expect(balanceAfter).to.be.gte(expectedMin)
+      expect(balanceAfter).to.be.lte(expectedMax)
 
       // Wait for expiration
       await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)

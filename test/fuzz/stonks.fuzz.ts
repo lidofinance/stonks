@@ -136,12 +136,37 @@ describe('Stonks - Fuzz Tests', () => {
     })
 
     it('should handle large amounts without overflow', async () => {
+      const routerAddress = await stonks.ORACLE_ROUTER()
+      const router = await ethers.getContractAt('OracleRouter', routerAddress)
+      const tokenFrom = await stonks.TOKEN_FROM()
+      const tokenTo = await stonks.TOKEN_TO()
+      const marginBps = await stonks.MARGIN_DIFFERENCE_IN_BASIS_POINTS()
+
       await fc.assert(
         fc.asyncProperty(
           fc.bigInt({ min: ethers.parseEther('1000'), max: ethers.parseEther('100000') }),
           async (amount) => {
             const result = await stonks.estimateTradeOutput(amount)
-            expect(result).to.be.gte(0)
+
+            const [priceFrom, priceTo, decimalsFrom, decimalsTo] =
+              await router.getUsdPricesAndDecimals(tokenFrom, tokenTo)
+
+            const decimalsDiff =
+              decimalsFrom >= decimalsTo ? decimalsFrom - decimalsTo : decimalsTo - decimalsFrom
+
+            let expectedBuyAmount: bigint
+            if (decimalsFrom >= decimalsTo) {
+              const grossOutput = (amount * priceFrom) / priceTo
+              expectedBuyAmount =
+                decimalsDiff === 0n ? grossOutput : grossOutput / 10n ** decimalsDiff
+            } else {
+              const pow10 = 10n ** decimalsDiff
+              const scaledAmount = amount * pow10
+              expectedBuyAmount = (scaledAmount * priceFrom) / priceTo
+            }
+
+            const expected = (expectedBuyAmount * marginBps) / MAX_BASIS_POINTS
+            expect(result).to.equal(expected)
           }
         ),
         { numRuns: 30 }

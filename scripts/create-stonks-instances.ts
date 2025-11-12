@@ -13,6 +13,8 @@ interface StonksConfig {
   orderDurationInSeconds: bigint
   marginBasisPoints: bigint
   priceToleranceInBasisPoints: bigint
+  maxImprovementInBasisPoints: bigint
+  allowPartialFill: boolean
 }
 
 const AGENT = ''
@@ -47,6 +49,8 @@ async function main() {
     console.log(`  * order duration (sec): ${fmt.value(config.orderDurationInSeconds)}`)
     console.log(`  * margin (bps): ${fmt.value(config.marginBasisPoints)}`)
     console.log(`  * price tolerance (bps): ${fmt.value(config.priceToleranceInBasisPoints)}`)
+    console.log(`  * max improvement (bps): ${fmt.value(config.maxImprovementInBasisPoints)}`)
+    console.log(`  * allow partial fill: ${fmt.value(config.allowPartialFill)}`)
     console.log()
   }
 
@@ -65,7 +69,9 @@ async function main() {
       AMOUNT_CONVERTER,
       config.orderDurationInSeconds,
       config.marginBasisPoints,
-      config.priceToleranceInBasisPoints
+      config.priceToleranceInBasisPoints,
+      config.maxImprovementInBasisPoints,
+      config.allowPartialFill
     )
     const receipt = await waitForDeployment(tx)
 

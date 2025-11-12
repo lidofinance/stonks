@@ -17,6 +17,9 @@ contract AmountConverter is IAmountConverter {
 
     /// @notice Oracle router contract used for fetching token prices.
     IOracleRouter public immutable ORACLE_ROUTER;
+    /// @notice If true, uses ETH-denominated prices directly (gas optimized for ETH-quoted pairs).
+    ///         If false, uses USD prices (supports mixed denominations).
+    bool public immutable USE_ETH_ANCHOR;
 
     // ==================== Storage Variables ====================
 
@@ -52,11 +55,14 @@ contract AmountConverter is IAmountConverter {
      * @param oracleRouter_ Oracle router for price fetching
      * @param allowedTokensToSell_ List of addresses which are allowed to use as sell tokens
      * @param allowedTokensToBuy_ List of addresses of tokens that are allowed to be bought
+     * @param useEthAnchor_ If true, uses ETH-anchored pricing (both tokens must be ETH-quoted).
+     *                      If false, uses USD pricing (supports any denomination mix).
      */
     constructor(
         address oracleRouter_,
         address[] memory allowedTokensToSell_,
-        address[] memory allowedTokensToBuy_
+        address[] memory allowedTokensToBuy_,
+        bool useEthAnchor_
     ) {
         if (oracleRouter_ == address(0)) {
             revert InvalidOracleRouterAddress(oracleRouter_);
@@ -69,6 +75,7 @@ contract AmountConverter is IAmountConverter {
         }
 
         ORACLE_ROUTER = IOracleRouter(oracleRouter_);
+        USE_ETH_ANCHOR = useEthAnchor_;
 
         for (uint256 i; i < allowedTokensToBuy_.length; ) {
             if (allowedTokensToBuy_[i] == address(0)) {
@@ -129,17 +136,25 @@ contract AmountConverter is IAmountConverter {
             revert AmountFromTooLarge(amountFrom_);
         }
 
-        (
-            uint256 priceFromUsd,
-            uint256 priceToUsd,
-            uint8 decimalsOfSellToken,
-            uint8 decimalsOfBuyToken
-        ) = ORACLE_ROUTER.getPricesAndDecimals(tokenFrom_, tokenTo_);
+        uint256 priceFrom;
+        uint256 priceTo;
+        uint8 decimalsOfSellToken;
+        uint8 decimalsOfBuyToken;
 
-        if (priceFromUsd == 0) {
+        if (USE_ETH_ANCHOR) {
+            // ETH-anchored mode: read TOKEN/ETH prices directly (gas optimized)
+            (priceFrom, priceTo, decimalsOfSellToken, decimalsOfBuyToken) = ORACLE_ROUTER
+                .getEthPricesAndDecimals(tokenFrom_, tokenTo_);
+        } else {
+            // USD mode: read TOKEN/USD prices (supports mixed denominations)
+            (priceFrom, priceTo, decimalsOfSellToken, decimalsOfBuyToken) = ORACLE_ROUTER
+                .getUsdPricesAndDecimals(tokenFrom_, tokenTo_);
+        }
+
+        if (priceFrom == 0) {
             revert PriceFromUsdZero();
         }
-        if (priceToUsd == 0) {
+        if (priceTo == 0) {
             revert PriceToUsdZero();
         }
 
@@ -153,12 +168,7 @@ contract AmountConverter is IAmountConverter {
         }
 
         if (sellHasMoreOrEqualDecimals) {
-            uint256 grossOutput = Math.mulDiv(
-                amountFrom_,
-                priceFromUsd,
-                priceToUsd,
-                Math.Rounding.Down
-            );
+            uint256 grossOutput = Math.mulDiv(amountFrom_, priceFrom, priceTo, Math.Rounding.Down);
             expectedOutputAmount = (decimalsDiff == 0)
                 ? grossOutput
                 : grossOutput / (10 ** decimalsDiff);
@@ -174,8 +184,8 @@ contract AmountConverter is IAmountConverter {
             uint256 scaledAmountFrom = amountFrom_ * pow10;
             expectedOutputAmount = Math.mulDiv(
                 scaledAmountFrom,
-                priceFromUsd,
-                priceToUsd,
+                priceFrom,
+                priceTo,
                 Math.Rounding.Down
             );
         }

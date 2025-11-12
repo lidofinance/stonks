@@ -20,7 +20,8 @@ contract AmountConverterFactory {
         address indexed amountConverterAddress,
         address oracleRouter,
         address[] allowedTokensToSell,
-        address[] allowedStableTokensToBuy
+        address[] allowedStableTokensToBuy,
+        bool useEthAnchor
     );
 
     // ==================== Errors ====================
@@ -44,21 +45,25 @@ contract AmountConverterFactory {
     /**
      * @notice Deploys a new AmountConverter contract with specified parameters
      * @param allowedTokensToSell_ Array of addresses of tokens allowed to be sold
-     * @param allowedStableTokensToBuy_ Array of addresses of tokens allowed to be bought
+     * @param allowedTokensToBuy_ Array of addresses of tokens allowed to be bought
+     * @param useEthAnchor_ If true, uses ETH-anchored pricing (both tokens must be ETH-quoted).
+     *                      If false, uses USD pricing (supports any denomination mix).
      * @return tokenAmountConverter The address of the newly deployed AmountConverter contract
      */
     function deployAmountConverter(
         address[] memory allowedTokensToSell_,
-        address[] memory allowedStableTokensToBuy_
+        address[] memory allowedTokensToBuy_,
+        bool useEthAnchor_
     ) external returns (address tokenAmountConverter) {
         tokenAmountConverter = address(
-            new AmountConverter(ORACLE_ROUTER, allowedTokensToSell_, allowedStableTokensToBuy_)
+            new AmountConverter(ORACLE_ROUTER, allowedTokensToSell_, allowedTokensToBuy_, useEthAnchor_)
         );
         emit AmountConverterDeployed(
             tokenAmountConverter,
             ORACLE_ROUTER,
             allowedTokensToSell_,
-            allowedStableTokensToBuy_
+            allowedTokensToBuy_,
+            useEthAnchor_
         );
     }
 }

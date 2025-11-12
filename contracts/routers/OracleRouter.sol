@@ -109,6 +109,8 @@ contract OracleRouter is IOracleRouter, Ownable {
     error OracleBadAnswer(address aggregator, int256 answer);
     error OracleUnanswered(address aggregator, uint80 roundId, uint80 answeredInRound);
     error OracleQuantizedToZero(address aggregator, uint8 feedDecimals, uint8 unitDecimals);
+    error TokenNotEthQuoted(address token);
+    error TokenNotUsdQuoted(address token);
 
     // ==================== Constructor ====================
 
@@ -303,7 +305,7 @@ contract OracleRouter is IOracleRouter, Ownable {
      * @return baseTokenDecimals Number of decimals for the base token.
      * @return quoteTokenDecimals Number of decimals for the quote token.
      */
-    function getPricesAndDecimals(
+    function getUsdPricesAndDecimals(
         address baseTokenAddress_,
         address quoteTokenAddress_
     )
@@ -316,19 +318,85 @@ contract OracleRouter is IOracleRouter, Ownable {
             uint8 quoteTokenDecimals
         )
     {
-        (baseUsdPrice, quoteUsdPrice) = _getUsdPrices(baseTokenAddress_, quoteTokenAddress_);
+        TokenConfig storage baseConfig = tokenConfig[baseTokenAddress_];
+        baseTokenDecimals = baseConfig.tokenDecimals;
 
-        baseTokenDecimals = tokenConfig[baseTokenAddress_].tokenDecimals;
-
-        if (baseTokenDecimals == 0) {
+        if (baseTokenDecimals == 0 || !baseConfig.isActive) {
             revert TokenNotConfigured(baseTokenAddress_);
         }
+        if (baseConfig.primaryQuote != QuoteDenomination.USD) {
+            revert TokenNotUsdQuoted(baseTokenAddress_);
+        }
 
-        quoteTokenDecimals = tokenConfig[quoteTokenAddress_].tokenDecimals;
+        TokenConfig storage quoteConfig = tokenConfig[quoteTokenAddress_];
+        quoteTokenDecimals = quoteConfig.tokenDecimals;
 
-        if (quoteTokenDecimals == 0) {
+        if (quoteTokenDecimals == 0 || !quoteConfig.isActive) {
             revert TokenNotConfigured(quoteTokenAddress_);
         }
+        if (quoteConfig.primaryQuote != QuoteDenomination.USD) {
+            revert TokenNotUsdQuoted(quoteTokenAddress_);
+        }
+
+        (baseUsdPrice, quoteUsdPrice) = _getUsdPrices(baseTokenAddress_, quoteTokenAddress_);
+    }
+
+    /**
+     * @notice Gets ETH-denominated prices and decimal places for two ETH-quoted tokens.
+     * @dev Both tokens must be configured with ETH as primary quote denomination.
+     *      Gas-optimized alternative to getUsdPricesAndDecimals for ETH-quoted pairs.
+     * @param baseTokenAddress_ Address of the base token.
+     * @param quoteTokenAddress_ Address of the quote token.
+     * @return baseEthPrice ETH price of the base token (normalized to PRICE_UNIT).
+     * @return quoteEthPrice ETH price of the quote token (normalized to PRICE_UNIT).
+     * @return baseTokenDecimals Number of decimals for the base token.
+     * @return quoteTokenDecimals Number of decimals for the quote token.
+     */
+    function getEthPricesAndDecimals(
+        address baseTokenAddress_,
+        address quoteTokenAddress_
+    )
+        external
+        view
+        returns (
+            uint256 baseEthPrice,
+            uint256 quoteEthPrice,
+            uint8 baseTokenDecimals,
+            uint8 quoteTokenDecimals
+        )
+    {
+        TokenConfig storage baseConfig = tokenConfig[baseTokenAddress_];
+        baseTokenDecimals = baseConfig.tokenDecimals;
+
+        if (baseTokenDecimals == 0 || !baseConfig.isActive) {
+            revert TokenNotConfigured(baseTokenAddress_);
+        }
+        if (baseConfig.primaryQuote != QuoteDenomination.ETH) {
+            revert TokenNotEthQuoted(baseTokenAddress_);
+        }
+
+        TokenConfig storage quoteConfig = tokenConfig[quoteTokenAddress_];
+        quoteTokenDecimals = quoteConfig.tokenDecimals;
+
+        if (quoteConfig.tokenDecimals == 0 || !quoteConfig.isActive) {
+            revert TokenNotConfigured(quoteTokenAddress_);
+        }
+        if (quoteConfig.primaryQuote != QuoteDenomination.ETH) {
+            revert TokenNotEthQuoted(quoteTokenAddress_);
+        }
+
+        // Read ETH prices directly (no USD conversion)
+        baseEthPrice = _readNormalizedPrice(
+            baseTokenAddress_,
+            ETH_DENOMINATION,
+            baseConfig.primaryFeed
+        );
+        quoteEthPrice = _readNormalizedPrice(
+            quoteTokenAddress_,
+            ETH_DENOMINATION,
+            quoteConfig.primaryFeed
+        );
+
     }
 
     /**

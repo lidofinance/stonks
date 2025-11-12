@@ -54,7 +54,8 @@ describe('Order', async function () {
     amountConverterTest = await amountConverterTestFactory.deploy(
       await oracleRouter.getAddress(),
       [contracts.STETH],
-      [contracts.DAI]
+      [contracts.DAI],
+      false
     )
     await amountConverterTest.waitForDeployment()
 
@@ -339,7 +340,7 @@ describe('Order', async function () {
     })
   })
 
-  describe('additional negative cases:', function () {
+  describe('negative cases:', function () {
     it('should revert recoverEther when called by stranger', async () => {
       const stranger = (await ethers.getSigners())[4]
       await expect(subject.connect(stranger).recoverEther())

@@ -12,6 +12,7 @@ const AMOUNT_CONVERTER_FACTORY = ''
 const ORACLE_ROUTER = ''
 const ALLOWED_TOKENS_TO_SELL: string[] = []
 const ALLOWED_TOKENS_TO_BUY: string[] = []
+const USE_ETH_ANCHOR = false
 
 assert(
   ethers.isAddress(AMOUNT_CONVERTER_FACTORY),
@@ -38,12 +39,13 @@ async function main() {
   console.log(
     `  * Allowed tokens to buy: ${fmt.value('[' + ALLOWED_TOKENS_TO_BUY.join(', ') + ']')}`
   )
+  console.log(`  * Use ETH anchor: ${fmt.value(USE_ETH_ANCHOR)}`)
 
   await confirmOrAbort('Proceed?')
 
   const factory = AmountConverterFactory__factory.connect(AMOUNT_CONVERTER_FACTORY, deployer)
 
-  const tx = await factory.deployAmountConverter(ALLOWED_TOKENS_TO_SELL, ALLOWED_TOKENS_TO_BUY)
+  const tx = await factory.deployAmountConverter(ALLOWED_TOKENS_TO_SELL, ALLOWED_TOKENS_TO_BUY, USE_ETH_ANCHOR)
 
   const receipt = await waitForDeployment(tx)
 

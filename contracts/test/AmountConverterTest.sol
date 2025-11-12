@@ -24,16 +24,19 @@ contract AmountConverterTest {
      * @param oracleRouter_ Oracle router address.
      * @param allowedTokensToSell_ Array of allowed sell tokens.
      * @param allowedTokensToBuy_ Array of allowed buy tokens.
+     * @param useEthAnchor_ If true, uses ETH-anchored pricing.
      */
     constructor(
         address oracleRouter_,
         address[] memory allowedTokensToSell_,
-        address[] memory allowedTokensToBuy_
+        address[] memory allowedTokensToBuy_,
+        bool useEthAnchor_
     ) {
         amountConverter = new AmountConverter(
             oracleRouter_,
             allowedTokensToSell_,
-            allowedTokensToBuy_
+            allowedTokensToBuy_,
+            useEthAnchor_
         );
     }
 
