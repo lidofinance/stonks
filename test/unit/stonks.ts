@@ -394,6 +394,44 @@ describe('Stonks', function () {
         .to.be.revertedWithCustomError(ContractFactory, 'PriceToleranceOverflowsAllowedLimit')
         .withArgs(1000, 1001)
     })
+    it('should not initialize with maxImprovementInBasisPoints_ over limit (when not type(uint256).max)', async function () {
+      await expect(
+        ContractFactory.deploy(
+          validParams.agent,
+          validParams.manager,
+          validParams.tokenFrom,
+          validParams.tokenTo,
+          validParams.amountConverter,
+          validParams.orderSample,
+          validParams.oracleRouter,
+          validParams.orderDurationInSeconds,
+          validParams.marginInBasisPoints,
+          validParams.priceToleranceInBasisPoints,
+          1001,
+          validParams.allowPartialFill
+        )
+      )
+        .to.be.revertedWithCustomError(ContractFactory, 'MarginOverflowsAllowedLimit')
+        .withArgs(1000, 1001)
+    })
+    it('should allow maxImprovementInBasisPoints_ equal to type(uint256).max', async function () {
+      const stonks = await ContractFactory.deploy(
+        validParams.agent,
+        validParams.manager,
+        validParams.tokenFrom,
+        validParams.tokenTo,
+        validParams.amountConverter,
+        validParams.orderSample,
+        validParams.oracleRouter,
+        validParams.orderDurationInSeconds,
+        validParams.marginInBasisPoints,
+        validParams.priceToleranceInBasisPoints,
+        ethers.MaxUint256,
+        validParams.allowPartialFill
+      )
+      await stonks.waitForDeployment()
+      expect(await stonks.getMaxImprovementBps()).to.equal(ethers.MaxUint256)
+    })
     it('should not initialize with oracleRouter zero address', async function () {
       await expect(
         ContractFactory.deploy(
@@ -467,6 +505,36 @@ describe('Stonks', function () {
       )
     })
 
+    it('should revert when tokens are not quotable', async function () {
+      const localSnapshot = await takeSnapshot()
+
+      // Fund stonks with tokens first (before deactivating)
+      await fillUpERC20FromTreasury({
+        token: contracts.STETH,
+        amount: ethers.parseEther('1'),
+        address: await subject.getAddress(),
+      })
+
+      // Get expected buy amount before deactivating tokens
+      const expectedBuyAmount = await subject.estimateTradeOutputFromCurrentBalance()
+
+      // Deactivate tokens in router to make them unquotable
+      const oracleRouter = await ethers.getContractAt('OracleRouter', await subject.ORACLE_ROUTER())
+      const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
+      await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+
+      const [tokenFrom, tokenTo] = await subject.getOrderParameters()
+      await oracleRouter.connect(agentSigner).setTokenActive(tokenFrom, false)
+      await oracleRouter.connect(agentSigner).setTokenActive(tokenTo, false)
+
+      // Should revert when trying to place order because assertQuotable fails
+      // The revert happens during Order.initialize when it calls assertQuotable
+      // which calls router.getUsdPrices, which reverts with TokenNotConfigured
+      await expect(subject.placeOrder(expectedBuyAmount)).to.be.reverted
+
+      await localSnapshot.restore()
+    })
+
     it('should place order', async function () {
       const steth = await ethers.getContractAt('IERC20', contracts.STETH, signer)
 
@@ -528,6 +596,54 @@ describe('Stonks', function () {
       await expect(
         subject.placeOrderWithAmount(ethers.parseEther('1'), 0)
       ).to.be.revertedWithCustomError(subject, 'InvalidAmount')
+    })
+
+    it('placeOrderWithAmount with exact balance should succeed', async function () {
+      const localSnapshot = await takeSnapshot()
+
+      const steth = await ethers.getContractAt('IERC20', contracts.STETH, signer)
+      const exactBalance = ethers.parseEther('1')
+
+      await fillUpERC20FromTreasury({
+        token: contracts.STETH,
+        amount: exactBalance,
+        address: await subject.getAddress(),
+      })
+
+      const balance = await steth.balanceOf(await subject.getAddress())
+      const minBuy = await subject.estimateTradeOutput(balance)
+
+      const tx = await subject.placeOrderWithAmount(balance, minBuy)
+      const rc = await tx.wait()
+      expect(rc?.status).to.equal(1)
+
+      const afterBalance = await steth.balanceOf(await subject.getAddress())
+      // Allow small tolerance for stETH rounding (shares-based accounting)
+      expect(afterBalance).to.be.lte(4n)
+
+      await localSnapshot.restore()
+    })
+
+    it('placeOrderWithAmount with minBuyAmount exceeding estimated output should use Math.max', async function () {
+      const localSnapshot = await takeSnapshot()
+
+      const sellAmount = ethers.parseEther('1')
+      await fillUpERC20FromTreasury({
+        token: contracts.STETH,
+        amount: sellAmount,
+        address: await subject.getAddress(),
+      })
+
+      const estimatedOutput = await subject.estimateTradeOutput(sellAmount)
+      const veryHighMinBuy = estimatedOutput * 2n
+
+      // Should succeed because Order.initialize uses Math.max(estimated, minBuyAmount)
+      // So it will use estimatedOutput, not the veryHighMinBuy
+      const tx = await subject.placeOrderWithAmount(sellAmount, veryHighMinBuy)
+      const rc = await tx.wait()
+      expect(rc?.status).to.equal(1)
+
+      await localSnapshot.restore()
     })
   })
 

@@ -14,6 +14,7 @@ import {
   setup,
   setupOverDeployedContracts,
   setupPriceSpikeStub,
+  setupPriceImprovementStub,
   pairs,
   TokenPair,
   Setup,
@@ -258,6 +259,172 @@ describe('Scenario test multi-pair', function () {
           await order.connect(manager).recoverERC20(stubToken, value)
           expect(await stubToken.balanceOf(stonks)).to.equal(0)
           expect(await stubToken.balanceOf(contracts.AGENT)).to.equal(agentBalanceBefore + value)
+        })
+      })
+
+      context('Price improvement scenarios', () => {
+        let snapshotBeforeOrder: SnapshotRestorer
+        let stonksWithCap: Stonks
+        let stonksStrict: Stonks
+        let orderWithCap: Order
+        let orderStrict: Order
+
+        before(async () => {
+          await snapshotOrderPlaced.restore()
+        })
+
+        it('should revert when price improvement exceeds cap', async function () {
+          snapshotBeforeOrder = await takeSnapshot()
+
+          // Reuse existing setup - deploy new stonks with maxImprovement = 100 bps
+          const stonksFactory = await ethers.getContractFactory('Stonks')
+          const amountConverter = await ethers.getContractAt(
+            'AmountConverter',
+            await stonks.AMOUNT_CONVERTER()
+          )
+          const orderSample = await stonks.ORDER_SAMPLE()
+          const oracleRouter = await stonks.ORACLE_ROUTER()
+
+          stonksWithCap = await stonksFactory.deploy(
+            contracts.AGENT,
+            await manager.getAddress(),
+            await stonks.TOKEN_FROM(),
+            await stonks.TOKEN_TO(),
+            await amountConverter.getAddress(),
+            orderSample,
+            oracleRouter,
+            await stonks.ORDER_DURATION_IN_SECONDS(),
+            await stonks.MARGIN_IN_BASIS_POINTS(),
+            await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
+            100, // maxImprovement = 100 bps (1%)
+            await stonks.ALLOW_PARTIAL_FILL()
+          )
+          await stonksWithCap.waitForDeployment()
+
+          // Fund stonks
+          const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
+          await impersonateAccount(contracts.AGENT)
+          const token = tokenFrom.connect(treasurySigner)
+          await token.transfer(await stonksWithCap.getAddress(), value)
+
+          // Place order
+          const expectedBuyAmount = await stonksWithCap.estimateTradeOutputFromCurrentBalance()
+          const orderTx = await stonksWithCap.placeOrder(expectedBuyAmount)
+          const orderReceipt = (await orderTx.wait())!
+          const { address } = await getPlaceOrderData(orderReceipt)
+          orderWithCap = await ethers.getContractAt('Order', address)
+
+          // Simulate price improvement that exceeds cap (e.g., 2% improvement when cap is 1%)
+          await setupPriceImprovementStub(stonksWithCap, manager, 200n) // 2% improvement
+
+          const [currentHash] = await orderWithCap.getOrderDetails()
+          await expect(
+            orderWithCap.isValidSignature(currentHash, '0x')
+          ).to.be.revertedWithCustomError(orderWithCap, 'PriceImprovementExceedsLimit')
+
+          await snapshotBeforeOrder.restore()
+        })
+
+        it('should revert in strict mode (maxImprovement = 0) when price improves', async function () {
+          snapshotBeforeOrder = await takeSnapshot()
+
+          // Reuse existing setup - deploy new stonks with strict mode
+          const stonksFactory = await ethers.getContractFactory('Stonks')
+          const amountConverter = await ethers.getContractAt(
+            'AmountConverter',
+            await stonks.AMOUNT_CONVERTER()
+          )
+          const orderSample = await stonks.ORDER_SAMPLE()
+          const oracleRouter = await stonks.ORACLE_ROUTER()
+
+          stonksStrict = await stonksFactory.deploy(
+            contracts.AGENT,
+            await manager.getAddress(),
+            await stonks.TOKEN_FROM(),
+            await stonks.TOKEN_TO(),
+            await amountConverter.getAddress(),
+            orderSample,
+            oracleRouter,
+            await stonks.ORDER_DURATION_IN_SECONDS(),
+            await stonks.MARGIN_IN_BASIS_POINTS(),
+            await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
+            0, // maxImprovement = 0 (strict mode)
+            await stonks.ALLOW_PARTIAL_FILL()
+          )
+          await stonksStrict.waitForDeployment()
+
+          // Fund stonks
+          const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
+          await impersonateAccount(contracts.AGENT)
+          const token = tokenFrom.connect(treasurySigner)
+          await token.transfer(await stonksStrict.getAddress(), value)
+
+          // Place order
+          const expectedBuyAmount = await stonksStrict.estimateTradeOutputFromCurrentBalance()
+          const orderTx = await stonksStrict.placeOrder(expectedBuyAmount)
+          const orderReceipt = (await orderTx.wait())!
+          const { address } = await getPlaceOrderData(orderReceipt)
+          orderStrict = await ethers.getContractAt('Order', address)
+
+          // Simulate any price improvement (even small)
+          await setupPriceImprovementStub(stonksStrict, manager, 50n) // 0.5% improvement
+
+          const [currentHash] = await orderStrict.getOrderDetails()
+          await expect(
+            orderStrict.isValidSignature(currentHash, '0x')
+          ).to.be.revertedWithCustomError(orderStrict, 'PriceImprovementRejectedInStrictMode')
+
+          await snapshotBeforeOrder.restore()
+        })
+
+        it('should accept price improvement within cap', async function () {
+          snapshotBeforeOrder = await takeSnapshot()
+
+          // Reuse existing setup - deploy new stonks with maxImprovement = 100 bps
+          const stonksFactory = await ethers.getContractFactory('Stonks')
+          const amountConverter = await ethers.getContractAt(
+            'AmountConverter',
+            await stonks.AMOUNT_CONVERTER()
+          )
+          const orderSample = await stonks.ORDER_SAMPLE()
+          const oracleRouter = await stonks.ORACLE_ROUTER()
+
+          stonksWithCap = await stonksFactory.deploy(
+            contracts.AGENT,
+            await manager.getAddress(),
+            await stonks.TOKEN_FROM(),
+            await stonks.TOKEN_TO(),
+            await amountConverter.getAddress(),
+            orderSample,
+            oracleRouter,
+            await stonks.ORDER_DURATION_IN_SECONDS(),
+            await stonks.MARGIN_IN_BASIS_POINTS(),
+            await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
+            100, // maxImprovement = 100 bps (1%)
+            await stonks.ALLOW_PARTIAL_FILL()
+          )
+          await stonksWithCap.waitForDeployment()
+
+          // Fund stonks
+          const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
+          await impersonateAccount(contracts.AGENT)
+          const token = tokenFrom.connect(treasurySigner)
+          await token.transfer(await stonksWithCap.getAddress(), value)
+
+          // Place order
+          const expectedBuyAmount = await stonksWithCap.estimateTradeOutputFromCurrentBalance()
+          const orderTx = await stonksWithCap.placeOrder(expectedBuyAmount)
+          const orderReceipt = (await orderTx.wait())!
+          const { address } = await getPlaceOrderData(orderReceipt)
+          orderWithCap = await ethers.getContractAt('Order', address)
+
+          // Simulate price improvement within cap (e.g., 0.5% improvement when cap is 1%)
+          await setupPriceImprovementStub(stonksWithCap, manager, 50n) // 0.5% improvement
+
+          const [currentHash] = await orderWithCap.getOrderDetails()
+          expect(await orderWithCap.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
+
+          await snapshotBeforeOrder.restore()
         })
       })
 

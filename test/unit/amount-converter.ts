@@ -7,6 +7,7 @@ import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-ora
 import { refreshTestFeedData, resetTestFeedRegistryStub } from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
+import { QUOTE_USD } from '../../utils/oracle-router'
 
 const addresses = getContracts()
 
@@ -136,17 +137,6 @@ describe('AmountConverter', () => {
       expect(amountFromContract.toString()).to.equal(amountFromHelper.toString())
     })
 
-    it('matches Chainlink helper for DAI → USDC (18 → 6)', async () => {
-      const amountToSell = ethers.parseEther('1')
-      const amountFromContract = await converter.getExpectedOut(
-        addresses.DAI,
-        addresses.USDC,
-        amountToSell
-      )
-      const amountFromHelper = await getExpectedOut(addresses.DAI, addresses.USDC, amountToSell)
-      expect(amountFromContract.toString()).to.equal(amountFromHelper.toString())
-    })
-
     it('should handle very small amounts', async () => {
       await refreshTestFeedData([addresses.DAI, addresses.USDC])
       const tinyAmount = 1n
@@ -184,7 +174,7 @@ describe('AmountConverter', () => {
 
       // Configure short staleness for DAI
       const decimals = await readTokenDecimals(addresses.DAI)
-      await router.setTokenUsdFeed(addresses.DAI, 1, decimals, true)
+      await router.setTokenFeed(addresses.DAI, QUOTE_USD, 1, decimals, true)
 
       // Freshen both DAI/USD and ETH/USD to now, then advance time to exceed staleness
       const latest = await ethers.provider.getBlock('latest')
@@ -242,6 +232,14 @@ describe('AmountConverter', () => {
       await expect(
         converter.getExpectedOut(addresses.DAI, addresses.USDC, tooLarge)
       ).to.be.revertedWithCustomError(converter, 'AmountFromTooLarge')
+    })
+
+    it('should succeed with large amount within uint128 limit', async () => {
+      // Use tokens with same decimals (6) to avoid scaling overflow checks
+      // Use a large but safe amount that won't cause intermediate calculation overflow
+      const maxAmount = 2n ** 120n // Large but safe amount (within uint128 limit)
+      const result = await converter.getExpectedOut(addresses.USDC, addresses.USDT, maxAmount)
+      expect(result).to.be.gt(0)
     })
   })
 

@@ -90,15 +90,15 @@ export async function deployStonks({
         const dec = await erc20(tokenAddr).getFunction('decimals').staticCall()
         // Try USD first, fallback to ETH if it reverts for any reason
         try {
-          await oracleRouter!.setTokenUsdFeed(tokenAddr, 86_400, dec, true)
+          await oracleRouter!.setTokenFeed(tokenAddr, 0, 86_400, dec, true)
           return
         } catch (_) {}
         try {
-          await oracleRouter!.setTokenEthFeed(tokenAddr, 86_400, dec, true)
+          await oracleRouter!.setTokenFeed(tokenAddr, 1, 86_400, dec, true)
           return
         } catch (e) {
           // final attempt: USD again to surface error details
-          await oracleRouter!.setTokenUsdFeed(tokenAddr, 86_400, dec, true)
+          await oracleRouter!.setTokenFeed(tokenAddr, 0, 86_400, dec, true)
         }
       }
       await configureToken(tokenFrom)
@@ -118,8 +118,8 @@ export async function deployStonks({
             await oracleRouter!.setEthUsdBridge(86_400)
           } catch (_) {}
 
-          await oracleRouter!.setTokenUsdFeed(tokenFrom, 86_400, tokenFromDecimals, true)
-          await oracleRouter!.setTokenUsdFeed(tokenTo, 86_400, tokenToDecimals, true)
+          await oracleRouter!.setTokenFeed(tokenFrom, 0, 86_400, tokenFromDecimals, true)
+          await oracleRouter!.setTokenFeed(tokenTo, 0, 86_400, tokenToDecimals, true)
         } catch (_) {
           // ignore if caller is not authorized or feeds already set
         }

@@ -4,6 +4,7 @@ import { impersonateAccount, setCode } from '@nomicfoundation/hardhat-network-he
 import { getContracts } from '../../utils/contracts'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { AmountConverter, Stonks } from '../../typechain-types'
+import { QUOTE_USD, QUOTE_ETH } from '../../utils/oracle-router'
 
 export type TokenPair = {
   tokenFrom: string
@@ -123,8 +124,9 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
         bridgeInfo.age <= pair.priceFeedHeartbeatTimeout
       ) {
         await oracleRouter.setEthUsdBridge(pair.priceFeedHeartbeatTimeout)
-        await oracleRouter.setTokenEthFeed(
+        await oracleRouter.setTokenFeed(
           tokenAddr,
+          QUOTE_ETH,
           pair.priceFeedHeartbeatTimeout,
           tokenDecimals,
           true
@@ -143,8 +145,9 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
         usdInfo.age !== null &&
         usdInfo.age <= pair.priceFeedHeartbeatTimeout
       ) {
-        await oracleRouter.setTokenUsdFeed(
+        await oracleRouter.setTokenFeed(
           tokenAddr,
+          QUOTE_USD,
           pair.priceFeedHeartbeatTimeout,
           tokenDecimals,
           true
@@ -163,7 +166,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
 
   // Fail fast if router can't read prices before deploying stonks
   if (pair.useEthBridge) {
-    await oracleRouter.getEthPricesAndDecimals(pair.tokenFrom, pair.tokenTo)
+    await oracleRouter.getPricesAndDecimals(pair.tokenFrom, pair.tokenTo, QUOTE_ETH)
   } else {
     await oracleRouter.getUsdPrices(pair.tokenFrom, pair.tokenTo)
   }
@@ -308,6 +311,119 @@ export const setupPriceSpikeStub = async (
   })
 
   // Keep bridge fresh to avoid staleness errors during price spike test
+  await stubAtRegistry.setFeed(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE, {
+    aggregator: ethAggregator,
+    answer: ethLatest.answer,
+    updatedAt: nowTs,
+    startedAt: nowTs,
+    answeredInRound: ethLatest.answeredInRound > 0n ? ethLatest.answeredInRound : 1n,
+    roundId: ethLatest.roundId > 0n ? ethLatest.roundId : 1n,
+    decimals: ethDecimals,
+  })
+}
+
+export const setupPriceImprovementStub = async (
+  stonks: Stonks,
+  manager: Signer,
+  improvementBps: bigint = 100n
+): Promise<void> => {
+  const feedRegistryStubFactory = await ethers.getContractFactory('ChainlinkFeedRegistryStub')
+  const feedRegistryStub = await feedRegistryStubFactory.deploy(manager, manager)
+
+  const feedRegistry = await ethers.getContractAt(
+    'IFeedRegistry',
+    contracts.CHAINLINK_PRICE_FEED_REGISTRY
+  )
+
+  const oracleRouterAddress = await stonks.ORACLE_ROUTER()
+  const oracleRouter = await ethers.getContractAt('OracleRouter', oracleRouterAddress)
+
+  const tokenFrom = await stonks.TOKEN_FROM()
+  const tokenTo = await stonks.TOKEN_TO()
+
+  const fromConfig = await oracleRouter.tokenConfig(tokenFrom)
+  const toConfig = await oracleRouter.tokenConfig(tokenTo)
+
+  const getTokenFeedData = async (
+    token: string,
+    config: any
+  ): Promise<{ quote: string; aggregator: string; decimals: number; latest: any }> => {
+    const useEthBridge = config.primaryQuote === 1n
+    const quote = useEthBridge ? contracts.CHAINLINK_ETH_QUOTE : contracts.CHAINLINK_USD_QUOTE
+
+    const decimalsResult = await feedRegistry.decimals(token, quote)
+    const decimals = Number(decimalsResult)
+    const latest = await feedRegistry.latestRoundData(token, quote)
+    const aggregator = await feedRegistry.getFeed(token, quote)
+
+    return {
+      quote,
+      aggregator,
+      decimals,
+      latest,
+    }
+  }
+
+  const fromFeed = await getTokenFeedData(tokenFrom, fromConfig)
+  const toFeed = await getTokenFeedData(tokenTo, toConfig)
+
+  const ethDecimals = await feedRegistry.decimals(
+    contracts.CHAINLINK_ETH_QUOTE,
+    contracts.CHAINLINK_USD_QUOTE
+  )
+  const ethLatest = await feedRegistry.latestRoundData(
+    contracts.CHAINLINK_ETH_QUOTE,
+    contracts.CHAINLINK_USD_QUOTE
+  )
+  const ethAggregator = await feedRegistry.getFeed(
+    contracts.CHAINLINK_ETH_QUOTE,
+    contracts.CHAINLINK_USD_QUOTE
+  )
+
+  await setCode(
+    contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+    await ethers.provider.getCode(feedRegistryStub)
+  )
+
+  const stubAtRegistry = await ethers.getContractAt(
+    'ChainlinkFeedRegistryStub',
+    contracts.CHAINLINK_PRICE_FEED_REGISTRY
+  )
+
+  const latestBlock = await ethers.provider.getBlock('latest')
+  const nowTs = BigInt(latestBlock!.timestamp)
+
+  // Keep sell token price the same
+  await stubAtRegistry.setFeed(tokenFrom, fromFeed.quote, {
+    aggregator: fromFeed.aggregator,
+    answer: fromFeed.latest.answer,
+    updatedAt: nowTs,
+    startedAt: nowTs,
+    answeredInRound: fromFeed.latest.answeredInRound > 0n ? fromFeed.latest.answeredInRound : 1n,
+    roundId: fromFeed.latest.roundId > 0n ? fromFeed.latest.roundId : 1n,
+    decimals: fromFeed.decimals,
+  })
+
+  // Decrease buy token price to simulate improvement (lower price = more tokens received)
+  // improvementBps is in basis points (100 bps = 1%)
+  // For improvement, we want to get MORE buy tokens, so buy token price should decrease
+  const quoteLatest = BigInt(toFeed.latest.answer)
+  const quoteOne = 10n ** BigInt(toFeed.decimals)
+  const quoteSafe = quoteLatest > 0n ? quoteLatest : quoteOne
+  const improvementFactor = 10000n - improvementBps // e.g., 9900 for 1% improvement (price down = more tokens)
+  const quoteImproved = (quoteSafe * improvementFactor) / 10000n
+
+  await stubAtRegistry.setFeed(tokenTo, toFeed.quote, {
+    aggregator: toFeed.aggregator,
+    answer: quoteImproved,
+    updatedAt: nowTs,
+    startedAt: nowTs,
+    answeredInRound: toFeed.latest.answeredInRound > 0n ? toFeed.latest.answeredInRound : 1n,
+    roundId: toFeed.latest.roundId > 0n ? toFeed.latest.roundId : 1n,
+    decimals: toFeed.decimals,
+  })
+
+  // Keep bridge fresh
   await stubAtRegistry.setFeed(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE, {
     aggregator: ethAggregator,
     answer: ethLatest.answer,

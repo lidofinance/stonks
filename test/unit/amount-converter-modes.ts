@@ -11,6 +11,7 @@ import {
   resetTestFeedRegistryStub,
 } from '../../utils/test-feed-registry'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
+import { QUOTE_ETH } from '../../utils/oracle-router'
 
 const contracts = getContracts()
 
@@ -29,8 +30,8 @@ describe('AmountConverter - ETH/USD Modes', () => {
 
     await refreshTestFeedData(getAllTestTokens())
 
-    await router.setTokenEthFeed(contracts.STETH, 86400, 18, true)
-    await router.setTokenEthFeed(contracts.LDO, 86400, 18, true)
+    await router.setTokenFeed(contracts.STETH, QUOTE_ETH, 86400, 18, true)
+    await router.setTokenFeed(contracts.LDO, QUOTE_ETH, 86400, 18, true)
 
     factory = await ethers.getContractFactory('AmountConverter')
   })
@@ -61,8 +62,12 @@ describe('AmountConverter - ETH/USD Modes', () => {
 
         expect(result).to.be.gt(0)
 
-        const prices = await router.getEthPricesAndDecimals(contracts.STETH, contracts.LDO)
-        const manualCalc = (amount * prices.baseEthPrice) / prices.quoteEthPrice
+        const [basePrice, quotePrice] = await router.getPricesAndDecimals(
+          contracts.STETH,
+          contracts.LDO,
+          1
+        )
+        const manualCalc = (amount * basePrice) / quotePrice
 
         expect(isClose(result, manualCalc, 2n)).to.be.true
       })
@@ -167,6 +172,40 @@ describe('AmountConverter - ETH/USD Modes', () => {
       })
     })
 
+    describe('ETH-quoted tokens with USD mode', () => {
+      it('should revert when selling ETH-quoted token in USD mode converter', async () => {
+        const ethTokenConverter = await factory.deploy(
+          await router.getAddress(),
+          [contracts.STETH],
+          [contracts.DAI],
+          false
+        )
+        await ethTokenConverter.waitForDeployment()
+
+        const amount = parseEther('1')
+
+        await expect(ethTokenConverter.getExpectedOut(contracts.STETH, contracts.DAI, amount))
+          .to.be.revertedWithCustomError(router, 'TokenNotUsdQuoted')
+          .withArgs(contracts.STETH)
+      })
+
+      it('should revert when buying ETH-quoted token in USD mode converter', async () => {
+        const ethTokenConverter = await factory.deploy(
+          await router.getAddress(),
+          [contracts.DAI],
+          [contracts.STETH],
+          false
+        )
+        await ethTokenConverter.waitForDeployment()
+
+        const amount = parseEther('1000')
+
+        await expect(ethTokenConverter.getExpectedOut(contracts.DAI, contracts.STETH, amount))
+          .to.be.revertedWithCustomError(router, 'TokenNotUsdQuoted')
+          .withArgs(contracts.STETH)
+      })
+    })
+
     describe('Validations', () => {
       it('should revert on zero amount', async () => {
         await expect(usdConverter.getExpectedOut(contracts.DAI, contracts.USDC, 0))
@@ -247,8 +286,8 @@ describe('AmountConverter - ETH/USD Modes', () => {
 
     it('should handle 18 to 18 decimal conversion (ETH mode)', async () => {
       await refreshTestFeedData([contracts.STETH, contracts.LDO])
-      await router.setTokenEthFeed(contracts.STETH, 86400, 18, true)
-      await router.setTokenEthFeed(contracts.LDO, 86400, 18, true)
+      await router.setTokenFeed(contracts.STETH, QUOTE_ETH, 86400, 18, true)
+      await router.setTokenFeed(contracts.LDO, QUOTE_ETH, 86400, 18, true)
 
       const ethConverter = await factory.deploy(
         await router.getAddress(),

@@ -58,11 +58,11 @@ async function initializeGlobalOracleRouter(config: TestOracleRouterConfig): Pro
       const usdFeed = await stub.getFeed(token, contracts.CHAINLINK_USD_QUOTE)
 
       if (usdFeed !== ethers.ZeroAddress) {
-        await oracleRouter.connect(agentSigner).setTokenUsdFeed(token, 86_400, decimals, true)
+        await oracleRouter.connect(agentSigner).setTokenFeed(token, 0, 86_400, decimals, true)
       } else {
         const ethFeed = await stub.getFeed(token, contracts.CHAINLINK_ETH_QUOTE)
         if (ethFeed !== ethers.ZeroAddress) {
-          await oracleRouter.connect(agentSigner).setTokenEthFeed(token, 86_400, decimals, true)
+          await oracleRouter.connect(agentSigner).setTokenFeed(token, 1, 86_400, decimals, true)
         } else {
           console.warn(`No feeds available for token ${token}, skipping configuration`)
         }

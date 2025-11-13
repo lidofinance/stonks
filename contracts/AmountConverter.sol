@@ -30,8 +30,8 @@ contract AmountConverter is IAmountConverter {
 
     // ==================== Events ====================
 
-    event AllowedTokenToSellAdded(address tokenAddress);
-    event AllowedTokenToBuyAdded(address tokenAddress);
+    event AllowedTokenToSellAdded(address token);
+    event AllowedTokenToBuyAdded(address token);
 
     // ==================== Errors ====================
 
@@ -141,15 +141,15 @@ contract AmountConverter is IAmountConverter {
         uint8 decimalsOfSellToken;
         uint8 decimalsOfBuyToken;
 
+        // Use merged function with quote denomination parameter
+        IOracleRouter.QuoteDenomination quote;
         if (USE_ETH_ANCHOR) {
-            // ETH-anchored mode: read TOKEN/ETH prices directly (gas optimized)
-            (priceFrom, priceTo, decimalsOfSellToken, decimalsOfBuyToken) = ORACLE_ROUTER
-                .getEthPricesAndDecimals(tokenFrom_, tokenTo_);
+            quote = IOracleRouter.QuoteDenomination.ETH;
         } else {
-            // USD mode: read TOKEN/USD prices (supports mixed denominations)
-            (priceFrom, priceTo, decimalsOfSellToken, decimalsOfBuyToken) = ORACLE_ROUTER
-                .getUsdPricesAndDecimals(tokenFrom_, tokenTo_);
+            quote = IOracleRouter.QuoteDenomination.USD;
         }
+        (priceFrom, priceTo, decimalsOfSellToken, decimalsOfBuyToken) = ORACLE_ROUTER
+            .getPricesAndDecimals(tokenFrom_, tokenTo_, quote);
 
         if (priceFrom == 0) {
             revert PriceFromUsdZero();

@@ -10,6 +10,7 @@ import {
   refreshFeedData,
 } from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
+import { QUOTE_USD } from '../../utils/oracle-router'
 import fc from 'fast-check'
 
 const contracts = getContracts()
@@ -89,7 +90,7 @@ describe('OracleRouter Decimal Fuzzing', function () {
             await router.connect(agentSigner).setEthUsdBridge(86_400)
             await router
               .connect(agentSigner)
-              .setTokenUsdFeed(contracts.DAI, 86_400, tokenDecimals, true)
+              .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, tokenDecimals, true)
 
             const nowTs = await getCurrentTimestamp()
             await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {

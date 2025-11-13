@@ -12,6 +12,7 @@ import {
   resetTestFeedRegistryStub,
 } from '../../utils/test-feed-registry'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
+import { QUOTE_USD, QUOTE_ETH } from '../../utils/oracle-router'
 
 const contracts = getContracts()
 
@@ -30,8 +31,8 @@ describe('Integration: AmountConverter Denominations', () => {
 
     await refreshTestFeedData(getAllTestTokens())
 
-    await router.setTokenEthFeed(contracts.STETH, 86400, 18, true)
-    await router.setTokenEthFeed(contracts.LDO, 86400, 18, true)
+    await router.setTokenFeed(contracts.STETH, QUOTE_ETH, 86400, 18, true)
+    await router.setTokenFeed(contracts.LDO, QUOTE_ETH, 86400, 18, true)
 
     const factoryContract = await ethers.getContractFactory('AmountConverterFactory')
     factory = await factoryContract.deploy(await router.getAddress())
@@ -67,8 +68,12 @@ describe('Integration: AmountConverter Denominations', () => {
 
       expect(result).to.be.gt(0)
 
-      const prices = await router.getEthPricesAndDecimals(contracts.STETH, contracts.LDO)
-      const manualCalc = (amount * prices.baseEthPrice) / prices.quoteEthPrice
+      const [basePrice, quotePrice] = await router.getPricesAndDecimals(
+        contracts.STETH,
+        contracts.LDO,
+        1
+      )
+      const manualCalc = (amount * basePrice) / quotePrice
 
       expect(isClose(result, manualCalc, 2n)).to.be.true
     })
@@ -80,8 +85,12 @@ describe('Integration: AmountConverter Denominations', () => {
       expect(result).to.be.gt(0)
 
       // Verify using router directly
-      const prices = await router.getEthPricesAndDecimals(contracts.STETH, contracts.LDO)
-      const manualCalc = (amount * prices.baseEthPrice) / prices.quoteEthPrice
+      const [basePrice, quotePrice] = await router.getPricesAndDecimals(
+        contracts.STETH,
+        contracts.LDO,
+        1
+      )
+      const manualCalc = (amount * basePrice) / quotePrice
 
       expect(isClose(result, manualCalc, 2n)).to.be.true
     })
@@ -102,7 +111,7 @@ describe('Integration: AmountConverter Denominations', () => {
     beforeEach(async () => {
       // Reconfigure STETH as USD-quoted for mixed denomination tests
       // This uses the ETH/USD bridge internally
-      await router.setTokenUsdFeed(contracts.STETH, 86400, 18, true)
+      await router.setTokenFeed(contracts.STETH, QUOTE_USD, 86400, 18, true)
       await router.setEthUsdBridge(86400)
 
       const tx = await factory.deployAmountConverter(

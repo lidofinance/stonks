@@ -24,7 +24,7 @@ contract StonksFactory {
     // ==================== Events ====================
 
     event AgentSet(address agent);
-    event OrderSampleDeployed(address orderAddress);
+    event OrderSampleDeployed(address order);
     event StonksDeployed(
         address indexed stonksAddress,
         address agent,

@@ -18,6 +18,7 @@ import { deployStonks } from '../../scripts/deployments/stonks'
 import { getContracts } from '../../utils/contracts'
 import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
+import { QUOTE_ETH } from '../../utils/oracle-router'
 import { getPlaceOrderData } from '../../utils/get-events'
 import { isClose } from '../../utils/assert'
 
@@ -84,8 +85,8 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
 
     await refreshTestFeedData([contracts.STETH, contracts.LDO])
 
-    await oracleRouter.setTokenEthFeed(contracts.STETH, 86400, 18, true)
-    await oracleRouter.setTokenEthFeed(contracts.LDO, 86400, 18, true)
+    await oracleRouter.setTokenFeed(contracts.STETH, QUOTE_ETH, 86400, 18, true)
+    await oracleRouter.setTokenFeed(contracts.LDO, QUOTE_ETH, 86400, 18, true)
 
     amountConverterTest = await amountConverterTestFactory.deploy(
       await oracleRouter.getAddress(),

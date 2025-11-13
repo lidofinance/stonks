@@ -56,7 +56,12 @@ contract AmountConverterFactory {
         bool useEthAnchor_
     ) external returns (address tokenAmountConverter) {
         tokenAmountConverter = address(
-            new AmountConverter(ORACLE_ROUTER, allowedTokensToSell_, allowedTokensToBuy_, useEthAnchor_)
+            new AmountConverter(
+                ORACLE_ROUTER,
+                allowedTokensToSell_,
+                allowedTokensToBuy_,
+                useEthAnchor_
+            )
         );
         emit AmountConverterDeployed(
             tokenAmountConverter,

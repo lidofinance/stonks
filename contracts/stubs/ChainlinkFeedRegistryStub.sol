@@ -87,8 +87,16 @@ contract ChainlinkFeedRegistryStub is IFeedRegistry, ManageableStub {
         answer = feed.answer;
         roundId = feed.roundId;
         answeredInRound = feed.answeredInRound;
-        startedAt = feed.startedAt == 0 ? block.timestamp : feed.startedAt;
-        updatedAt = feed.updatedAt == 0 ? block.timestamp : feed.updatedAt;
+        if (feed.startedAt == 0) {
+            startedAt = block.timestamp;
+        } else {
+            startedAt = feed.startedAt;
+        }
+        if (feed.updatedAt == 0) {
+            updatedAt = block.timestamp;
+        } else {
+            updatedAt = feed.updatedAt;
+        }
     }
 
     // ==================== External Functions ====================
