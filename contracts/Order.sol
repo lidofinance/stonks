@@ -28,14 +28,6 @@ contract Order is IERC1271, AssetRecoverer {
     using GPv2Order for GPv2Order.Data;
     using SafeERC20 for IERC20;
 
-    // ==================== Constants ====================
-
-    // bytes4(keccak256("isValidSignature(bytes32,bytes)")
-    bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
-    uint256 private constant MIN_POSSIBLE_BALANCE = 10;
-    uint256 private constant MAX_BASIS_POINTS = 1e4;
-    bytes32 private constant APP_DATA = keccak256("{}");
-
     // ==================== Immutables ====================
 
     /// @notice Address of the CoW Protocol relayer contract handling order execution.
@@ -43,14 +35,30 @@ contract Order is IERC1271, AssetRecoverer {
     /// @notice EIP-712 domain separator used for order signature validation.
     bytes32 public immutable DOMAIN_SEPARATOR;
 
+    // ==================== Constants ====================
+
+    // bytes4(keccak256("isValidSignature(bytes32,bytes)")
+    bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
+    /// @notice Minimum token balance required to perform recovery (prevents dust transfers).
+    uint256 private constant MIN_POSSIBLE_BALANCE = 10;
+    /// @notice Maximum basis points value for percentage calculations.
+    uint256 private constant MAX_BASIS_POINTS = 1e4;
+    /// @notice Application-specific data for the CoW order (empty JSON object hash).
+    bytes32 private constant APP_DATA = keccak256("{}");
+
     // ==================== Storage Variables ====================
 
+    /// @notice Amount of tokens to sell in the order.
     uint256 private sellAmount;
+    /// @notice Minimum amount of tokens to buy in the order.
     uint256 private buyAmount;
+    /// @notice Hash of the order for signature validation.
     bytes32 private orderHash;
     /// @notice Address of the Stonks contract that created this order.
     address public stonks;
+    /// @notice Time until which the order is valid.
     uint32 private validTo;
+    /// @notice Internal flag indicating whether the contract has been initialized.
     bool private initialized;
 
     // ==================== Events ====================
@@ -180,6 +188,7 @@ contract Order is IERC1271, AssetRecoverer {
         }
 
         uint256 currentTimestamp = block.timestamp;
+
         if (validTo < currentTimestamp) {
             revert OrderExpired(validTo);
         }
@@ -190,6 +199,7 @@ contract Order is IERC1271, AssetRecoverer {
         if (!stonksContract.ALLOW_PARTIAL_FILL()) {
             (address tokenFrom, , ) = stonksContract.getOrderParameters();
             uint256 available = IERC20(tokenFrom).balanceOf(address(this));
+
             if (available < sellAmount) {
                 revert InsufficientSellBalance(sellAmount, available);
             }
@@ -279,6 +289,7 @@ contract Order is IERC1271, AssetRecoverer {
         )
     {
         (address tokenFrom, address tokenTo, ) = IStonks(stonks).getOrderParameters();
+
         return (orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo);
     }
 

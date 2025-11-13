@@ -49,7 +49,9 @@ abstract contract AssetRecoverer is Ownable {
      */
     function recoverEther() external onlyAgentOrManager {
         uint256 amount = address(this).balance;
+
         emit EtherRecovered(AGENT, amount);
+
         payable(AGENT).sendValue(amount);
     }
 
@@ -61,6 +63,7 @@ abstract contract AssetRecoverer is Ownable {
      */
     function recoverERC721(address token_, uint256 tokenId_) external onlyAgentOrManager {
         emit ERC721Recovered(token_, tokenId_, AGENT);
+
         IERC721(token_).safeTransferFrom(address(this), AGENT, tokenId_);
     }
 
@@ -72,7 +75,9 @@ abstract contract AssetRecoverer is Ownable {
      */
     function recoverERC1155(address token_, uint256 tokenId_) external onlyAgentOrManager {
         uint256 amount = IERC1155(token_).balanceOf(address(this), tokenId_);
+
         emit ERC1155Recovered(token_, tokenId_, AGENT, amount);
+
         IERC1155(token_).safeTransferFrom(address(this), AGENT, tokenId_, amount, "");
     }
 
@@ -86,6 +91,7 @@ abstract contract AssetRecoverer is Ownable {
      */
     function recoverERC20(address token_, uint256 amount_) public virtual onlyAgentOrManager {
         emit ERC20Recovered(token_, AGENT, amount_);
+
         IERC20(token_).safeTransfer(AGENT, amount_);
     }
 }

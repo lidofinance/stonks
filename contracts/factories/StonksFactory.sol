@@ -122,6 +122,7 @@ contract StonksFactory {
                 allowPartialFill_
             )
         );
+
         emit StonksDeployed(
             stonks,
             AGENT,

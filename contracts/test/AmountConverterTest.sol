@@ -5,17 +5,19 @@ pragma solidity 0.8.23;
 import {AmountConverter} from "../AmountConverter.sol";
 
 contract AmountConverterTest {
+    // ==================== Constants ====================
+
+    /// @notice Maximum basis points (200%).
+    uint256 public constant MAX_BASIS_POINTS = 20_000;
+    /// @notice Minimum basis points (0%).
+    uint256 public constant MIN_BASIS_POINTS = 0;
+
     // ==================== Storage Variables ====================
 
     /// @notice AmountConverter instance used for testing.
     AmountConverter public amountConverter;
     /// @notice Multiplier in basis points applied to converter output for testing.
     uint256 public multiplierInBP = 1e4;
-
-    // ==================== Constants ====================
-
-    uint256 public constant MAX_BASIS_POINTS = 20_000;
-    uint256 public constant MIN_BASIS_POINTS = 0;
 
     // ==================== Constructor ====================
 
@@ -50,7 +52,6 @@ contract AmountConverterTest {
         if (multiplierInBP_ > MAX_BASIS_POINTS) {
             revert("Error");
         }
-
         if (multiplierInBP_ <= 0) {
             revert("Error");
         }

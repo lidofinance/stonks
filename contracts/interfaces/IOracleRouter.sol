@@ -41,10 +41,7 @@ interface IOracleRouter {
         bool isActive_
     ) external;
 
-    function setTokenEthUsdStalenessOverride(
-        address token_,
-        uint32 overrideSeconds_
-    ) external;
+    function setTokenEthUsdStalenessOverride(address token_, uint32 overrideSeconds_) external;
 
     function setTokenActive(address token_, bool isActive_) external;
 
@@ -53,4 +50,6 @@ interface IOracleRouter {
     function isFeedInSync(address token_) external view returns (bool);
 
     function syncTokenFeed(address token_) external;
+
+    function MAX_DECIMALS() external view returns (uint128);
 }

@@ -58,6 +58,7 @@ contract Ownable {
         }
 
         AGENT = agent_;
+        
         emit AgentSet(agent_);
     }
 
@@ -69,6 +70,7 @@ contract Ownable {
      */
     function setManager(address manager_) external onlyAgent {
         manager = manager_;
+
         emit ManagerSet(manager_);
     }
 }

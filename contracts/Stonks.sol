@@ -28,15 +28,6 @@ import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
 contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    // ==================== Constants ====================
-
-    uint16 private constant MAX_BASIS_POINTS = 1e4;
-    uint16 private constant BASIS_POINTS_PARAMETERS_LIMIT = 1e3;
-
-    uint256 private constant MIN_POSSIBLE_BALANCE = 10;
-    uint256 private constant MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS = 1 minutes;
-    uint256 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 1 days;
-
     // ==================== Immutables ====================
 
     /// @notice Address of the AmountConverter contract used for price calculations.
@@ -62,6 +53,19 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
 
     /// @notice Oracle router contract used for quotability checks.
     IOracleRouter public immutable ORACLE_ROUTER;
+
+    // ==================== Constants ====================
+
+    /// @notice Maximum basis points value (100%).
+    uint16 private constant MAX_BASIS_POINTS = 1e4;
+    /// @notice Upper limit for basis points parameters (10%).
+    uint16 private constant BASIS_POINTS_PARAMETERS_LIMIT = 1e3;
+    /// @notice Minimum possible balance for placing an order.
+    uint256 private constant MIN_POSSIBLE_BALANCE = 10;
+    /// @notice Minimum possible order duration in seconds.
+    uint256 private constant MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS = 1 minutes;
+    /// @notice Maximum possible order duration in seconds.
+    uint256 private constant MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS = 1 days;
 
     // ==================== Events ====================
 
@@ -198,6 +202,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         uint256 minBuyAmount_
     ) external nonReentrant onlyAgentOrManager returns (address) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
+
         return _placeOrder(balance, minBuyAmount_, balance);
     }
 
@@ -212,6 +217,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         uint256 minBuyAmount_
     ) external nonReentrant onlyAgentOrManager returns (address) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
+
         return _placeOrder(sellAmount_, minBuyAmount_, balance);
     }
 
@@ -224,6 +230,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
      */
     function estimateTradeOutputFromCurrentBalance() external view returns (uint256) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
+
         return estimateTradeOutput(balance);
     }
 
@@ -319,6 +326,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         }
 
         Order orderCopy = Order(Clones.clone(ORDER_SAMPLE));
+
         emit OrderContractCreated(address(orderCopy), minBuyAmount_);
 
         IERC20(TOKEN_FROM).safeTransfer(address(orderCopy), sellAmount_);

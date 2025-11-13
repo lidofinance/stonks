@@ -64,25 +64,29 @@ contract AmountConverter is IAmountConverter {
         address[] memory allowedTokensToBuy_,
         bool useEthAnchor_
     ) {
+        uint256 allowedTokensToSellLength = allowedTokensToSell_.length;
+        uint256 allowedTokensToBuyLength = allowedTokensToBuy_.length;
+
         if (oracleRouter_ == address(0)) {
             revert InvalidOracleRouterAddress(oracleRouter_);
         }
-        if (allowedTokensToSell_.length == 0) {
+        if (allowedTokensToSellLength == 0) {
             revert InvalidTokensToSellArrayLength();
         }
-        if (allowedTokensToBuy_.length == 0) {
+        if (allowedTokensToBuyLength == 0) {
             revert InvalidTokensToBuyArrayLength();
         }
 
         ORACLE_ROUTER = IOracleRouter(oracleRouter_);
         USE_ETH_ANCHOR = useEthAnchor_;
 
-        for (uint256 i; i < allowedTokensToBuy_.length; ) {
+        for (uint256 i; i < allowedTokensToBuyLength; ) {
             if (allowedTokensToBuy_[i] == address(0)) {
                 revert InvalidAllowedTokenToBuy(allowedTokensToBuy_[i]);
             }
 
             allowedTokensToBuy[allowedTokensToBuy_[i]] = true;
+
             emit AllowedTokenToBuyAdded(allowedTokensToBuy_[i]);
 
             unchecked {
@@ -90,12 +94,13 @@ contract AmountConverter is IAmountConverter {
             }
         }
 
-        for (uint256 i; i < allowedTokensToSell_.length; ) {
+        for (uint256 i; i < allowedTokensToSellLength; ) {
             if (allowedTokensToSell_[i] == address(0)) {
                 revert InvalidAllowedTokenToSell(allowedTokensToSell_[i]);
             }
 
             allowedTokensToSell[allowedTokensToSell_[i]] = true;
+
             emit AllowedTokenToSellAdded(allowedTokensToSell_[i]);
 
             unchecked {
@@ -143,11 +148,13 @@ contract AmountConverter is IAmountConverter {
 
         // Use merged function with quote denomination parameter
         IOracleRouter.QuoteDenomination quote;
+
         if (USE_ETH_ANCHOR) {
             quote = IOracleRouter.QuoteDenomination.ETH;
         } else {
             quote = IOracleRouter.QuoteDenomination.USD;
         }
+
         (priceFrom, priceTo, decimalsOfSellToken, decimalsOfBuyToken) = ORACLE_ROUTER
             .getPricesAndDecimals(tokenFrom_, tokenTo_, quote);
 
@@ -159,19 +166,26 @@ contract AmountConverter is IAmountConverter {
         }
 
         bool sellHasMoreOrEqualDecimals = decimalsOfSellToken >= decimalsOfBuyToken;
-        uint8 decimalsDiff = sellHasMoreOrEqualDecimals
-            ? (decimalsOfSellToken - decimalsOfBuyToken)
-            : (decimalsOfBuyToken - decimalsOfSellToken);
+        uint8 decimalsDiff;
 
-        if (decimalsDiff > 38) {
+        if (sellHasMoreOrEqualDecimals) {
+            decimalsDiff = decimalsOfSellToken - decimalsOfBuyToken;
+        } else {
+            decimalsDiff = decimalsOfBuyToken - decimalsOfSellToken;
+        }
+
+        if (decimalsDiff > ORACLE_ROUTER.MAX_DECIMALS()) {
             revert InvalidDecimalsDifference(decimalsDiff);
         }
 
         if (sellHasMoreOrEqualDecimals) {
             uint256 grossOutput = Math.mulDiv(amountFrom_, priceFrom, priceTo, Math.Rounding.Down);
-            expectedOutputAmount = (decimalsDiff == 0)
-                ? grossOutput
-                : grossOutput / (10 ** decimalsDiff);
+
+            if (decimalsDiff == 0) {
+                expectedOutputAmount = grossOutput;
+            } else {
+                expectedOutputAmount = grossOutput / (10 ** decimalsDiff);
+            }
         } else {
             // Scale the input first to avoid overflow on multiplication by 10**diff.
             uint256 pow10 = 10 ** decimalsDiff;

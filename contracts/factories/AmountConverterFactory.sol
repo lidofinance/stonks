@@ -37,6 +37,7 @@ contract AmountConverterFactory {
         if (oracleRouter_ == address(0)) {
             revert InvalidOracleRouterAddress(oracleRouter_);
         }
+
         ORACLE_ROUTER = oracleRouter_;
     }
 
@@ -63,6 +64,7 @@ contract AmountConverterFactory {
                 useEthAnchor_
             )
         );
+
         emit AmountConverterDeployed(
             tokenAmountConverter,
             ORACLE_ROUTER,

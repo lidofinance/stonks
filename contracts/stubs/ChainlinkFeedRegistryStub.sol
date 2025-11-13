@@ -87,11 +87,13 @@ contract ChainlinkFeedRegistryStub is IFeedRegistry, ManageableStub {
         answer = feed.answer;
         roundId = feed.roundId;
         answeredInRound = feed.answeredInRound;
+
         if (feed.startedAt == 0) {
             startedAt = block.timestamp;
         } else {
             startedAt = feed.startedAt;
         }
+
         if (feed.updatedAt == 0) {
             updatedAt = block.timestamp;
         } else {
@@ -109,6 +111,7 @@ contract ChainlinkFeedRegistryStub is IFeedRegistry, ManageableStub {
      */
     function setFeed(address base, address quote, FeedStub calldata feed) external {
         feeds[base][quote] = feed;
+        
         emit FeedSet(base, quote, feed);
     }
 }
