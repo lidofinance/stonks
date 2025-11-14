@@ -20,6 +20,8 @@ contract AmountConverter is IAmountConverter {
     /// @notice If true, uses ETH-denominated prices directly (gas optimized for ETH-quoted pairs).
     ///         If false, uses USD prices (supports mixed denominations).
     bool public immutable USE_ETH_ANCHOR;
+    /// @notice Cached router max decimals to avoid an external call per quote.
+    uint8 public immutable ROUTER_MAX_DECIMALS;
 
     // ==================== Storage Variables ====================
 
@@ -48,6 +50,8 @@ contract AmountConverter is IAmountConverter {
     error AmountFromTooLarge(uint256 amount);
     error PriceFromUsdZero();
     error PriceToUsdZero();
+    error PriceFromEthZero();
+    error PriceToEthZero();
 
     // ==================== Constructor ====================
 
@@ -79,15 +83,17 @@ contract AmountConverter is IAmountConverter {
 
         ORACLE_ROUTER = IOracleRouter(oracleRouter_);
         USE_ETH_ANCHOR = useEthAnchor_;
+        ROUTER_MAX_DECIMALS = uint8(IOracleRouter(oracleRouter_).MAX_DECIMALS());
 
         for (uint256 i; i < allowedTokensToBuyLength; ) {
-            if (allowedTokensToBuy_[i] == address(0)) {
-                revert InvalidAllowedTokenToBuy(allowedTokensToBuy_[i]);
+            address token = allowedTokensToBuy_[i];
+            if (token == address(0)) {
+                revert InvalidAllowedTokenToBuy(token);
             }
 
-            allowedTokensToBuy[allowedTokensToBuy_[i]] = true;
+            allowedTokensToBuy[token] = true;
 
-            emit AllowedTokenToBuyAdded(allowedTokensToBuy_[i]);
+            emit AllowedTokenToBuyAdded(token);
 
             unchecked {
                 ++i;
@@ -95,13 +101,14 @@ contract AmountConverter is IAmountConverter {
         }
 
         for (uint256 i; i < allowedTokensToSellLength; ) {
-            if (allowedTokensToSell_[i] == address(0)) {
-                revert InvalidAllowedTokenToSell(allowedTokensToSell_[i]);
+            address token = allowedTokensToSell_[i];
+            if (token == address(0)) {
+                revert InvalidAllowedTokenToSell(token);
             }
 
-            allowedTokensToSell[allowedTokensToSell_[i]] = true;
+            allowedTokensToSell[token] = true;
 
-            emit AllowedTokenToSellAdded(allowedTokensToSell_[i]);
+            emit AllowedTokenToSellAdded(token);
 
             unchecked {
                 ++i;
@@ -128,17 +135,17 @@ contract AmountConverter is IAmountConverter {
         if (tokenFrom_ == tokenTo_) {
             revert TokensCannotBeSame();
         }
-        if (!allowedTokensToSell[tokenFrom_]) {
-            revert SellTokenNotAllowed(tokenFrom_);
-        }
-        if (!allowedTokensToBuy[tokenTo_]) {
-            revert BuyTokenNotAllowed(tokenTo_);
-        }
         if (amountFrom_ == 0) {
             revert InvalidAmount(amountFrom_);
         }
         if (amountFrom_ > type(uint128).max) {
             revert AmountFromTooLarge(amountFrom_);
+        }
+        if (!allowedTokensToSell[tokenFrom_]) {
+            revert SellTokenNotAllowed(tokenFrom_);
+        }
+        if (!allowedTokensToBuy[tokenTo_]) {
+            revert BuyTokenNotAllowed(tokenTo_);
         }
 
         uint256 priceFrom;
@@ -159,10 +166,18 @@ contract AmountConverter is IAmountConverter {
             .getPricesAndDecimals(tokenFrom_, tokenTo_, quote);
 
         if (priceFrom == 0) {
-            revert PriceFromUsdZero();
+            if (USE_ETH_ANCHOR) {
+                revert PriceFromEthZero();
+            } else {
+                revert PriceFromUsdZero();
+            }
         }
         if (priceTo == 0) {
-            revert PriceToUsdZero();
+            if (USE_ETH_ANCHOR) {
+                revert PriceToEthZero();
+            } else {
+                revert PriceToUsdZero();
+            }
         }
 
         bool sellHasMoreOrEqualDecimals = decimalsOfSellToken >= decimalsOfBuyToken;
@@ -174,12 +189,13 @@ contract AmountConverter is IAmountConverter {
             decimalsDiff = decimalsOfBuyToken - decimalsOfSellToken;
         }
 
-        if (decimalsDiff > ORACLE_ROUTER.MAX_DECIMALS()) {
+        if (decimalsDiff > ROUTER_MAX_DECIMALS) {
             revert InvalidDecimalsDifference(decimalsDiff);
         }
 
         if (sellHasMoreOrEqualDecimals) {
-            uint256 grossOutput = Math.mulDiv(amountFrom_, priceFrom, priceTo, Math.Rounding.Down);
+            // Round down is default for mulDiv.
+            uint256 grossOutput = Math.mulDiv(amountFrom_, priceFrom, priceTo);
 
             if (decimalsDiff == 0) {
                 expectedOutputAmount = grossOutput;
@@ -196,12 +212,7 @@ contract AmountConverter is IAmountConverter {
             }
 
             uint256 scaledAmountFrom = amountFrom_ * pow10;
-            expectedOutputAmount = Math.mulDiv(
-                scaledAmountFrom,
-                priceFrom,
-                priceTo,
-                Math.Rounding.Down
-            );
+            expectedOutputAmount = Math.mulDiv(scaledAmountFrom, priceFrom, priceTo);
         }
     }
 }

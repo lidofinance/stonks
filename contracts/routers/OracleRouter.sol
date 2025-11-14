@@ -128,7 +128,10 @@ contract OracleRouter is IOracleRouter, Ownable {
 
         FEED_REGISTRY = feedRegistry_;
         PRICE_DECIMALS = unitDecimals_;
-        PRICE_UNIT = 10 ** unitDecimals_;
+
+        unchecked {
+            PRICE_UNIT = 10 ** unitDecimals_;
+        }
     }
 
     // ==================== External Functions ====================
@@ -232,6 +235,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         } else {
             quote = ETH_DENOMINATION;
         }
+
         (
             address aggregator,
             uint8 decimals,
@@ -239,17 +243,18 @@ contract OracleRouter is IOracleRouter, Ownable {
             uint128 scaleDenominator
         ) = _resolveFeedAndScale(token_, quote);
 
-        config.primaryFeed.aggregator = aggregator;
-        config.primaryFeed.aggregatorDecimals = decimals;
-        config.primaryFeed.scaleNumerator = scaleNumerator;
-        config.primaryFeed.scaleDenominator = scaleDenominator;
+        FeedConfig storage primaryFeed = config.primaryFeed;
+        primaryFeed.aggregator = aggregator;
+        primaryFeed.aggregatorDecimals = decimals;
+        primaryFeed.scaleNumerator = scaleNumerator;
+        primaryFeed.scaleDenominator = scaleDenominator;
 
         emit TokenConfigured(
             token_,
             config.primaryQuote,
             aggregator,
             decimals,
-            config.primaryFeed.maxStalenessSeconds,
+            primaryFeed.maxStalenessSeconds,
             config.tokenDecimals,
             scaleNumerator,
             scaleDenominator,
@@ -301,7 +306,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         TokenConfig storage baseConfig = tokenConfig[baseToken_];
         baseTokenDecimals = baseConfig.tokenDecimals;
 
-        if (baseTokenDecimals == 0 || !baseConfig.isActive) {
+        if (!baseConfig.isActive || baseTokenDecimals == 0) {
             revert TokenNotConfigured(baseToken_);
         }
 
@@ -316,7 +321,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         TokenConfig storage quoteConfig = tokenConfig[quoteToken_];
         quoteTokenDecimals = quoteConfig.tokenDecimals;
 
-        if (quoteTokenDecimals == 0 || !quoteConfig.isActive) {
+        if (!quoteConfig.isActive || quoteTokenDecimals == 0) {
             revert TokenNotConfigured(quoteToken_);
         }
 
@@ -347,9 +352,9 @@ contract OracleRouter is IOracleRouter, Ownable {
      */
     function isBridgeInSync() external view returns (bool) {
         (address aggregator, uint8 decimals) = _currentFeedMeta(ETH_DENOMINATION, USD_DENOMINATION);
-        FeedConfig storage b = ethUsdBridge;
+        FeedConfig storage bridge = ethUsdBridge;
 
-        return (aggregator == b.aggregator && decimals == b.aggregatorDecimals);
+        return (aggregator == bridge.aggregator && decimals == bridge.aggregatorDecimals);
     }
 
     /**
@@ -358,14 +363,14 @@ contract OracleRouter is IOracleRouter, Ownable {
      * @return True if the token configuration matches the current feed registry state.
      */
     function isFeedInSync(address token_) external view returns (bool) {
-        TokenConfig storage c = tokenConfig[token_];
+        TokenConfig storage configEntry = tokenConfig[token_];
 
-        if (c.tokenDecimals == 0) {
+        if (configEntry.tokenDecimals == 0) {
             return false;
         }
 
         address quote;
-        if (c.primaryQuote == IOracleRouter.QuoteDenomination.USD) {
+        if (configEntry.primaryQuote == IOracleRouter.QuoteDenomination.USD) {
             quote = USD_DENOMINATION;
         } else {
             quote = ETH_DENOMINATION;
@@ -373,8 +378,8 @@ contract OracleRouter is IOracleRouter, Ownable {
 
         (address aggregator, uint8 decimals) = _currentFeedMeta(token_, quote);
 
-        return (aggregator == c.primaryFeed.aggregator &&
-            decimals == c.primaryFeed.aggregatorDecimals);
+        return (aggregator == configEntry.primaryFeed.aggregator &&
+            decimals == configEntry.primaryFeed.aggregatorDecimals);
     }
 
     // ==================== Internal Functions ====================
@@ -417,7 +422,7 @@ contract OracleRouter is IOracleRouter, Ownable {
     function _getUsdPrice(address token_, uint256 ethUsd_) internal view returns (uint256 price) {
         TokenConfig storage config = tokenConfig[token_];
 
-        if (!config.isActive) {
+        if (!config.isActive || config.tokenDecimals == 0) {
             revert TokenNotConfigured(token_);
         }
 
@@ -478,6 +483,7 @@ contract OracleRouter is IOracleRouter, Ownable {
             revert EthUsdBridgeMissing();
         }
 
+        // copy to memory and override staleness cap
         FeedConfig memory bridgeCopy = bridge;
         bridgeCopy.maxStalenessSeconds = capSeconds_;
 
@@ -534,9 +540,11 @@ contract OracleRouter is IOracleRouter, Ownable {
             revert OracleStale(feedConfig_.aggregator, updatedAt);
         }
 
-        (uint128 scaleNumerator, uint128 scaleDenominator) = _computeScaleFactors(liveDecimals);
-
-        normalizedPrice = Math.mulDiv(uint256(rawAnswer), scaleNumerator, scaleDenominator);
+        normalizedPrice = Math.mulDiv(
+            uint256(rawAnswer),
+            feedConfig_.scaleNumerator,
+            feedConfig_.scaleDenominator
+        );
 
         if (normalizedPrice == 0) {
             revert OracleQuantizedToZero(feedConfig_.aggregator, liveDecimals, PRICE_DECIMALS);
@@ -557,13 +565,22 @@ contract OracleRouter is IOracleRouter, Ownable {
             revert InvalidStaleness();
         }
 
-        uint8 erc20Decimals = IERC20Metadata(token_).decimals();
+        uint8 erc20Decimals;
+        if (tokenDecimals_ != 0) {
+            erc20Decimals = tokenDecimals_;
+        } else {
+            erc20Decimals = IERC20Metadata(token_).decimals();
+        }
 
         if (erc20Decimals == 0 || erc20Decimals > MAX_DECIMALS) {
             revert InvalidTokenDecimals();
         }
-        if (tokenDecimals_ != 0 && tokenDecimals_ != erc20Decimals) {
-            revert TokenDecimalsMismatch(erc20Decimals, tokenDecimals_);
+
+        if (tokenDecimals_ != 0) {
+            uint8 onchain = IERC20Metadata(token_).decimals();
+            if (onchain != erc20Decimals) {
+                revert TokenDecimalsMismatch(onchain, erc20Decimals);
+            }
         }
 
         address quote;
@@ -661,7 +678,9 @@ contract OracleRouter is IOracleRouter, Ownable {
                 revert InvalidAggregatorDecimals();
             }
 
-            return (uint128(10 ** upDiff), 1);
+            unchecked {
+                return (uint128(10 ** upDiff), 1);
+            }
         }
 
         uint8 downDiff = feedDecimals_ - PRICE_DECIMALS;
@@ -670,6 +689,8 @@ contract OracleRouter is IOracleRouter, Ownable {
             revert InvalidAggregatorDecimals();
         }
 
-        return (1, uint128(10 ** downDiff));
+        unchecked {
+            return (1, uint128(10 ** downDiff));
+        }
     }
 }

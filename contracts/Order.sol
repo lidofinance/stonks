@@ -52,6 +52,8 @@ contract Order is IERC1271, AssetRecoverer {
     uint256 private sellAmount;
     /// @notice Minimum amount of tokens to buy in the order.
     uint256 private buyAmount;
+    /// @notice Minimum fill percentage in basis points.
+    uint256 private minFillBps;
     /// @notice Hash of the order for signature validation.
     bytes32 private orderHash;
     /// @notice Address of the Stonks contract that created this order.
@@ -60,6 +62,10 @@ contract Order is IERC1271, AssetRecoverer {
     uint32 private validTo;
     /// @notice Internal flag indicating whether the contract has been initialized.
     bool private initialized;
+
+    /// @notice Cached token addresses to avoid repeated external calls to Stonks.
+    address private tokenFrom;
+    address private tokenTo;
 
     // ==================== Events ====================
 
@@ -79,6 +85,7 @@ contract Order is IERC1271, AssetRecoverer {
     error PriceImprovementRejectedInStrictMode(uint256 expectedBuyAmount, uint256 actualBuyAmount);
     error PriceShortfallExceedsTolerance(uint256 minAcceptableBuyAmount, uint256 actualBuyAmount);
     error InsufficientSellBalance(uint256 required, uint256 available);
+    error MinFillBpsExceedsLimit(uint256 maxBasisPoints, uint256 receivedBasisPoints);
 
     // ==================== Constructor ====================
 
@@ -119,23 +126,45 @@ contract Order is IERC1271, AssetRecoverer {
         stonks = msg.sender;
         manager = manager_;
 
-        (address tokenFrom, address tokenTo, uint256 orderDurationInSeconds) = IStonks(stonks)
-            .getOrderParameters();
+        IStonks stonksContract = IStonks(stonks);
+        (
+            address tokenFromLocal,
+            address tokenToLocal,
+            uint256 orderDurationInSeconds
+        ) = stonksContract.getOrderParameters();
 
         // Fail-fast if either side lacks a valid oracle route (prevents stranded approvals/funds).
-        IStonks(stonks).assertQuotable();
+        stonksContract.assertQuotable();
+
+        // validate minFillBps invariant once up-front
+        minFillBps = stonksContract.MIN_FILL_BPS();
+        if (minFillBps > MAX_BASIS_POINTS) {
+            revert MinFillBpsExceedsLimit(MAX_BASIS_POINTS, minFillBps);
+        }
+
+        tokenFrom = tokenFromLocal;
+        tokenTo = tokenToLocal;
 
         validTo = uint32(block.timestamp + orderDurationInSeconds);
-        sellAmount = IERC20(tokenFrom).balanceOf(address(this));
+
+        IERC20Metadata tokenFromErc = IERC20Metadata(tokenFromLocal);
+        IERC20Metadata tokenToErc = IERC20Metadata(tokenToLocal);
+
+        sellAmount = tokenFromErc.balanceOf(address(this));
 
         // Floor for the CoW order; Stonks uses router-based any-to-any quoting.
-        buyAmount = Math.max(IStonks(stonks).estimateTradeOutput(sellAmount), minBuyAmount_);
+        uint256 estimatedOut = stonksContract.estimateTradeOutput(sellAmount);
+        if (estimatedOut >= minBuyAmount_) {
+            buyAmount = estimatedOut;
+        } else {
+            buyAmount = minBuyAmount_;
+        }
 
-        bool partiallyFillable_ = IStonks(stonks).ALLOW_PARTIAL_FILL();
+        bool partiallyFillable_ = stonksContract.ALLOW_PARTIAL_FILL();
 
         GPv2Order.Data memory order = GPv2Order.Data({
-            sellToken: IERC20Metadata(tokenFrom),
-            buyToken: IERC20Metadata(tokenTo),
+            sellToken: tokenFromErc,
+            buyToken: tokenToErc,
             receiver: AGENT,
             sellAmount: sellAmount,
             buyAmount: buyAmount,
@@ -151,7 +180,7 @@ contract Order is IERC1271, AssetRecoverer {
         orderHash = order.hash(DOMAIN_SEPARATOR);
 
         // Single-use proxy: set max approval to avoid a second transaction for allowance management.
-        IERC20(tokenFrom).forceApprove(RELAYER, type(uint256).max);
+        IERC20(tokenFromLocal).forceApprove(RELAYER, type(uint256).max);
 
         emit OrderCreated(address(this), orderHash, order);
     }
@@ -187,9 +216,7 @@ contract Order is IERC1271, AssetRecoverer {
             revert InvalidOrderHash(orderHash, hash_);
         }
 
-        uint256 currentTimestamp = block.timestamp;
-
-        if (validTo < currentTimestamp) {
+        if (validTo < block.timestamp) {
             revert OrderExpired(validTo);
         }
 
@@ -197,11 +224,19 @@ contract Order is IERC1271, AssetRecoverer {
 
         // Early revert if partial fills disabled and balance is insufficient (saves solver gas)
         if (!stonksContract.ALLOW_PARTIAL_FILL()) {
-            (address tokenFrom, , ) = stonksContract.getOrderParameters();
             uint256 available = IERC20(tokenFrom).balanceOf(address(this));
 
             if (available < sellAmount) {
                 revert InsufficientSellBalance(sellAmount, available);
+            }
+        } else {
+            if (minFillBps > 0) {
+                uint256 requiredMinSell = Math.mulDiv(sellAmount, minFillBps, MAX_BASIS_POINTS);
+                uint256 available = IERC20(tokenFrom).balanceOf(address(this));
+
+                if (available < requiredMinSell) {
+                    revert InsufficientSellBalance(requiredMinSell, available);
+                }
             }
         }
 
@@ -288,8 +323,6 @@ contract Order is IERC1271, AssetRecoverer {
             uint32 validTo_
         )
     {
-        (address tokenFrom, address tokenTo, ) = IStonks(stonks).getOrderParameters();
-
         return (orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo);
     }
 
@@ -298,19 +331,21 @@ contract Order is IERC1271, AssetRecoverer {
      * @dev Can only be called if the order's validity period has passed.
      */
     function recoverTokenFrom() external {
-        if (validTo >= block.timestamp) {
-            revert OrderNotExpired(validTo, block.timestamp);
+        uint256 currentTimestamp = block.timestamp;
+
+        if (validTo >= currentTimestamp) {
+            revert OrderNotExpired(validTo, currentTimestamp);
         }
 
-        (address tokenFrom, , ) = IStonks(stonks).getOrderParameters();
-        uint256 balance = IERC20(tokenFrom).balanceOf(address(this));
+        IERC20 tokenFromErc = IERC20(tokenFrom);
+        uint256 balance = tokenFromErc.balanceOf(address(this));
 
         // Prevents dust transfers to avoid rounding issues for rebasable tokens like stETH.
         if (balance < MIN_POSSIBLE_BALANCE) {
             revert InvalidAmountToRecover(balance);
         }
 
-        IERC20(tokenFrom).safeTransfer(stonks, balance);
+        tokenFromErc.safeTransfer(stonks, balance);
     }
 
     // ==================== Public Functions ====================
@@ -322,10 +357,14 @@ contract Order is IERC1271, AssetRecoverer {
      * @dev Can only be called by the agent or manager of the contract. This is a safety feature to prevent accidental token loss.
      */
     function recoverERC20(address token_, uint256 amount_) public override onlyAgentOrManager {
-        (address tokenFrom, , ) = IStonks(stonks).getOrderParameters();
+        address tokenFromLocal = tokenFrom;
 
-        if (token_ == tokenFrom) {
-            revert CannotRecoverTokenFrom(tokenFrom);
+        if (tokenFromLocal == address(0)) {
+            (tokenFromLocal, , ) = IStonks(stonks).getOrderParameters();
+        }
+
+        if (token_ == tokenFromLocal) {
+            revert CannotRecoverTokenFrom(tokenFromLocal);
         }
 
         AssetRecoverer.recoverERC20(token_, amount_);

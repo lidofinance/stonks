@@ -4,14 +4,13 @@ import { parseEther, parseUnits } from 'ethers'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import type { AmountConverter, OracleRouter } from '../../typechain-types'
 import { getContracts } from '../../utils/contracts'
-import { isClose } from '../../utils/assert'
 import {
   getAllTestTokens,
   refreshTestFeedData,
   resetTestFeedRegistryStub,
 } from '../../utils/test-feed-registry'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
-import { QUOTE_ETH } from '../../utils/oracle-router'
+import { QuoteDenomination } from '../../utils/oracle-router'
 
 const contracts = getContracts()
 
@@ -30,8 +29,8 @@ describe('AmountConverter - ETH/USD Modes', () => {
 
     await refreshTestFeedData(getAllTestTokens())
 
-    await router.setTokenFeed(contracts.STETH, QUOTE_ETH, 86400, 18, true)
-    await router.setTokenFeed(contracts.LDO, QUOTE_ETH, 86400, 18, true)
+    await router.setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
+    await router.setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
 
     factory = await ethers.getContractFactory('AmountConverter')
   })
@@ -69,7 +68,7 @@ describe('AmountConverter - ETH/USD Modes', () => {
         )
         const manualCalc = (amount * basePrice) / quotePrice
 
-        expect(isClose(result, manualCalc, 2n)).to.be.true
+        expect(result).to.be.closeTo(manualCalc, 2n)
       })
 
       it('should scale proportionally with amount', async () => {
@@ -80,7 +79,7 @@ describe('AmountConverter - ETH/USD Modes', () => {
 
         expect(result1).to.be.gt(0)
         expect(result2).to.be.gt(0)
-        expect(isClose(result2, result1 * 2n, 2n)).to.be.true
+        expect(result2).to.be.closeTo(result1 * 2n, 2n)
       })
 
       it('should handle small amounts', async () => {
@@ -286,8 +285,8 @@ describe('AmountConverter - ETH/USD Modes', () => {
 
     it('should handle 18 to 18 decimal conversion (ETH mode)', async () => {
       await refreshTestFeedData([contracts.STETH, contracts.LDO])
-      await router.setTokenFeed(contracts.STETH, QUOTE_ETH, 86400, 18, true)
-      await router.setTokenFeed(contracts.LDO, QUOTE_ETH, 86400, 18, true)
+      await router.setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
+      await router.setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
 
       const ethConverter = await factory.deploy(
         await router.getAddress(),

@@ -2,8 +2,10 @@ import { ethers } from 'hardhat'
 import { OracleRouter, OracleRouter__factory } from '../typechain-types'
 
 // QuoteDenomination enum values from IOracleRouter.QuoteDenomination
-export const QUOTE_USD = 0
-export const QUOTE_ETH = 1
+export const QuoteDenomination = {
+  USD: 0,
+  ETH: 1,
+} as const
 
 type DeployOptions = {
   agent?: string
@@ -50,12 +52,24 @@ export async function deployAndConfigureOracleRouter(
 
   // Configure TOKEN/USD feeds
   for (const token of tokensUsd) {
-    await router.setTokenFeed(token, QUOTE_USD, maxStaleness, await readDecimals(token), true)
+    await router.setTokenFeed(
+      token,
+      QuoteDenomination.USD,
+      maxStaleness,
+      await readDecimals(token),
+      true
+    )
   }
 
   // Configure TOKEN/ETH feeds (optional)
   for (const token of tokensEth) {
-    await router.setTokenFeed(token, QUOTE_ETH, maxStaleness, await readDecimals(token), true)
+    await router.setTokenFeed(
+      token,
+      QuoteDenomination.ETH,
+      maxStaleness,
+      await readDecimals(token),
+      true
+    )
   }
 
   return router

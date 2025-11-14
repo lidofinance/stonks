@@ -89,20 +89,21 @@ describe('CoWSwapVaultRelayerStub', async () => {
     )
     await orderSample.waitForDeployment()
 
-    stonks = await new Stonks__factory(deployer).deploy(
-      contracts.AGENT,
-      manager.address,
-      contracts.STETH,
-      contracts.DAI,
-      await amountConverter.getAddress(),
-      await orderSample.getAddress(),
-      await oracleRouter.getAddress(),
-      3600,
-      1_00,
-      50,
-      0,
-      false
-    )
+    stonks = await new Stonks__factory(deployer).deploy({
+      agent: contracts.AGENT,
+      manager: manager.address,
+      tokenFrom: contracts.STETH,
+      tokenTo: contracts.DAI,
+      amountConverter: await amountConverter.getAddress(),
+      orderSample: await orderSample.getAddress(),
+      oracleRouter: await oracleRouter.getAddress(),
+      orderDurationInSeconds: 3600,
+      marginInBasisPoints: 1_00,
+      priceToleranceInBasisPoints: 50,
+      maxImprovementInBasisPoints: 0,
+      minFillBps: 0,
+      allowPartialFill: false,
+    })
     await stonks.waitForDeployment()
 
     snapshot = await takeSnapshot()

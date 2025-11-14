@@ -112,3 +112,41 @@ export async function deployStonksWithTestOracle(params: any) {
   }
   return deployStonks(updatedParams)
 }
+
+/**
+ * Helper to simulate negative rebase by transferring tokens out of the order contract
+ * stETH uses a shares-based system, so we transfer tokens instead of manipulating storage
+ * @param tokenAddress The address of the token contract (e.g., stETH)
+ * @param orderAddress The address of the order contract whose balance should decrease
+ * @param rebaseAmount The amount to simulate being rebased away (will transfer min(rebaseAmount, currentBalance))
+ */
+export async function simulateNegativeRebase(
+  tokenAddress: string,
+  orderAddress: string,
+  rebaseAmount: bigint
+): Promise<void> {
+  // Get the token contract
+  const token = await ethers.getContractAt('IERC20', tokenAddress)
+  const currentBalance = await token.balanceOf(orderAddress)
+
+  // Calculate amount to transfer
+  const amountToTransfer = currentBalance > rebaseAmount ? rebaseAmount : currentBalance
+
+  // Impersonate the order contract to transfer tokens out
+  await ethers.provider.send('hardhat_impersonateAccount', [orderAddress])
+  await ethers.provider.send('hardhat_setBalance', [orderAddress, '0x1000000000000000000'])
+  const orderSigner = await ethers.getSigner(orderAddress)
+
+  // Transfer tokens to a recipient (simulate rebase loss)
+  const [, recipient] = await ethers.getSigners()
+  await token.connect(orderSigner).transfer(await recipient.getAddress(), amountToTransfer)
+
+  // Verify the balance decreased
+  const newBalance = await token.balanceOf(orderAddress)
+  const expectedBalance = currentBalance - amountToTransfer
+
+  // Allow for small rounding differences (1-2 wei) due to stETH shares
+  if (newBalance > expectedBalance + 2n || newBalance < expectedBalance - 2n) {
+    throw new Error(`Balance transfer failed: expected ~${expectedBalance}, got ${newBalance}`)
+  }
+}

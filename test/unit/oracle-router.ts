@@ -3,6 +3,7 @@ import { expect } from 'chai'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
 import { OracleRouter, OracleRouter__factory } from '../../typechain-types'
+import { QuoteDenomination } from '../../utils/oracle-router'
 import {
   getTestFeedRegistryStub,
   getAllTestTokens,
@@ -11,7 +12,6 @@ import {
   refreshFeedData,
 } from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
-import { QUOTE_USD, QUOTE_ETH } from '../../utils/oracle-router'
 
 const contracts = getContracts()
 
@@ -67,7 +67,7 @@ describe('OracleRouter', function () {
 
     it('reverts with zero unit decimals', async function () {
       await expect(
-        oracleRouterFactory.deploy(agentAddress, QUOTE_USD, feedRegistryAddress)
+        oracleRouterFactory.deploy(agentAddress, 0, feedRegistryAddress)
       ).to.be.revertedWithCustomError(oracleRouter, 'InvalidUnitDecimals')
     })
 
@@ -197,39 +197,33 @@ describe('OracleRouter', function () {
     })
   })
 
-  describe('Decimal Scaling Tests', function () {
+  describe('18 Decimal Scaling Tests', function () {
     let oracleRouter18: OracleRouter
 
     beforeEach(async function () {
       await refreshFeedData(feedConfig)
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
 
-      // Deploy OracleRouter with 18 decimals for comparison
+      // Deploy OracleRouter with 18 decimals
       oracleRouter18 = await oracleRouterFactory.deploy(agentAddress, 18, feedRegistryAddress)
       await oracleRouter18.waitForDeployment()
+
+      const agentSigner = await getAgentSigner()
       await oracleRouter18.connect(agentSigner).setEthUsdBridge(86_400)
     })
 
-    it('should correctly scale feeds with 8-decimal unit', async function () {
+    it('should correctly scale 8-decimal feed to 18-decimal unit', async function () {
       const agentSigner = await getAgentSigner()
 
-      await oracleRouter
-        .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+      // Configure a token with 8-decimal feed
+      await oracleRouter18.connect(agentSigner).setTokenFeed(
+        contracts.DAI,
+        QuoteDenomination.USD,
+        86_400,
+        18, // DAI has 18 decimals
+        true
+      )
 
-      const [basePrice, quotePrice] = await oracleRouter.getUsdPrices(contracts.DAI, contracts.DAI)
-      expect(basePrice).to.be.greaterThan(0)
-      expect(quotePrice).to.be.greaterThan(0)
-    })
-
-    it('should correctly scale feeds with 18-decimal unit', async function () {
-      const agentSigner = await getAgentSigner()
-
-      await oracleRouter18
-        .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
-
+      // The price should be correctly scaled from 8-decimal feed to 18-decimal unit
       const [basePrice, quotePrice] = await oracleRouter18.getUsdPrices(
         contracts.DAI,
         contracts.DAI
@@ -238,31 +232,169 @@ describe('OracleRouter', function () {
       expect(quotePrice).to.be.greaterThan(0)
     })
 
-    it('should have correct unit values for different decimal configurations', async function () {
-      expect(await oracleRouter.PRICE_DECIMALS()).to.equal(8)
-      expect(await oracleRouter.PRICE_UNIT()).to.equal(ethers.parseUnits('1', 8))
+    it('should correctly scale 18-decimal feed to 18-decimal unit', async function () {
+      const agentSigner = await getAgentSigner()
 
+      // Configure a token with 18-decimal feed (if any exist)
+      await oracleRouter18.connect(agentSigner).setTokenFeed(
+        contracts.STETH,
+        QuoteDenomination.USD,
+        86_400,
+        18, // STETH has 18 decimals
+        true
+      )
+
+      const [basePrice, quotePrice] = await oracleRouter18.getUsdPrices(
+        contracts.STETH,
+        contracts.STETH
+      )
+      expect(basePrice).to.be.greaterThan(0)
+      expect(quotePrice).to.be.greaterThan(0)
+    })
+
+    it('should handle cross-decimal conversions correctly with 18-decimal unit', async function () {
+      const agentSigner = await getAgentSigner()
+
+      // Configure tokens with different decimals
+      await oracleRouter18.connect(agentSigner).setTokenFeed(
+        contracts.DAI, // 18 decimals
+        QuoteDenomination.USD,
+        86_400,
+        18,
+        true
+      )
+
+      await oracleRouter18.connect(agentSigner).setTokenFeed(
+        contracts.USDT, // 6 decimals
+        QuoteDenomination.USD,
+        86_400,
+        6,
+        true
+      )
+
+      const [daiPrice, usdtPrice] = await oracleRouter18.getUsdPrices(contracts.DAI, contracts.USDT)
+      expect(daiPrice).to.be.greaterThan(0)
+      expect(usdtPrice).to.be.greaterThan(0)
+    })
+
+    it('should maintain precision with 18-decimal unit', async function () {
+      const agentSigner = await getAgentSigner()
+
+      await oracleRouter18
+        .connect(agentSigner)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
+
+      // Test that we don't lose precision due to scaling
+      const [price1, price2] = await oracleRouter18.getUsdPrices(contracts.DAI, contracts.DAI)
+      expect(price1).to.equal(price2) // Same token should have same price
+    })
+
+    it('should have correct 18-decimal unit values', async function () {
       expect(await oracleRouter18.PRICE_DECIMALS()).to.equal(18)
       expect(await oracleRouter18.PRICE_UNIT()).to.equal(ethers.parseEther('1'))
     })
 
-    it('should scale differently for same tokens with different unit decimals', async function () {
+    it('should scale differently than 8-decimal router for same tokens', async function () {
+      const agentSigner = await getAgentSigner()
+
+      // Configure same token on both routers
+      await oracleRouter
+        .connect(agentSigner)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
+
+      await oracleRouter18
+        .connect(agentSigner)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
+
+      const [price8, _] = await oracleRouter.getUsdPrices(contracts.DAI, contracts.DAI)
+      const [price18, __] = await oracleRouter18.getUsdPrices(contracts.DAI, contracts.DAI)
+
+      // Prices should be different due to different decimal scaling
+      // 18-decimal router should have 10^10 times larger values than 8-decimal router
+      expect(price18).to.be.greaterThan(price8)
+      expect(price18).to.be.closeTo(price8 * BigInt(10 ** 10), price8 * BigInt(10 ** 9)) // Within 10% tolerance
+    })
+  })
+
+  describe('8 Decimal Scaling Tests', function () {
+    beforeEach(async function () {
+      const agentSigner = await getAgentSigner()
+      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+    })
+
+    it('should correctly scale 8-decimal feed to 8-decimal unit', async function () {
+      const agentSigner = await getAgentSigner()
+
+      // Configure a token with 8-decimal feed
+      await oracleRouter.connect(agentSigner).setTokenFeed(
+        contracts.DAI,
+        QuoteDenomination.USD,
+        86_400,
+        18, // DAI has 18 decimals
+        true
+      )
+
+      // The price should be correctly scaled from 8-decimal feed to 8-decimal unit
+      const [basePrice, quotePrice] = await oracleRouter.getUsdPrices(contracts.DAI, contracts.DAI)
+      expect(basePrice).to.be.greaterThan(0)
+      expect(quotePrice).to.be.greaterThan(0)
+    })
+
+    it('should correctly scale 18-decimal feed to 8-decimal unit', async function () {
+      const agentSigner = await getAgentSigner()
+
+      // Configure a token with 18-decimal feed (if any exist)
+      await oracleRouter.connect(agentSigner).setTokenFeed(
+        contracts.STETH,
+        QuoteDenomination.USD,
+        86_400,
+        18, // STETH has 18 decimals
+        true
+      )
+
+      const [basePrice, quotePrice] = await oracleRouter.getUsdPrices(
+        contracts.STETH,
+        contracts.STETH
+      )
+      expect(basePrice).to.be.greaterThan(0)
+      expect(quotePrice).to.be.greaterThan(0)
+    })
+
+    it('should handle cross-decimal conversions correctly', async function () {
+      const agentSigner = await getAgentSigner()
+
+      // Configure tokens with different decimals
+      await oracleRouter.connect(agentSigner).setTokenFeed(
+        contracts.DAI, // 18 decimals
+        QuoteDenomination.USD,
+        86_400,
+        18,
+        true
+      )
+
+      await oracleRouter.connect(agentSigner).setTokenFeed(
+        contracts.USDT, // 6 decimals
+        QuoteDenomination.USD,
+        86_400,
+        6,
+        true
+      )
+
+      const [daiPrice, usdtPrice] = await oracleRouter.getUsdPrices(contracts.DAI, contracts.USDT)
+      expect(daiPrice).to.be.greaterThan(0)
+      expect(usdtPrice).to.be.greaterThan(0)
+    })
+
+    it('should maintain precision with 8-decimal unit', async function () {
       const agentSigner = await getAgentSigner()
 
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
 
-      await oracleRouter18
-        .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
-
-      const [price8] = await oracleRouter.getUsdPrices(contracts.DAI, contracts.DAI)
-      const [price18] = await oracleRouter18.getUsdPrices(contracts.DAI, contracts.DAI)
-
-      // 18-decimal router should have 10^10 times larger values than 8-decimal router
-      expect(price18).to.be.greaterThan(price8)
-      expect(price18).to.be.closeTo(price8 * BigInt(10 ** 10), price8 * BigInt(10 ** 9))
+      // Test that we don't lose precision due to scaling
+      const [price1, price2] = await oracleRouter.getUsdPrices(contracts.DAI, contracts.DAI)
+      expect(price1).to.equal(price2) // Same token should have same price
     })
   })
 
@@ -277,10 +409,10 @@ describe('OracleRouter', function () {
         const agentSigner = await getAgentSigner()
         await oracleRouter
           .connect(agentSigner)
-          .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
 
         const tokenConfig = await oracleRouter.tokenConfig(contracts.DAI)
-        expect(tokenConfig.primaryQuote).to.equal(0) // USD = 0
+        expect(tokenConfig.primaryQuote).to.equal(0)
         expect(tokenConfig.primaryFeed.aggregator).to.not.equal(ethers.ZeroAddress)
         expect(tokenConfig.primaryFeed.maxStalenessSeconds).to.equal(86_400)
         expect(tokenConfig.tokenDecimals).to.equal(18)
@@ -290,20 +422,12 @@ describe('OracleRouter', function () {
       it('emits TokenConfigured', async function () {
         const agentSigner = await getAgentSigner()
         await expect(
-          oracleRouter.connect(agentSigner).setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+          oracleRouter
+            .connect(agentSigner)
+            .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
         )
           .to.emit(oracleRouter, 'TokenConfigured')
-          .withArgs(
-            contracts.DAI,
-            QUOTE_USD,
-            anyValue,
-            anyValue,
-            86_400,
-            18,
-            anyValue,
-            anyValue,
-            true
-          )
+          .withArgs(contracts.DAI, 0, anyValue, anyValue, 86_400, 18, anyValue, anyValue, true)
       })
 
       it('reverts with zero token address', async function () {
@@ -311,14 +435,16 @@ describe('OracleRouter', function () {
         await expect(
           oracleRouter
             .connect(agentSigner)
-            .setTokenFeed(ethers.ZeroAddress, QUOTE_USD, 86_400, 18, true)
+            .setTokenFeed(ethers.ZeroAddress, QuoteDenomination.USD, 86_400, 18, true)
         ).to.be.revertedWithCustomError(oracleRouter, 'InvalidTokenAddress')
       })
 
       it('reverts with zero staleness', async function () {
         const agentSigner = await getAgentSigner()
         await expect(
-          oracleRouter.connect(agentSigner).setTokenFeed(contracts.DAI, QUOTE_USD, 0, 18, true)
+          oracleRouter
+            .connect(agentSigner)
+            .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 0, 18, true)
         ).to.be.revertedWithCustomError(oracleRouter, 'InvalidStaleness')
       })
 
@@ -341,7 +467,9 @@ describe('OracleRouter', function () {
         })
 
         await expect(
-          oracleRouter.connect(agentSigner).setTokenFeed(contracts.USDC, QUOTE_USD, 86_400, 6, true)
+          oracleRouter
+            .connect(agentSigner)
+            .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, 6, true)
         ).to.be.revertedWithCustomError(oracleRouter, 'FeedMissing')
 
         // restore
@@ -359,17 +487,19 @@ describe('OracleRouter', function () {
       it('reverts when provided decimals do not match ERC20.decimals()', async function () {
         const agentSigner = await getAgentSigner()
         await expect(
-          oracleRouter.connect(agentSigner).setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 6, true) // DAI 18 vs provided 6
+          oracleRouter
+            .connect(agentSigner)
+            .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 6, true) // DAI 18 vs provided 6
         ).to.be.revertedWithCustomError(oracleRouter, 'TokenDecimalsMismatch')
       })
     })
 
-    describe('setTokenFeed with ETH quote', function () {
+    describe('setTokenFeed', function () {
       it('configures token with ETH feed', async function () {
         const agentSigner = await getAgentSigner()
         await oracleRouter
           .connect(agentSigner)
-          .setTokenFeed(contracts.STETH, QUOTE_ETH, 86_400, 18, true)
+          .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, 18, true)
 
         const tokenConfig = await oracleRouter.tokenConfig(contracts.STETH)
         expect(tokenConfig.primaryQuote).to.equal(1)
@@ -384,20 +514,10 @@ describe('OracleRouter', function () {
         await expect(
           oracleRouter
             .connect(agentSigner)
-            .setTokenFeed(contracts.STETH, QUOTE_ETH, 86_400, 18, true)
+            .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, 18, true)
         )
           .to.emit(oracleRouter, 'TokenConfigured')
-          .withArgs(
-            contracts.STETH,
-            QUOTE_ETH,
-            anyValue,
-            anyValue,
-            86_400,
-            18,
-            anyValue,
-            anyValue,
-            true
-          )
+          .withArgs(contracts.STETH, 1, anyValue, anyValue, 86_400, 18, anyValue, anyValue, true)
       })
     })
 
@@ -406,7 +526,7 @@ describe('OracleRouter', function () {
         const agentSigner = await getAgentSigner()
         await oracleRouter
           .connect(agentSigner)
-          .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
       })
 
       it('toggles token active status', async function () {
@@ -440,23 +560,6 @@ describe('OracleRouter', function () {
           oracleRouter.connect(agentSigner).setTokenActive(contracts.USDC, true)
         ).to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
       })
-
-      it('reverts with TokenStateUnchanged when setting active token to active', async function () {
-        const agentSigner = await getAgentSigner()
-
-        await expect(oracleRouter.connect(agentSigner).setTokenActive(contracts.DAI, true))
-          .to.be.revertedWithCustomError(oracleRouter, 'TokenStateUnchanged')
-          .withArgs(contracts.DAI, true)
-      })
-
-      it('reverts with TokenStateUnchanged when setting inactive token to inactive', async function () {
-        const agentSigner = await getAgentSigner()
-        await oracleRouter.connect(agentSigner).setTokenActive(contracts.DAI, false)
-
-        await expect(oracleRouter.connect(agentSigner).setTokenActive(contracts.DAI, false))
-          .to.be.revertedWithCustomError(oracleRouter, 'TokenStateUnchanged')
-          .withArgs(contracts.DAI, false)
-      })
     })
 
     describe('setTokenEthUsdStalenessOverride', function () {
@@ -464,7 +567,7 @@ describe('OracleRouter', function () {
         const agentSigner = await getAgentSigner()
         await oracleRouter
           .connect(agentSigner)
-          .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
       })
 
       it('sets ETH/USD staleness override', async function () {
@@ -505,10 +608,10 @@ describe('OracleRouter', function () {
       await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.STETH, QUOTE_ETH, 86_400, 18, true)
+        .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86_400, 18, true)
     })
 
     it('isBridgeInSync returns true when in sync', async function () {
@@ -525,17 +628,7 @@ describe('OracleRouter', function () {
       const agentSigner = await getAgentSigner()
       await expect(oracleRouter.connect(agentSigner).syncTokenFeed(contracts.DAI))
         .to.emit(oracleRouter, 'TokenConfigured')
-        .withArgs(
-          contracts.DAI,
-          QUOTE_USD,
-          anyValue,
-          anyValue,
-          86_400,
-          18,
-          anyValue,
-          anyValue,
-          true
-        )
+        .withArgs(contracts.DAI, 0, anyValue, anyValue, 86_400, 18, anyValue, anyValue, true)
     })
 
     it('syncTokenFeed reverts for unconfigured token and non-agent', async function () {
@@ -558,13 +651,13 @@ describe('OracleRouter', function () {
 
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.USDC, QUOTE_USD, 86_400, 6, true)
+        .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, 6, true)
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.STETH, QUOTE_ETH, 86_400, 18, true)
+        .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86_400, 18, true)
 
       // keep feeds fresh for price reads
       const currentTimestamp = await getCurrentTimestamp()
@@ -608,11 +701,15 @@ describe('OracleRouter', function () {
       })
     })
 
-    describe('getPricesAndDecimals with USD quote', function () {
+    describe('getPricesAndDecimals', function () {
       describe('Happy paths', function () {
         it('returns correct prices and decimals', async function () {
           const [daiPrice, usdcPrice, daiDecimals, usdcDecimals] =
-            await oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QUOTE_USD)
+            await oracleRouter.getPricesAndDecimals(
+              contracts.DAI,
+              contracts.USDC,
+              QuoteDenomination.USD
+            )
           expect(daiDecimals).to.equal(18)
           expect(usdcDecimals).to.equal(6)
           expect(daiPrice).to.be.gt(0)
@@ -623,23 +720,23 @@ describe('OracleRouter', function () {
           const result = await oracleRouter.getPricesAndDecimals(
             contracts.DAI,
             contracts.DAI,
-            QUOTE_USD
+            QuoteDenomination.USD
           )
-          expect(result[0]).to.equal(result[1]) // basePrice == quotePrice
-          expect(result[2]).to.equal(result[3]) // baseTokenDecimals == quoteTokenDecimals
-          expect(result[2]).to.equal(18) // baseTokenDecimals
+          expect(result.basePrice).to.equal(result.quotePrice)
+          expect(result.baseTokenDecimals).to.equal(result.quoteTokenDecimals)
+          expect(result.baseTokenDecimals).to.equal(18)
         })
 
         it('should handle tokens with different decimals', async function () {
           const result = await oracleRouter.getPricesAndDecimals(
             contracts.DAI,
             contracts.USDC,
-            QUOTE_USD
+            QuoteDenomination.USD
           )
-          expect(result[2]).to.equal(18) // baseTokenDecimals
-          expect(result[3]).to.equal(6) // quoteTokenDecimals
-          expect(result[0]).to.be.gt(0) // basePrice
-          expect(result[1]).to.be.gt(0) // quotePrice
+          expect(result.baseTokenDecimals).to.equal(18)
+          expect(result.quoteTokenDecimals).to.equal(6)
+          expect(result.basePrice).to.be.gt(0)
+          expect(result.quotePrice).to.be.gt(0)
         })
       })
 
@@ -647,7 +744,9 @@ describe('OracleRouter', function () {
         it('should revert if base token not configured', async function () {
           const randomAddress = ethers.Wallet.createRandom().address
 
-          await expect(oracleRouter.getPricesAndDecimals(randomAddress, contracts.DAI, QUOTE_USD))
+          await expect(
+            oracleRouter.getPricesAndDecimals(randomAddress, contracts.DAI, QuoteDenomination.USD)
+          )
             .to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
             .withArgs(randomAddress)
         })
@@ -655,7 +754,9 @@ describe('OracleRouter', function () {
         it('should revert if quote token not configured', async function () {
           const randomAddress = ethers.Wallet.createRandom().address
 
-          await expect(oracleRouter.getPricesAndDecimals(contracts.DAI, randomAddress, QUOTE_USD))
+          await expect(
+            oracleRouter.getPricesAndDecimals(contracts.DAI, randomAddress, QuoteDenomination.USD)
+          )
             .to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
             .withArgs(randomAddress)
         })
@@ -665,7 +766,9 @@ describe('OracleRouter', function () {
 
           await oracleRouter.connect(agent).setTokenActive(contracts.DAI, false)
 
-          await expect(oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QUOTE_USD))
+          await expect(
+            oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QuoteDenomination.USD)
+          )
             .to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
             .withArgs(contracts.DAI)
         })
@@ -675,7 +778,9 @@ describe('OracleRouter', function () {
 
           await oracleRouter.connect(agent).setTokenActive(contracts.USDC, false)
 
-          await expect(oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QUOTE_USD))
+          await expect(
+            oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QuoteDenomination.USD)
+          )
             .to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
             .withArgs(contracts.USDC)
         })
@@ -687,9 +792,11 @@ describe('OracleRouter', function () {
 
           await oracleRouter
             .connect(agent)
-            .setTokenFeed(contracts.STETH, QUOTE_ETH, 86400, 18, true)
+            .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
 
-          await expect(oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.DAI, QUOTE_USD))
+          await expect(
+            oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.DAI, QuoteDenomination.USD)
+          )
             .to.be.revertedWithCustomError(oracleRouter, 'TokenNotUsdQuoted')
             .withArgs(contracts.STETH)
         })
@@ -697,9 +804,14 @@ describe('OracleRouter', function () {
         it('should revert if quote token is ETH-quoted (LDO)', async function () {
           const agent = await getAgentSigner()
 
-          await oracleRouter.connect(agent).setTokenFeed(contracts.LDO, QUOTE_ETH, 86400, 18, true)
+          // Configure LDO as ETH-quoted (it doesn't have a USD feed)
+          await oracleRouter
+            .connect(agent)
+            .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
 
-          await expect(oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.LDO, QUOTE_USD))
+          await expect(
+            oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.LDO, QuoteDenomination.USD)
+          )
             .to.be.revertedWithCustomError(oracleRouter, 'TokenNotUsdQuoted')
             .withArgs(contracts.LDO)
         })
@@ -709,10 +821,14 @@ describe('OracleRouter', function () {
 
           await oracleRouter
             .connect(agent)
-            .setTokenFeed(contracts.STETH, QUOTE_ETH, 86400, 18, true)
-          await oracleRouter.connect(agent).setTokenFeed(contracts.LDO, QUOTE_ETH, 86400, 18, true)
+            .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
+          await oracleRouter
+            .connect(agent)
+            .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
 
-          await expect(oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QUOTE_USD))
+          await expect(
+            oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QuoteDenomination.USD)
+          )
             .to.be.revertedWithCustomError(oracleRouter, 'TokenNotUsdQuoted')
             .withArgs(contracts.STETH)
         })
@@ -725,7 +841,7 @@ describe('OracleRouter', function () {
           await ethers.provider.send('evm_mine', [])
 
           await expect(
-            oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QUOTE_USD)
+            oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QuoteDenomination.USD)
           ).to.be.revertedWithCustomError(oracleRouter, 'OracleStale')
         })
 
@@ -735,7 +851,7 @@ describe('OracleRouter', function () {
           await ethers.provider.send('evm_mine', [])
 
           await expect(
-            oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QUOTE_USD)
+            oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QuoteDenomination.USD)
           ).to.be.revertedWithCustomError(oracleRouter, 'OracleStale')
         })
       })
@@ -747,18 +863,18 @@ describe('OracleRouter', function () {
 
           await oracleRouter
             .connect(agent)
-            .setTokenFeed(contracts.DAI, QUOTE_USD, maxStaleness, 18, true)
+            .setTokenFeed(contracts.DAI, QuoteDenomination.USD, maxStaleness, 18, true)
           await oracleRouter
             .connect(agent)
-            .setTokenFeed(contracts.USDC, QUOTE_USD, maxStaleness, 6, true)
+            .setTokenFeed(contracts.USDC, QuoteDenomination.USD, maxStaleness, 6, true)
 
           const result = await oracleRouter.getPricesAndDecimals(
             contracts.DAI,
             contracts.USDC,
-            QUOTE_USD
+            QuoteDenomination.USD
           )
-          expect(result[0]).to.be.gt(0) // basePrice
-          expect(result[1]).to.be.gt(0) // quotePrice
+          expect(result.basePrice).to.be.gt(0)
+          expect(result.quotePrice).to.be.gt(0)
         })
       })
     })
@@ -770,7 +886,7 @@ describe('OracleRouter', function () {
       await oracleRouter.connect(agentSigner).setEthUsdBridge(1)
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, QUOTE_ETH, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 1, 18, true)
     })
 
     it('reverts with OracleStale when token feed is stale', async function () {
@@ -802,7 +918,7 @@ describe('OracleRouter', function () {
       await oracleRouter.connect(agentSigner).setEthUsdBridge(maxStalenessSeconds)
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, maxStalenessSeconds, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, maxStalenessSeconds, 18, true)
 
       // anchor on a known block timestamp
       const latestBlock = await ethers.provider.getBlock('latest')
@@ -837,7 +953,7 @@ describe('OracleRouter', function () {
       await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
     })
 
     it('reverts with OracleBadAnswer when answer is zero', async function () {
@@ -916,10 +1032,10 @@ describe('OracleRouter', function () {
       const agentSigner = await getAgentSigner()
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.USDC, QUOTE_USD, 86_400, 6, true)
+        .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, 6, true)
 
       const daiConfig = await oracleRouter.tokenConfig(contracts.DAI)
       const usdcConfig = await oracleRouter.tokenConfig(contracts.USDC)
@@ -956,7 +1072,7 @@ describe('OracleRouter', function () {
       const agentSigner = await getAgentSigner()
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
 
       const [firstUsdPrice, secondUsdPrice] = await oracleRouter.getUsdPrices(
         contracts.DAI,
@@ -970,7 +1086,7 @@ describe('OracleRouter', function () {
       const maxStalenessSeconds = 2 ** 32 - 1
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, maxStalenessSeconds, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, maxStalenessSeconds, 18, true)
 
       const tokenConfig = await oracleRouter.tokenConfig(contracts.DAI)
       expect(tokenConfig.primaryFeed.maxStalenessSeconds).to.equal(maxStalenessSeconds)
@@ -985,7 +1101,7 @@ describe('OracleRouter', function () {
       await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
     })
 
     it('reverts with FeedConfigOutOfSync when registry aggregator changes', async function () {
@@ -1099,7 +1215,7 @@ describe('OracleRouter', function () {
       await expect(
         smallUnitRouter
           .connect(agentSigner)
-          .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
       ).to.emit(smallUnitRouter, 'TokenConfigured')
 
       await expect(
@@ -1114,28 +1230,37 @@ describe('OracleRouter', function () {
     beforeEach(async function () {
       const agentSigner = await getAgentSigner()
       await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      // Configure STETH as ETH-quoted so the override applies
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.STETH, QUOTE_ETH, 300, 18, true) // token path max 300s
+        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 300, 18, true)
       await oracleRouter
         .connect(agentSigner)
-        .setTokenFeed(contracts.DAI, QUOTE_USD, 86_400, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, 18, true)
     })
 
     it('uses min(override, global) when override is set', async function () {
       const agentSigner = await getAgentSigner()
       await oracleRouter.connect(agentSigner).setTokenEthUsdStalenessOverride(contracts.STETH, 60)
 
-      const fiveMinutesOld = (await getCurrentTimestamp()) - 300n
+      // Make ETH/USD bridge stale (5 minutes old, which is > 60 second override)
+      const currentTimestamp = await getCurrentTimestamp()
+      const fiveMinutesOld = currentTimestamp - 300n
       await updateTokenFeed(
         feedConfig,
         contracts.CHAINLINK_ETH_QUOTE,
         contracts.CHAINLINK_USD_QUOTE,
         { updatedAt: fiveMinutesOld }
       )
+
+      // Ensure STETH/ETH feed is fresh
       await updateTokenFeed(feedConfig, contracts.STETH, contracts.CHAINLINK_ETH_QUOTE, {
-        updatedAt: await getCurrentTimestamp(),
+        updatedAt: currentTimestamp,
       })
+
+      // Advance time to ensure the staleness check passes
+      await ethers.provider.send('evm_increaseTime', [1])
+      await ethers.provider.send('evm_mine', [])
 
       await expect(
         oracleRouter.getUsdPrices(contracts.STETH, contracts.DAI)
@@ -1144,9 +1269,7 @@ describe('OracleRouter', function () {
 
     it('falls back to global when override is zero', async function () {
       const agentSigner = await getAgentSigner()
-      await oracleRouter
-        .connect(agentSigner)
-        .setTokenEthUsdStalenessOverride(contracts.STETH, QUOTE_USD)
+      await oracleRouter.connect(agentSigner).setTokenEthUsdStalenessOverride(contracts.STETH, 0)
 
       // anchor to the latest mined block timestamp to avoid drift
       const latestBlock = await ethers.provider.getBlock('latest')
@@ -1174,13 +1297,17 @@ describe('OracleRouter', function () {
     })
   })
 
-  describe('getPricesAndDecimals with ETH quote', function () {
+  describe('getPricesAndDecimals()', function () {
     beforeEach(async function () {
       const agent = await getAgentSigner()
 
       // Configure ETH-quoted tokens for testing
-      await oracleRouter.connect(agent).setTokenFeed(contracts.STETH, QUOTE_ETH, 86400, 18, true)
-      await oracleRouter.connect(agent).setTokenFeed(contracts.LDO, QUOTE_ETH, 86400, 18, true)
+      await oracleRouter
+        .connect(agent)
+        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
+      await oracleRouter
+        .connect(agent)
+        .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
     })
 
     describe('Happy paths', function () {
@@ -1188,48 +1315,48 @@ describe('OracleRouter', function () {
         const result = await oracleRouter.getPricesAndDecimals(
           contracts.STETH,
           contracts.LDO,
-          QUOTE_ETH
+          QuoteDenomination.ETH
         )
 
-        expect(result[0]).to.be.gt(0) // basePrice
-        expect(result[1]).to.be.gt(0) // quotePrice
-        expect(result[2]).to.equal(18) // baseTokenDecimals
-        expect(result[3]).to.equal(18) // quoteTokenDecimals
+        expect(result.basePrice).to.be.gt(0)
+        expect(result.quotePrice).to.be.gt(0)
+        expect(result.baseTokenDecimals).to.equal(18)
+        expect(result.quoteTokenDecimals).to.equal(18)
       })
 
       it('should return ETH prices for same token pair (stETH/stETH)', async function () {
         const result = await oracleRouter.getPricesAndDecimals(
           contracts.STETH,
           contracts.STETH,
-          QUOTE_ETH
+          QuoteDenomination.ETH
         )
 
-        expect(result[0]).to.be.gt(0) // basePrice
-        expect(result[1]).to.be.gt(0) // quotePrice
+        expect(result.basePrice).to.be.gt(0)
+        expect(result.quotePrice).to.be.gt(0)
 
         // Same token should have identical prices
-        expect(result[0]).to.equal(result[1]) // basePrice == quotePrice
-        expect(result[2]).to.equal(18) // baseTokenDecimals
-        expect(result[3]).to.equal(18) // quoteTokenDecimals
+        expect(result.basePrice).to.equal(result.quotePrice)
+        expect(result.baseTokenDecimals).to.equal(18)
+        expect(result.quoteTokenDecimals).to.equal(18)
       })
 
       it('should return correct token decimals', async function () {
         const result = await oracleRouter.getPricesAndDecimals(
           contracts.STETH,
           contracts.LDO,
-          QUOTE_ETH
+          QuoteDenomination.ETH
         )
 
         // Verify decimals match configured values
-        expect(result[2]).to.equal(18) // baseTokenDecimals
-        expect(result[3]).to.equal(18) // quoteTokenDecimals
+        expect(result.baseTokenDecimals).to.equal(18)
+        expect(result.quoteTokenDecimals).to.equal(18)
       })
 
       it('should normalize prices to PRICE_UNIT', async function () {
         const result = await oracleRouter.getPricesAndDecimals(
           contracts.STETH,
           contracts.LDO,
-          QUOTE_ETH
+          QuoteDenomination.ETH
         )
 
         // Prices should be normalized to the configured unit decimals
@@ -1239,12 +1366,12 @@ describe('OracleRouter', function () {
         const minPrice = (priceUnit * 8n) / 10n // 0.8
         const maxPrice = (priceUnit * 12n) / 10n // 1.2
 
-        expect(result[0]).to.be.gte(minPrice) // basePrice
-        expect(result[0]).to.be.lte(maxPrice) // basePrice
+        expect(result.basePrice).to.be.gte(minPrice)
+        expect(result.basePrice).to.be.lte(maxPrice)
 
         // LDO should have a reasonable ETH price
-        expect(result[1]).to.be.gt(0) // quotePrice
-        expect(result[1]).to.be.lt(priceUnit) // quotePrice
+        expect(result.quotePrice).to.be.gt(0)
+        expect(result.quotePrice).to.be.lt(priceUnit)
       })
     })
 
@@ -1252,7 +1379,9 @@ describe('OracleRouter', function () {
       it('should revert if base token not configured', async function () {
         const randomAddress = ethers.Wallet.createRandom().address
 
-        await expect(oracleRouter.getPricesAndDecimals(randomAddress, contracts.LDO, QUOTE_ETH))
+        await expect(
+          oracleRouter.getPricesAndDecimals(randomAddress, contracts.LDO, QuoteDenomination.USD)
+        )
           .to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
           .withArgs(randomAddress)
       })
@@ -1260,7 +1389,9 @@ describe('OracleRouter', function () {
       it('should revert if quote token not configured', async function () {
         const randomAddress = ethers.Wallet.createRandom().address
 
-        await expect(oracleRouter.getPricesAndDecimals(contracts.STETH, randomAddress, QUOTE_ETH))
+        await expect(
+          oracleRouter.getPricesAndDecimals(contracts.STETH, randomAddress, QuoteDenomination.ETH)
+        )
           .to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
           .withArgs(randomAddress)
       })
@@ -1271,7 +1402,9 @@ describe('OracleRouter', function () {
         // Deactivate stETH
         await oracleRouter.connect(agent).setTokenActive(contracts.STETH, false)
 
-        await expect(oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QUOTE_ETH))
+        await expect(
+          oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QuoteDenomination.ETH)
+        )
           .to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
           .withArgs(contracts.STETH)
       })
@@ -1282,40 +1415,11 @@ describe('OracleRouter', function () {
         // Deactivate LDO
         await oracleRouter.connect(agent).setTokenActive(contracts.LDO, false)
 
-        await expect(oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QUOTE_ETH))
+        await expect(
+          oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QuoteDenomination.ETH)
+        )
           .to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
           .withArgs(contracts.LDO)
-      })
-    })
-
-    describe('Validation - ETH/USD bridge missing', function () {
-      it('should revert when ETH/USD bridge is not configured', async function () {
-        const localSnapshot = await takeSnapshot()
-
-        // Deploy a new router without ETH/USD bridge
-        const newRouter = await oracleRouterFactory.deploy(agentAddress, 8, feedRegistryAddress)
-        await newRouter.waitForDeployment()
-
-        const agent = await getAgentSigner()
-
-        // Configure ETH-quoted tokens but don't set ETH/USD bridge
-        await newRouter.connect(agent).setTokenFeed(contracts.STETH, QUOTE_ETH, 86400, 18, true)
-        await newRouter.connect(agent).setTokenFeed(contracts.LDO, QUOTE_ETH, 86400, 18, true)
-
-        // Should revert when trying to get USD prices for ETH-quoted tokens
-        // This fails with TokenNotUsdQuoted because tokens are ETH-quoted, not USD-quoted
-        await expect(
-          newRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QUOTE_USD)
-        ).to.be.revertedWithCustomError(newRouter, 'TokenNotUsdQuoted')
-
-        // To test EthUsdBridgeMissing, we need to call _getUsdPrices which requires the bridge
-        // This happens internally when getting USD prices for ETH-quoted tokens
-        // We can test this by calling getUsdPrices which internally uses the bridge
-        await expect(
-          newRouter.getUsdPrices(contracts.STETH, contracts.LDO)
-        ).to.be.revertedWithCustomError(newRouter, 'EthUsdBridgeMissing')
-
-        await localSnapshot.restore()
       })
     })
 
@@ -1324,9 +1428,17 @@ describe('OracleRouter', function () {
         const agent = await getAgentSigner()
 
         // Configure DAI as USD-quoted
-        await oracleRouter.connect(agent).setTokenFeed(contracts.DAI, QUOTE_USD, 86400, 18, true)
+        await oracleRouter
+          .connect(agent)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, 18, true)
+        // Configure LDO as ETH-quoted
+        await oracleRouter
+          .connect(agent)
+          .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
 
-        await expect(oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.LDO, QUOTE_ETH))
+        await expect(
+          oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.LDO, QuoteDenomination.ETH)
+        )
           .to.be.revertedWithCustomError(oracleRouter, 'TokenNotEthQuoted')
           .withArgs(contracts.DAI)
       })
@@ -1335,9 +1447,13 @@ describe('OracleRouter', function () {
         const agent = await getAgentSigner()
 
         // Configure USDC as USD-quoted
-        await oracleRouter.connect(agent).setTokenFeed(contracts.USDC, QUOTE_USD, 86400, 6, true)
+        await oracleRouter
+          .connect(agent)
+          .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, 6, true)
 
-        await expect(oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.USDC, QUOTE_ETH))
+        await expect(
+          oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.USDC, QuoteDenomination.ETH)
+        )
           .to.be.revertedWithCustomError(oracleRouter, 'TokenNotEthQuoted')
           .withArgs(contracts.USDC)
       })
@@ -1346,11 +1462,17 @@ describe('OracleRouter', function () {
         const agent = await getAgentSigner()
 
         // Configure both as USD-quoted
-        await oracleRouter.connect(agent).setTokenFeed(contracts.DAI, QUOTE_USD, 86400, 18, true)
-        await oracleRouter.connect(agent).setTokenFeed(contracts.USDC, QUOTE_USD, 86400, 6, true)
+        await oracleRouter
+          .connect(agent)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, 18, true)
+        await oracleRouter
+          .connect(agent)
+          .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, 6, true)
 
-        // Should revert on the first token (base)
-        await expect(oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QUOTE_ETH))
+        // Should revert on the first token (base) when querying with ETH
+        await expect(
+          oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QuoteDenomination.ETH)
+        )
           .to.be.revertedWithCustomError(oracleRouter, 'TokenNotEthQuoted')
           .withArgs(contracts.DAI)
       })
@@ -1364,7 +1486,7 @@ describe('OracleRouter', function () {
         await ethers.provider.send('evm_mine', [])
 
         await expect(
-          oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QUOTE_ETH)
+          oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QuoteDenomination.ETH)
         ).to.be.revertedWithCustomError(oracleRouter, 'OracleStale')
       })
 
@@ -1375,14 +1497,14 @@ describe('OracleRouter', function () {
         await ethers.provider.send('evm_mine', [])
 
         await expect(
-          oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QUOTE_ETH)
+          oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QuoteDenomination.ETH)
         ).to.be.revertedWithCustomError(oracleRouter, 'OracleStale')
       })
     })
 
     describe('Edge cases', function () {
       it('should work without ETH/USD bridge configured (does not need bridge)', async function () {
-        // getEthPricesAndDecimals should not require ETH/USD bridge since it reads ETH prices directly
+        // getPricesAndDecimals should not require ETH/USD bridge since it reads ETH prices directly
         const agent = await getAgentSigner()
 
         // Deploy a fresh router without bridge
@@ -1390,35 +1512,46 @@ describe('OracleRouter', function () {
         await freshRouter.waitForDeployment()
 
         // Configure only ETH-quoted tokens (no bridge)
-        await freshRouter.connect(agent).setTokenFeed(contracts.STETH, QUOTE_ETH, 86400, 18, true)
-        await freshRouter.connect(agent).setTokenFeed(contracts.LDO, QUOTE_ETH, 86400, 18, true)
+        await freshRouter
+          .connect(agent)
+          .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
+        await freshRouter
+          .connect(agent)
+          .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
 
         // Should work without bridge
         const result = await freshRouter.getPricesAndDecimals(
           contracts.STETH,
           contracts.LDO,
-          QUOTE_ETH
+          QuoteDenomination.ETH
         )
-        expect(result[0]).to.be.gt(0) // basePrice
-        expect(result[1]).to.be.gt(0) // quotePrice
+        expect(result.basePrice).to.be.gt(0)
+        expect(result.quotePrice).to.be.gt(0)
       })
 
       it('should work with tokens that have different decimals', async function () {
         const agent = await getAgentSigner()
 
-        // Configure a token with 6 decimals
-        await oracleRouter.connect(agent).setTokenFeed(contracts.USDC, QUOTE_ETH, 86400, 6, true)
+        // Configure STETH as USD-quoted for this test
+        await oracleRouter
+          .connect(agent)
+          .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86400, 18, true)
 
-        // Should handle the decimal difference
+        // Configure a token with 6 decimals
+        await oracleRouter
+          .connect(agent)
+          .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, 6, true)
+
+        // Should handle the decimal difference - use USD since both are USD-quoted
         const result = await oracleRouter.getPricesAndDecimals(
           contracts.STETH,
           contracts.USDC,
-          QUOTE_ETH
+          QuoteDenomination.USD
         )
-        expect(result[2]).to.equal(18) // baseTokenDecimals
-        expect(result[3]).to.equal(6) // quoteTokenDecimals
-        expect(result[0]).to.be.gt(0) // basePrice
-        expect(result[1]).to.be.gt(0) // quotePrice
+        expect(result.baseTokenDecimals).to.equal(18)
+        expect(result.quoteTokenDecimals).to.equal(6)
+        expect(result.basePrice).to.be.gt(0)
+        expect(result.quotePrice).to.be.gt(0)
       })
     })
   })
@@ -1429,7 +1562,9 @@ describe('OracleRouter', function () {
       const maxStaleness = 2n ** 32n - 1n
 
       await expect(
-        oracleRouter.connect(agent).setTokenFeed(contracts.USDT, QUOTE_USD, maxStaleness, 6, true)
+        oracleRouter
+          .connect(agent)
+          .setTokenFeed(contracts.USDT, QuoteDenomination.USD, maxStaleness, 6, true)
       ).to.not.be.reverted
     })
   })

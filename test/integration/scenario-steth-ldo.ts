@@ -11,7 +11,6 @@ import {
   time,
 } from '@nomicfoundation/hardhat-network-helpers'
 import { setup, TokenPair } from './setup'
-import { isClose } from '../../utils/assert'
 import { getContracts } from '../../utils/contracts'
 import { IERC20, Stonks, Order } from '../../typechain-types'
 import { MAGIC_VALUE } from '../../utils/gpv2-helpers'
@@ -105,8 +104,10 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const transferTx = await token.transfer(stonks, value)
       await transferTx.wait()
 
+      const balanceAfter = await token.balanceOf(stonks)
+
       // stETH shares-based rounding: allow 2 wei tolerance for transfer precision loss
-      expect(isClose(await token.balanceOf(stonks), value, 2n)).to.be.true
+      expect(balanceAfter).to.be.closeTo(value, 2n)
     })
 
     it('manager should place order', async () => {
@@ -119,9 +120,13 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const { address } = await getPlaceOrderData(orderReceipt)
 
       order = await ethers.getContractAt('Order', address)
+
+      const tokenFromBalance = await tokenFrom.balanceOf(address)
+      const tokenFromBalanceStonks = await tokenTo.balanceOf(stonks)
+
       // stETH shares-based rounding: allow 4 wei tolerance for cumulative transfer precision loss
-      expect(isClose(await tokenFrom.balanceOf(address), value, 4n)).to.be.true
-      expect(isClose(await tokenFrom.balanceOf(stonks), BigInt(0), 2n)).to.be.true
+      expect(tokenFromBalance).to.be.closeTo(value, 4n)
+      expect(tokenFromBalanceStonks).to.be.closeTo(0n, 2n)
 
       const [orderHashFromContract] = await order.getOrderDetails()
       expect(orderHashFromContract).to.match(/^0x[0-9a-fA-F]{64}$/)
@@ -148,7 +153,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
 
       // Verify positive rebase occurred
       const expectedBalance = balanceBefore + rebaseAmount
-      expect(isClose(balanceAfter, expectedBalance, 2n)).to.be.true
+      expect(balanceAfter).to.be.closeTo(expectedBalance, 2n)
 
       // Order should still be valid
       const [hash] = await order.getOrderDetails()
@@ -168,7 +173,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       )
 
       const expectedBalance = balanceBefore + rebaseAmount
-      expect(isClose(balanceAfter, expectedBalance, 2n)).to.be.true
+      expect(balanceAfter).to.be.closeTo(expectedBalance, 2n)
 
       const [hash] = await order.getOrderDetails()
       expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
@@ -192,7 +197,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       )
 
       const expectedBalance = balanceBefore - rebaseAmount
-      expect(isClose(balanceAfter, expectedBalance, 2n)).to.be.true
+      expect(balanceAfter).to.be.closeTo(expectedBalance, 2n)
 
       // Order validity depends on ALLOW_PARTIAL_FILL setting
       const [hash, , , sellAmount] = await order.getOrderDetails()
@@ -223,7 +228,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       )
 
       const expectedBalance = balanceBefore - rebaseAmount
-      expect(isClose(balanceAfter, expectedBalance, 2n)).to.be.true
+      expect(balanceAfter).to.be.closeTo(expectedBalance, 2n)
 
       const [hash, , , sellAmount] = await order.getOrderDetails()
       const allowPartialFill = await stonks.ALLOW_PARTIAL_FILL()
@@ -251,7 +256,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       )
 
       const expectedBalance = balanceBefore - rebaseAmount
-      expect(isClose(balanceAfter, expectedBalance, 2n)).to.be.true
+      expect(balanceAfter).to.be.closeTo(expectedBalance, 2n)
 
       const [hash, , , sellAmount] = await order.getOrderDetails()
       const allowPartialFill = await stonks.ALLOW_PARTIAL_FILL()
@@ -296,7 +301,8 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const orderBalance = await tokenWithRelayer.balanceOf(order)
       await tokenWithRelayer.transferFrom(order, contracts.VAULT_RELAYER, orderBalance)
 
-      expect(isClose(await tokenWithRelayer.balanceOf(order), BigInt(0), 1n)).to.be.true
+      const finalOrderBalance = await tokenWithRelayer.balanceOf(order)
+      expect(finalOrderBalance).to.be.closeTo(0n, 1n)
     })
   })
 
@@ -322,7 +328,9 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
 
       await order.recoverTokenFrom()
 
-      expect(isClose(await tokenFrom.balanceOf(order), BigInt(0), 1n)).to.be.true
+      const balanceAfterRecover = await tokenFrom.balanceOf(order)
+
+      expect(balanceAfterRecover).to.be.closeTo(0n, 1n)
       expect(balanceBeforeRecover).to.be.gt(0)
     })
 
@@ -356,7 +364,9 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const { address } = await getPlaceOrderData(receipt)
       const newOrder = await ethers.getContractAt('Order', address)
 
-      expect(isClose(await tokenFrom.balanceOf(address), stonksBalance, 5n)).to.be.true
+      const balance = await tokenFrom.balanceOf(address)
+      expect(balance).to.be.closeTo(stonksBalance, 5n)
+
       expect(await newOrder.getAddress()).to.not.equal(await order.getAddress())
     })
 
@@ -384,7 +394,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         false
       )
 
-      expect(isClose(balanceAfter, balanceBefore - rebaseAmount, 2n)).to.be.true
+      expect(balanceAfter).to.be.closeTo(balanceBefore - rebaseAmount, 2n)
     })
   })
 
@@ -414,8 +424,8 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         false
       )
 
-      expect(isClose(beforeNegative, afterPositive, 2n)).to.be.true
-      expect(isClose(afterNegative, afterPositive - negativeRebase, 2n)).to.be.true
+      expect(afterNegative).to.be.closeTo(beforeNegative - negativeRebase, 2n)
+      expect(afterNegative).to.be.closeTo(afterPositive - negativeRebase, 2n)
 
       // Order should still be valid
       const [hash] = await order.getOrderDetails()
@@ -455,7 +465,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         false
       )
 
-      expect(isClose(balanceAfter, balanceBefore - tinyRebase, 2n)).to.be.true
+      expect(balanceAfter).to.be.closeTo(balanceBefore - tinyRebase, 2n)
 
       const [hash] = await smallOrder.getOrderDetails()
       const allowPartialFill = await stonks.ALLOW_PARTIAL_FILL()
@@ -494,7 +504,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         false
       )
 
-      expect(isClose(balanceAfter, balanceBefore - largeRebase, 2n)).to.be.true
+      expect(balanceAfter).to.be.closeTo(balanceBefore - largeRebase, 2n)
     })
   })
 
@@ -518,7 +528,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       await time.increase(150) // 2.5 minutes
 
       const balanceAfter = await tokenFrom.balanceOf(address)
-      expect(isClose(balanceAfter, balanceBefore, 2n)).to.be.true
+      expect(balanceAfter).to.be.closeTo(balanceBefore, 2n)
 
       const [hash] = await freshOrder.getOrderDetails()
       expect(await freshOrder.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
@@ -566,7 +576,8 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const finalBalance = await tokenFrom.balanceOf(orderAddress)
       // Net: +3%
       const expectedBalance = (value * 103n) / 100n
-      expect(isClose(finalBalance, expectedBalance, 10n)).to.be.true
+
+      expect(finalBalance).to.be.closeTo(expectedBalance, 10n)
 
       const [hash] = await order.getOrderDetails()
       expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
@@ -593,7 +604,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         false
       )
 
-      expect(isClose(balanceAfter, balanceBefore - rebaseAmount, 2n)).to.be.true
+      expect(balanceAfter).to.be.closeTo(balanceBefore - rebaseAmount, 2n)
 
       // Order should still be valid (not expired yet)
       const [hash] = await order.getOrderDetails()
@@ -644,9 +655,11 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       await order.recoverTokenFrom()
       const stonksBalanceAfter = await tokenFrom.balanceOf(stonks)
 
-      expect(isClose(await tokenFrom.balanceOf(order), BigInt(0), 1n)).to.be.true
+      const orderBalanceAfter = await tokenFrom.balanceOf(order)
+
+      expect(orderBalanceAfter).to.be.closeTo(0n, 1n)
       expect(stonksBalanceAfter).to.be.gt(stonksBalanceBefore)
-      expect(isClose(stonksBalanceAfter - stonksBalanceBefore, balanceBeforeExpiry, 1n)).to.be.true
+      expect(stonksBalanceAfter - stonksBalanceBefore).to.be.closeTo(balanceBeforeExpiry, 1n)
     })
 
     it('should recover full amount after positive rebases', async () => {
@@ -658,7 +671,8 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
 
       const balanceBeforeExpiry = await tokenFrom.balanceOf(orderAddress)
       const expectedBalance = value + (value * 20n) / 100n + (value * 10n) / 100n
-      expect(isClose(balanceBeforeExpiry, expectedBalance, 10n)).to.be.true
+
+      expect(balanceBeforeExpiry).to.be.closeTo(expectedBalance, 10n)
 
       await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
 
@@ -666,9 +680,10 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       await order.recoverTokenFrom()
       const stonksBalanceAfter = await tokenFrom.balanceOf(stonks)
 
-      expect(isClose(await tokenFrom.balanceOf(order), BigInt(0), 1n)).to.be.true
+      const orderBalanceAfter = await tokenFrom.balanceOf(order)
+      expect(orderBalanceAfter).to.be.closeTo(0n, 1n)
       expect(stonksBalanceAfter).to.be.gt(stonksBalanceBefore)
-      expect(isClose(stonksBalanceAfter - stonksBalanceBefore, balanceBeforeExpiry, 1n)).to.be.true
+      expect(stonksBalanceAfter - stonksBalanceBefore).to.be.closeTo(balanceBeforeExpiry, 1n)
     })
 
     it('should revert recovery when balance below MIN_POSSIBLE_BALANCE after rebases', async function () {
@@ -724,9 +739,10 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       await order.recoverTokenFrom()
       const stonksBalanceAfter = await tokenFrom.balanceOf(stonks)
 
-      expect(isClose(await tokenFrom.balanceOf(order), BigInt(0), 1n)).to.be.true
+      const orderBalanceAfter = await tokenFrom.balanceOf(order)
+      expect(orderBalanceAfter).to.be.closeTo(0n, 1n)
       expect(stonksBalanceAfter).to.be.gt(stonksBalanceBefore)
-      expect(isClose(stonksBalanceAfter - stonksBalanceBefore, balanceAfter, 1n)).to.be.true
+      expect(stonksBalanceAfter - stonksBalanceBefore).to.be.closeTo(balanceAfter, 1n)
     })
   })
 
@@ -1125,7 +1141,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
 
       const stonksBalance = await tokenFrom.balanceOf(stonks)
       expect(stonksBalance).to.be.gt(0n)
-      expect(isClose(stonksBalance, dustAmount, 10n)).to.be.true // Allow for stETH rounding
+      expect(stonksBalance).to.be.closeTo(dustAmount, 10n)
 
       const agentBalanceBefore = await tokenFrom.balanceOf(contracts.AGENT)
 
@@ -1136,7 +1152,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const stonksBalanceAfter = await tokenFrom.balanceOf(stonks)
 
       expect(agentBalanceAfter).to.be.gt(agentBalanceBefore)
-      expect(isClose(agentBalanceAfter - agentBalanceBefore, stonksBalance, 2n)).to.be.true
+      expect(agentBalanceAfter - agentBalanceBefore).to.be.closeTo(stonksBalance, 2n)
       expect(stonksBalanceAfter).to.be.lt(stonksBalance)
     })
 
@@ -1155,7 +1171,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
 
       const agentBalanceAfter = await tokenFrom.balanceOf(contracts.AGENT)
       expect(agentBalanceAfter).to.be.gt(agentBalanceBefore)
-      expect(isClose(agentBalanceAfter - agentBalanceBefore, dustAmount, 2n)).to.be.true
+      expect(agentBalanceAfter - agentBalanceBefore).to.be.closeTo(dustAmount, 2n)
     })
 
     it('should recover dust from Stonks after order expires and tokens are recovered', async () => {
@@ -1191,7 +1207,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
 
       const agentBalanceAfter = await tokenFrom.balanceOf(contracts.AGENT)
       expect(agentBalanceAfter).to.be.gt(agentBalanceBefore)
-      expect(isClose(agentBalanceAfter - agentBalanceBefore, stonksBalance, 2n)).to.be.true
+      expect(agentBalanceAfter - agentBalanceBefore).to.be.closeTo(stonksBalance, 2n)
     })
 
     it('should not allow unauthorized users to recover dust from Stonks', async () => {
@@ -1221,7 +1237,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         .recoverERC20(await tokenTo.getAddress(), accidentalAmount)
 
       const agentBalanceAfter = await tokenTo.balanceOf(contracts.AGENT)
-      expect(isClose(agentBalanceAfter - agentBalanceBefore, accidentalAmount, 2n)).to.be.true
+      expect(agentBalanceAfter - agentBalanceBefore).to.be.closeTo(accidentalAmount, 2n)
     })
   })
 })

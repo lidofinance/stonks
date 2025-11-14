@@ -6,7 +6,7 @@ import { Stonks, AmountConverterTest } from '../../typechain-types'
 import { deployStonksWithTestOracle, resetTestOracleRouter } from '../../utils/test-oracle-router'
 import { refreshTestFeedData, resetTestFeedRegistryStub } from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
-import { QUOTE_USD } from '../../utils/oracle-router'
+import { QuoteDenomination } from '../../utils/oracle-router'
 
 const contracts = getContracts()
 const MAX_BASIS_POINTS = 10000n
@@ -150,7 +150,7 @@ describe('Stonks - Fuzz Tests', () => {
             const result = await stonks.estimateTradeOutput(amount)
 
             const [priceFrom, priceTo, decimalsFrom, decimalsTo] =
-              await router.getPricesAndDecimals(tokenFrom, tokenTo, QUOTE_USD)
+              await router.getPricesAndDecimals(tokenFrom, tokenTo, QuoteDenomination.USD)
 
             const decimalsDiff =
               decimalsFrom >= decimalsTo ? decimalsFrom - decimalsTo : decimalsTo - decimalsFrom

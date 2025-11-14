@@ -19,7 +19,6 @@ import {
   TokenPair,
   Setup,
 } from './setup'
-import { isClose } from '../../utils/assert'
 import { getContracts } from '../../utils/contracts'
 import { IERC20, Stonks, Order } from '../../typechain-types'
 import { MAGIC_VALUE } from '../../utils/gpv2-helpers'
@@ -85,7 +84,8 @@ describe('Scenario test multi-pair', function () {
           const transferTx = await token.transfer(stonks, value)
           await transferTx.wait()
 
-          expect(isClose(await token.balanceOf(stonks), value, 2n)).to.be.true
+          const balance = await token.balanceOf(stonks)
+          expect(balance).to.be.closeTo(value, 2n)
         })
 
         it('manager should successfully place an order', async () => {
@@ -99,8 +99,8 @@ describe('Scenario test multi-pair', function () {
 
           order = await ethers.getContractAt('Order', address)
           // stETH shares-based rounding: allow 4 wei tolerance for cumulative transfer precision loss
-          expect(isClose(await tokenFrom.balanceOf(address), value, 4n)).to.be.true
-          expect(isClose(await tokenFrom.balanceOf(stonks), BigInt(0), 2n)).to.be.true
+          expect(await tokenFrom.balanceOf(address)).to.be.closeTo(value, 4n)
+          expect(await tokenFrom.balanceOf(stonks)).to.be.closeTo(BigInt(0), 2n)
 
           const [orderHashFromContract] = await order.getOrderDetails()
           expect(orderHashFromContract).to.match(/^0x[0-9a-fA-F]{64}$/)
@@ -132,7 +132,7 @@ describe('Scenario test multi-pair', function () {
             await stethWithRelayerSigner.balanceOf(order)
           )
 
-          expect(isClose(await stethWithRelayerSigner.balanceOf(order), BigInt(0), 1n)).to.be.true
+          expect(await stethWithRelayerSigner.balanceOf(order)).to.be.closeTo(BigInt(0), 1n)
         })
       })
 
@@ -152,7 +152,7 @@ describe('Scenario test multi-pair', function () {
           ])
           await order.recoverTokenFrom()
 
-          expect(isClose(await tokenFrom.balanceOf(order), BigInt(0), 1n)).to.be.true
+          expect(await tokenFrom.balanceOf(order)).to.be.closeTo(BigInt(0), 1n)
         })
         it('should be invalid after order expiration', async () => {
           const [currentHash, , , , , validTo] = await order.getOrderDetails()
@@ -186,7 +186,7 @@ describe('Scenario test multi-pair', function () {
           await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
           await order.recoverTokenFrom()
 
-          expect(isClose(await tokenFrom.balanceOf(order), BigInt(0), 1n)).to.be.true
+          expect(await tokenFrom.balanceOf(order)).to.be.closeTo(BigInt(0), 1n)
         })
         it('should create a new order for new market conditions', async () => {
           const expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
@@ -198,8 +198,8 @@ describe('Scenario test multi-pair', function () {
           const { address } = await getPlaceOrderData(orderReceipt)
 
           const newOrder = await ethers.getContractAt('Order', address)
-          expect(isClose(await tokenFrom.balanceOf(address), value, 5n)).to.be.true
-          expect(isClose(await tokenFrom.balanceOf(stonks), BigInt(0), 5n)).to.be.true
+          expect(await tokenFrom.balanceOf(address)).to.be.closeTo(value, 5n)
+          expect(await tokenFrom.balanceOf(stonks)).to.be.closeTo(BigInt(0), 5n)
 
           const [orderHashFromContract] = await newOrder.getOrderDetails()
           expect(orderHashFromContract).to.match(/^0x[0-9a-fA-F]{64}$/)
@@ -251,7 +251,7 @@ describe('Scenario test multi-pair', function () {
           await stubToken.transfer(contracts.AGENT, value)
           await stubToken.connect(agent).transfer(order, value)
 
-          expect(isClose(await stubToken.balanceOf(order), value, 1n))
+          expect(await stubToken.balanceOf(order)).to.be.closeTo(value, 1n)
         })
         it('manager should recover unexpected token from order contract', async () => {
           const agentBalanceBefore = await stubToken.balanceOf(contracts.AGENT)
@@ -285,20 +285,21 @@ describe('Scenario test multi-pair', function () {
           const orderSample = await stonks.ORDER_SAMPLE()
           const oracleRouter = await stonks.ORACLE_ROUTER()
 
-          stonksWithCap = await stonksFactory.deploy(
-            contracts.AGENT,
-            await manager.getAddress(),
-            await stonks.TOKEN_FROM(),
-            await stonks.TOKEN_TO(),
-            await amountConverter.getAddress(),
-            orderSample,
-            oracleRouter,
-            await stonks.ORDER_DURATION_IN_SECONDS(),
-            await stonks.MARGIN_IN_BASIS_POINTS(),
-            await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
-            100, // maxImprovement = 100 bps (1%)
-            await stonks.ALLOW_PARTIAL_FILL()
-          )
+          stonksWithCap = await stonksFactory.deploy({
+            agent: contracts.AGENT,
+            manager: await manager.getAddress(),
+            tokenFrom: await stonks.TOKEN_FROM(),
+            tokenTo: await stonks.TOKEN_TO(),
+            amountConverter: await amountConverter.getAddress(),
+            orderSample: orderSample,
+            oracleRouter: oracleRouter,
+            orderDurationInSeconds: await stonks.ORDER_DURATION_IN_SECONDS(),
+            marginInBasisPoints: await stonks.MARGIN_IN_BASIS_POINTS(),
+            priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
+            maxImprovementInBasisPoints: 100n, // maxImprovement = 100 bps (1%)
+            minFillBps: 0,
+            allowPartialFill: await stonks.ALLOW_PARTIAL_FILL(),
+          })
           await stonksWithCap.waitForDeployment()
 
           // Fund stonks
@@ -337,20 +338,21 @@ describe('Scenario test multi-pair', function () {
           const orderSample = await stonks.ORDER_SAMPLE()
           const oracleRouter = await stonks.ORACLE_ROUTER()
 
-          stonksStrict = await stonksFactory.deploy(
-            contracts.AGENT,
-            await manager.getAddress(),
-            await stonks.TOKEN_FROM(),
-            await stonks.TOKEN_TO(),
-            await amountConverter.getAddress(),
-            orderSample,
-            oracleRouter,
-            await stonks.ORDER_DURATION_IN_SECONDS(),
-            await stonks.MARGIN_IN_BASIS_POINTS(),
-            await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
-            0, // maxImprovement = 0 (strict mode)
-            await stonks.ALLOW_PARTIAL_FILL()
-          )
+          stonksStrict = await stonksFactory.deploy({
+            agent: contracts.AGENT,
+            manager: await manager.getAddress(),
+            tokenFrom: await stonks.TOKEN_FROM(),
+            tokenTo: await stonks.TOKEN_TO(),
+            amountConverter: await amountConverter.getAddress(),
+            orderSample: orderSample,
+            oracleRouter: oracleRouter,
+            orderDurationInSeconds: await stonks.ORDER_DURATION_IN_SECONDS(),
+            marginInBasisPoints: await stonks.MARGIN_IN_BASIS_POINTS(),
+            priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
+            maxImprovementInBasisPoints: 0n, // maxImprovement = 0 (strict mode)
+            minFillBps: 0,
+            allowPartialFill: await stonks.ALLOW_PARTIAL_FILL(),
+          })
           await stonksStrict.waitForDeployment()
 
           // Fund stonks
@@ -389,20 +391,21 @@ describe('Scenario test multi-pair', function () {
           const orderSample = await stonks.ORDER_SAMPLE()
           const oracleRouter = await stonks.ORACLE_ROUTER()
 
-          stonksWithCap = await stonksFactory.deploy(
-            contracts.AGENT,
-            await manager.getAddress(),
-            await stonks.TOKEN_FROM(),
-            await stonks.TOKEN_TO(),
-            await amountConverter.getAddress(),
-            orderSample,
-            oracleRouter,
-            await stonks.ORDER_DURATION_IN_SECONDS(),
-            await stonks.MARGIN_IN_BASIS_POINTS(),
-            await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
-            100, // maxImprovement = 100 bps (1%)
-            await stonks.ALLOW_PARTIAL_FILL()
-          )
+          stonksWithCap = await stonksFactory.deploy({
+            agent: contracts.AGENT,
+            manager: await manager.getAddress(),
+            tokenFrom: await stonks.TOKEN_FROM(),
+            tokenTo: await stonks.TOKEN_TO(),
+            amountConverter: await amountConverter.getAddress(),
+            orderSample: orderSample,
+            oracleRouter: oracleRouter,
+            orderDurationInSeconds: await stonks.ORDER_DURATION_IN_SECONDS(),
+            marginInBasisPoints: await stonks.MARGIN_IN_BASIS_POINTS(),
+            priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
+            maxImprovementInBasisPoints: 100n, // maxImprovement = 100 bps (1%)
+            minFillBps: 0,
+            allowPartialFill: await stonks.ALLOW_PARTIAL_FILL(),
+          })
           await stonksWithCap.waitForDeployment()
 
           // Fund stonks

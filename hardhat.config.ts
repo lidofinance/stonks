@@ -2,7 +2,6 @@ import { HardhatUserConfig } from 'hardhat/config'
 import '@nomicfoundation/hardhat-toolbox'
 import '@nomicfoundation/hardhat-chai-matchers'
 import * as dotenv from 'dotenv'
-import './utils/assert'
 
 dotenv.config()
 
@@ -23,8 +22,8 @@ const config: HardhatUserConfig = {
       optimizer: {
         enabled: true,
         runs: 200,
-      }
-    }
+      },
+    },
   },
   networks: {
     mainnet: {
@@ -41,14 +40,14 @@ const config: HardhatUserConfig = {
     apiKey: ETHERSCAN_API_KEY,
     customChains: [
       {
-        network: "holesky",
+        network: 'holesky',
         chainId: 17000,
         urls: {
-          apiURL: "https://api-holesky.etherscan.io/api",
-          browserURL: "https://holesky.etherscan.io"
-        }
-      }
-    ]
+          apiURL: 'https://api-holesky.etherscan.io/api',
+          browserURL: 'https://holesky.etherscan.io',
+        },
+      },
+    ],
   },
 }
 

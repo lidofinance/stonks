@@ -274,20 +274,21 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
       // Deploy Stonks directly with MaxUint256
       const stonksFactory = await ethers.getContractFactory('Stonks')
-      const stonksNoCap = await stonksFactory.deploy(
-        contracts.AGENT,
-        await manager.getAddress(),
-        contracts.STETH,
-        contracts.DAI,
-        await amountConverterTestLocal.getAddress(),
-        await orderSample.getAddress(),
-        await oracleRouterLocal.getAddress(),
-        3600,
-        MARGIN_IN_BPS,
-        PRICE_TOLERANCE_IN_BP,
-        ethers.MaxUint256, // Pass as bigint directly
-        false
-      )
+      const stonksNoCap = await stonksFactory.deploy({
+        agent: contracts.AGENT,
+        manager: await manager.getAddress(),
+        tokenFrom: contracts.STETH,
+        tokenTo: contracts.DAI,
+        amountConverter: await amountConverterTestLocal.getAddress(),
+        orderSample: await orderSample.getAddress(),
+        oracleRouter: await oracleRouterLocal.getAddress(),
+        orderDurationInSeconds: 3600,
+        marginInBasisPoints: MARGIN_IN_BPS,
+        priceToleranceInBasisPoints: PRICE_TOLERANCE_IN_BP,
+        maxImprovementInBasisPoints: ethers.MaxUint256, // Pass as bigint directly
+        minFillBps: 0,
+        allowPartialFill: false,
+      })
       await stonksNoCap.waitForDeployment()
 
       // Verify it was set correctly

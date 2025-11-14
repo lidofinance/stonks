@@ -19,7 +19,6 @@ import { getContracts } from '../../utils/contracts'
 import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
 import { getPlaceOrderData } from '../../utils/get-events'
-import { isClose } from '../../utils/assert'
 import { PlaceOrderDataEvent } from '../../utils/types'
 
 const PRICE_TOLERANCE_IN_BP = 1000
@@ -271,8 +270,8 @@ describe('Order', async function () {
       const stonksBalanceAfter = await token.balanceOf(stonks)
       const orderBalanceAfter = await token.balanceOf(subjectWithStranger)
 
-      expect(isClose(stonksBalanceBefore + orderBalanceBefore, stonksBalanceAfter, 1n)).to.be.true
-      expect(isClose(orderBalanceAfter, BigInt(0), 1n)).to.be.true
+      expect(stonksBalanceAfter).to.be.closeTo(stonksBalanceBefore + orderBalanceBefore, 1n)
+      expect(orderBalanceAfter).to.be.closeTo(BigInt(0), 1n)
     })
     it('should revert if order is not expired', async () => {
       const orderDetails = await subject.getOrderDetails()

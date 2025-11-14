@@ -18,48 +18,13 @@ import { deployStonks } from '../../scripts/deployments/stonks'
 import { getContracts } from '../../utils/contracts'
 import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
-import { QUOTE_ETH } from '../../utils/oracle-router'
+import { QuoteDenomination } from '../../utils/oracle-router'
 import { getPlaceOrderData } from '../../utils/get-events'
-import { isClose } from '../../utils/assert'
+import { simulateNegativeRebase } from '../../utils/test-oracle-router'
 
 const PRICE_TOLERANCE_IN_BP = 1000
 const MARGIN_IN_BPS = 500
 const contracts = getContracts()
-
-/**
- * Helper to simulate negative rebase by transferring tokens out of the order contract
- * stETH uses a shares-based system, so we transfer tokens instead of manipulating storage
- */
-async function simulateNegativeRebase(
-  tokenAddress: string,
-  orderAddress: string,
-  rebaseAmount: bigint
-): Promise<void> {
-  // Get the token contract
-  const token = await ethers.getContractAt('IERC20', tokenAddress)
-  const currentBalance = await token.balanceOf(orderAddress)
-
-  // Calculate amount to transfer
-  const amountToTransfer = currentBalance > rebaseAmount ? rebaseAmount : currentBalance
-
-  // Impersonate the order contract to transfer tokens out
-  await ethers.provider.send('hardhat_impersonateAccount', [orderAddress])
-  await ethers.provider.send('hardhat_setBalance', [orderAddress, '0x1000000000000000000'])
-  const orderSigner = await ethers.getSigner(orderAddress)
-
-  // Transfer tokens to a recipient (simulate rebase loss)
-  const [, recipient] = await ethers.getSigners()
-  await token.connect(orderSigner).transfer(await recipient.getAddress(), amountToTransfer)
-
-  // Verify the balance decreased
-  const newBalance = await token.balanceOf(orderAddress)
-  const expectedBalance = currentBalance - amountToTransfer
-
-  // Allow for small rounding differences (1-2 wei) due to stETH shares
-  if (newBalance > expectedBalance + 2n || newBalance < expectedBalance - 2n) {
-    throw new Error(`Balance transfer failed: expected ~${expectedBalance}, got ${newBalance}`)
-  }
-}
 
 describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
   let manager: Signer
@@ -85,8 +50,8 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
 
     await refreshTestFeedData([contracts.STETH, contracts.LDO])
 
-    await oracleRouter.setTokenFeed(contracts.STETH, QUOTE_ETH, 86400, 18, true)
-    await oracleRouter.setTokenFeed(contracts.LDO, QUOTE_ETH, 86400, 18, true)
+    await oracleRouter.setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
+    await oracleRouter.setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
 
     amountConverterTest = await amountConverterTestFactory.deploy(
       await oracleRouter.getAddress(),
@@ -276,7 +241,7 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
 
       const newBalance = await token.balanceOf(orderAddress)
       const expectedBalance = initialBalance - rebaseAmount
-      expect(isClose(newBalance, expectedBalance, 2n)).to.be.true
+      expect(newBalance).to.be.closeTo(expectedBalance, 2n)
 
       // Order should still be valid
       const [currentHash] = await orderPartial.getOrderDetails()

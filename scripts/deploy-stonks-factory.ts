@@ -58,16 +58,14 @@ async function main() {
     throw new Error('Failed to parse OrderSampleDeployed event')
   }
 
-  const { orderAddress } = orderSampleDeployedLogDescription.args
+  const { order } = orderSampleDeployedLogDescription.args
 
   const stonksFactoryAddress = await stonksFactory.getAddress()
   // prettier-ignore
   console.log(
     `The ${fmt.name('StonksFactory')} contract was deployed successfully: ${fmt.address(stonksFactoryAddress)}\n`
   )
-  console.log(
-    `Sample of the ${fmt.name('Order')} contract was deployed at ${fmt.address(orderAddress)}\n`
-  )
+  console.log(`Sample of the ${fmt.name('Order')} contract was deployed at ${fmt.address(order)}\n`)
   if (!['localhost', 'hardhat'].includes(network.name)) {
     await verify(
       stonksFactoryAddress,

@@ -4,7 +4,7 @@ import { impersonateAccount, setCode } from '@nomicfoundation/hardhat-network-he
 import { getContracts } from '../../utils/contracts'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { AmountConverter, Stonks } from '../../typechain-types'
-import { QUOTE_USD, QUOTE_ETH } from '../../utils/oracle-router'
+import { QuoteDenomination } from '../../utils/oracle-router'
 
 export type TokenPair = {
   tokenFrom: string
@@ -126,7 +126,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
         await oracleRouter.setEthUsdBridge(pair.priceFeedHeartbeatTimeout)
         await oracleRouter.setTokenFeed(
           tokenAddr,
-          QUOTE_ETH,
+          QuoteDenomination.ETH,
           pair.priceFeedHeartbeatTimeout,
           tokenDecimals,
           true
@@ -147,7 +147,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
       ) {
         await oracleRouter.setTokenFeed(
           tokenAddr,
-          QUOTE_USD,
+          QuoteDenomination.USD,
           pair.priceFeedHeartbeatTimeout,
           tokenDecimals,
           true
@@ -166,7 +166,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
 
   // Fail fast if router can't read prices before deploying stonks
   if (pair.useEthBridge) {
-    await oracleRouter.getPricesAndDecimals(pair.tokenFrom, pair.tokenTo, QUOTE_ETH)
+    await oracleRouter.getPricesAndDecimals(pair.tokenFrom, pair.tokenTo, QuoteDenomination.ETH)
   } else {
     await oracleRouter.getUsdPrices(pair.tokenFrom, pair.tokenTo)
   }

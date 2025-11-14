@@ -28,6 +28,38 @@ import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
 contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    // ==================== Types ====================
+
+    /// @notice Struct containing all initialization parameters for the Stonks contract.
+    struct InitParams {
+        /// @notice Address of the Lido DAO agent.
+        address agent;
+        /// @notice Address of the manager authorized to place orders.
+        address manager;
+        /// @notice Address of the token being sold in trades.
+        address tokenFrom;
+        /// @notice Address of the token being bought in trades.
+        address tokenTo;
+        /// @notice Address of the AmountConverter contract used for price calculations.
+        address amountConverter;
+        /// @notice Address of the Order contract implementation used as a template for cloning.
+        address orderSample;
+        /// @notice Address of the OracleRouter contract.
+        address oracleRouter;
+        /// @notice Duration in seconds for which orders remain valid.
+        uint256 orderDurationInSeconds;
+        /// @notice Margin in basis points subtracted from expected output to account for fees and volatility.
+        uint256 marginInBasisPoints;
+        /// @notice Price tolerance in basis points allowed for price changes before order becomes invalid.
+        uint256 priceToleranceInBasisPoints;
+        /// @notice Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode).
+        uint256 maxImprovementInBasisPoints;
+        /// @notice Minimum fill percentage in basis points required for partial order execution.
+        uint256 minFillBps;
+        /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
+        bool allowPartialFill;
+    }
+
     // ==================== Immutables ====================
 
     /// @notice Address of the AmountConverter contract used for price calculations.
@@ -48,6 +80,8 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     uint256 public immutable PRICE_TOLERANCE_IN_BASIS_POINTS;
     /// @notice Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode).
     uint256 public immutable MAX_IMPROVEMENT_IN_BASIS_POINTS;
+    /// @notice Minimum fill percentage in basis points required for partial order execution.
+    uint256 public immutable MIN_FILL_BPS;
     /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
     bool public immutable ALLOW_PARTIAL_FILL;
 
@@ -91,6 +125,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     error InvalidOrderDuration(uint256 min, uint256 max, uint256 received);
     error MarginOverflowsAllowedLimit(uint256 limit, uint256 received);
     error PriceToleranceOverflowsAllowedLimit(uint256 limit, uint256 received);
+    error MinFillOverflowsAllowedLimit(uint256 limit, uint256 received);
     error MinimumPossibleBalanceNotMet(uint256 min, uint256 received);
     error InvalidAmount(uint256 amount);
     error SellAmountExceedsBalance(uint256 available, uint256 requested);
@@ -99,94 +134,53 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
 
     /**
      * @notice Initializes the Stonks contract with key trading parameters.
+     * @param initParams_ Struct containing all initialization parameters.
      * @dev Stores essential parameters for trade execution in immutable variables, ensuring consistency and security of trades.
      */
-    constructor(
-        address agent_,
-        address manager_,
-        address tokenFrom_,
-        address tokenTo_,
-        address amountConverter_,
-        address orderSample_,
-        address oracleRouter_,
-        uint256 orderDurationInSeconds_,
-        uint256 marginInBasisPoints_,
-        uint256 priceToleranceInBasisPoints_,
-        uint256 maxImprovementInBasisPoints_,
-        bool allowPartialFill_
-    ) AssetRecoverer(agent_) {
-        if (manager_ == address(0)) {
-            revert InvalidManagerAddress(manager_);
-        }
-        if (tokenFrom_ == address(0)) {
-            revert InvalidTokenFromAddress(tokenFrom_);
-        }
-        if (tokenTo_ == address(0)) {
-            revert InvalidTokenToAddress(tokenTo_);
-        }
-        if (tokenFrom_ == tokenTo_) {
-            revert TokensCannotBeSame();
-        }
-        if (amountConverter_ == address(0)) {
-            revert InvalidAmountConverterAddress(amountConverter_);
-        }
-        if (orderSample_ == address(0)) {
-            revert InvalidOrderSampleAddress(orderSample_);
-        }
-        if (oracleRouter_ == address(0)) {
-            revert InvalidOracleRouterAddress(oracleRouter_);
-        }
-        if (
-            orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS ||
-            orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS
-        ) {
-            revert InvalidOrderDuration(
-                MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS,
-                MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS,
-                orderDurationInSeconds_
-            );
-        }
-        if (marginInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) {
-            revert MarginOverflowsAllowedLimit(BASIS_POINTS_PARAMETERS_LIMIT, marginInBasisPoints_);
-        }
-        if (priceToleranceInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) {
-            revert PriceToleranceOverflowsAllowedLimit(
-                BASIS_POINTS_PARAMETERS_LIMIT,
-                priceToleranceInBasisPoints_
-            );
-        }
-        if (
-            maxImprovementInBasisPoints_ != type(uint256).max &&
-            maxImprovementInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT
-        ) {
-            revert MarginOverflowsAllowedLimit(
-                BASIS_POINTS_PARAMETERS_LIMIT,
-                maxImprovementInBasisPoints_
-            );
+    constructor(InitParams memory initParams_) AssetRecoverer(initParams_.agent) {
+        _validateAddresses(
+            initParams_.manager,
+            initParams_.tokenFrom,
+            initParams_.tokenTo,
+            initParams_.amountConverter,
+            initParams_.orderSample,
+            initParams_.oracleRouter
+        );
+        _validateDurations(initParams_.orderDurationInSeconds);
+        _validateBps(
+            initParams_.marginInBasisPoints,
+            initParams_.priceToleranceInBasisPoints,
+            initParams_.maxImprovementInBasisPoints,
+            initParams_.minFillBps
+        );
+
+        manager = initParams_.manager;
+        ORDER_SAMPLE = initParams_.orderSample;
+        AMOUNT_CONVERTER = initParams_.amountConverter;
+        TOKEN_FROM = initParams_.tokenFrom;
+        TOKEN_TO = initParams_.tokenTo;
+        ORDER_DURATION_IN_SECONDS = initParams_.orderDurationInSeconds;
+        MARGIN_IN_BASIS_POINTS = initParams_.marginInBasisPoints;
+
+        unchecked {
+            MARGIN_DIFFERENCE_IN_BASIS_POINTS = MAX_BASIS_POINTS - MARGIN_IN_BASIS_POINTS;
         }
 
-        manager = manager_;
-        ORDER_SAMPLE = orderSample_;
-        AMOUNT_CONVERTER = amountConverter_;
-        TOKEN_FROM = tokenFrom_;
-        TOKEN_TO = tokenTo_;
-        ORDER_DURATION_IN_SECONDS = orderDurationInSeconds_;
-        MARGIN_IN_BASIS_POINTS = marginInBasisPoints_;
-        MARGIN_DIFFERENCE_IN_BASIS_POINTS = MAX_BASIS_POINTS - MARGIN_IN_BASIS_POINTS;
-        PRICE_TOLERANCE_IN_BASIS_POINTS = priceToleranceInBasisPoints_;
-        MAX_IMPROVEMENT_IN_BASIS_POINTS = maxImprovementInBasisPoints_;
-        ALLOW_PARTIAL_FILL = allowPartialFill_;
-        ORACLE_ROUTER = IOracleRouter(oracleRouter_);
+        PRICE_TOLERANCE_IN_BASIS_POINTS = initParams_.priceToleranceInBasisPoints;
+        MAX_IMPROVEMENT_IN_BASIS_POINTS = initParams_.maxImprovementInBasisPoints;
+        MIN_FILL_BPS = initParams_.minFillBps;
+        ALLOW_PARTIAL_FILL = initParams_.allowPartialFill;
+        ORACLE_ROUTER = IOracleRouter(initParams_.oracleRouter);
 
-        emit ManagerSet(manager_);
-        emit AmountConverterSet(amountConverter_);
-        emit OrderSampleSet(orderSample_);
-        emit TokenFromSet(tokenFrom_);
-        emit TokenToSet(tokenTo_);
-        emit OrderDurationInSecondsSet(orderDurationInSeconds_);
-        emit MarginInBasisPointsSet(marginInBasisPoints_);
-        emit PriceToleranceInBasisPointsSet(priceToleranceInBasisPoints_);
-        emit OracleRouterSet(oracleRouter_);
+        emit ManagerSet(initParams_.manager);
+        emit AmountConverterSet(initParams_.amountConverter);
+        emit OrderSampleSet(initParams_.orderSample);
+        emit TokenFromSet(initParams_.tokenFrom);
+        emit TokenToSet(initParams_.tokenTo);
+        emit OrderDurationInSecondsSet(initParams_.orderDurationInSeconds);
+        emit MarginInBasisPointsSet(initParams_.marginInBasisPoints);
+        emit PriceToleranceInBasisPointsSet(initParams_.priceToleranceInBasisPoints);
+        emit OracleRouterSet(initParams_.oracleRouter);
     }
 
     // ==================== External Functions ====================
@@ -327,11 +321,86 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
 
         Order orderCopy = Order(Clones.clone(ORDER_SAMPLE));
 
-        emit OrderContractCreated(address(orderCopy), minBuyAmount_);
-
         IERC20(TOKEN_FROM).safeTransfer(address(orderCopy), sellAmount_);
         orderCopy.initialize(minBuyAmount_, manager);
 
+        emit OrderContractCreated(address(orderCopy), minBuyAmount_);
+
         return address(orderCopy);
+    }
+
+    // ==================== Private Functions ====================
+
+    function _validateAddresses(
+        address manager_,
+        address tokenFrom_,
+        address tokenTo_,
+        address amountConverter_,
+        address orderSample_,
+        address oracleRouter_
+    ) private pure {
+        if (manager_ == address(0)) {
+            revert InvalidManagerAddress(manager_);
+        }
+        if (tokenFrom_ == address(0)) {
+            revert InvalidTokenFromAddress(tokenFrom_);
+        }
+        if (tokenTo_ == address(0)) {
+            revert InvalidTokenToAddress(tokenTo_);
+        }
+        if (tokenFrom_ == tokenTo_) {
+            revert TokensCannotBeSame();
+        }
+        if (amountConverter_ == address(0)) {
+            revert InvalidAmountConverterAddress(amountConverter_);
+        }
+        if (orderSample_ == address(0)) {
+            revert InvalidOrderSampleAddress(orderSample_);
+        }
+        if (oracleRouter_ == address(0)) {
+            revert InvalidOracleRouterAddress(oracleRouter_);
+        }
+    }
+
+    function _validateDurations(uint256 orderDurationInSeconds_) private pure {
+        if (
+            orderDurationInSeconds_ > MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS ||
+            orderDurationInSeconds_ < MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS
+        ) {
+            revert InvalidOrderDuration(
+                MIN_POSSIBLE_ORDER_DURATION_IN_SECONDS,
+                MAX_POSSIBLE_ORDER_DURATION_IN_SECONDS,
+                orderDurationInSeconds_
+            );
+        }
+    }
+
+    function _validateBps(
+        uint256 marginInBasisPoints_,
+        uint256 priceToleranceInBasisPoints_,
+        uint256 maxImprovementInBasisPoints_,
+        uint256 minFillBps_
+    ) private pure {
+        if (marginInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) {
+            revert MarginOverflowsAllowedLimit(BASIS_POINTS_PARAMETERS_LIMIT, marginInBasisPoints_);
+        }
+        if (priceToleranceInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) {
+            revert PriceToleranceOverflowsAllowedLimit(
+                BASIS_POINTS_PARAMETERS_LIMIT,
+                priceToleranceInBasisPoints_
+            );
+        }
+        if (minFillBps_ > MAX_BASIS_POINTS) {
+            revert MinFillOverflowsAllowedLimit(MAX_BASIS_POINTS, minFillBps_);
+        }
+        if (
+            maxImprovementInBasisPoints_ != type(uint256).max &&
+            maxImprovementInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT
+        ) {
+            revert MarginOverflowsAllowedLimit(
+                BASIS_POINTS_PARAMETERS_LIMIT,
+                maxImprovementInBasisPoints_
+            );
+        }
     }
 }

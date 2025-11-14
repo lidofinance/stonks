@@ -10,7 +10,7 @@ import {
   refreshFeedData,
 } from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
-import { QUOTE_USD, QUOTE_ETH } from '../../utils/oracle-router'
+import { QuoteDenomination } from '../../utils/oracle-router'
 
 const contracts = getContracts()
 
@@ -46,8 +46,12 @@ describe('OracleRouter - Fuzz Tests', () => {
       value: ethers.parseEther('1'),
     })
 
-    await oracleRouter.connect(signer).setTokenFeed(contracts.STETH, QUOTE_USD, 86400, 18, true)
-    await oracleRouter.connect(signer).setTokenFeed(contracts.DAI, QUOTE_USD, 86400, 18, true)
+    await oracleRouter
+      .connect(signer)
+      .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86400, 18, true)
+    await oracleRouter
+      .connect(signer)
+      .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, 18, true)
   })
 
   describe('Price validation', () => {
@@ -204,7 +208,9 @@ describe('OracleRouter - Fuzz Tests', () => {
 
       // Configure bridge and set ETH-quoted feeds where available
       await oracleRouter.connect(signer).setEthUsdBridge(86_400)
-      await oracleRouter.connect(signer).setTokenFeed(contracts.STETH, QUOTE_ETH, 86_400, 18, true)
+      await oracleRouter
+        .connect(signer)
+        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, 18, true)
 
       const nowTs = await currentChainTs()
 
@@ -248,7 +254,9 @@ describe('OracleRouter - Fuzz Tests', () => {
       const local = await takeSnapshot()
       const signer = await ethers.getImpersonatedSigner(contracts.AGENT)
       await oracleRouter.connect(signer).setEthUsdBridge(86_400)
-      await oracleRouter.connect(signer).setTokenFeed(contracts.STETH, QUOTE_ETH, 86_400, 18, true)
+      await oracleRouter
+        .connect(signer)
+        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, 18, true)
       // Override to tighter cap
       await oracleRouter.connect(signer).setTokenEthUsdStalenessOverride(contracts.STETH, 60)
 
@@ -284,10 +292,10 @@ describe('OracleRouter - Fuzz Tests', () => {
             const signer = await ethers.getImpersonatedSigner(contracts.AGENT)
             await oracleRouter
               .connect(signer)
-              .setTokenFeed(contracts.STETH, QUOTE_USD, 86_400, 18, true)
+              .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86_400, 18, true)
             await oracleRouter
               .connect(signer)
-              .setTokenFeed(contracts.DAI, QUOTE_USD, capSec, 18, true)
+              .setTokenFeed(contracts.DAI, QuoteDenomination.USD, capSec, 18, true)
 
             const nowTs = await currentChainTs()
             await updateTokenFeed(feedConfig, contracts.STETH, contracts.CHAINLINK_USD_QUOTE, {

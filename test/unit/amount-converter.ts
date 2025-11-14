@@ -7,7 +7,7 @@ import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-ora
 import { refreshTestFeedData, resetTestFeedRegistryStub } from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
-import { QUOTE_USD } from '../../utils/oracle-router'
+import { QuoteDenomination } from '../../utils/oracle-router'
 
 const addresses = getContracts()
 
@@ -174,7 +174,7 @@ describe('AmountConverter', () => {
 
       // Configure short staleness for DAI
       const decimals = await readTokenDecimals(addresses.DAI)
-      await router.setTokenFeed(addresses.DAI, QUOTE_USD, 1, decimals, true)
+      await router.setTokenFeed(addresses.DAI, QuoteDenomination.USD, 1, decimals, true)
 
       // Freshen both DAI/USD and ETH/USD to now, then advance time to exceed staleness
       const latest = await ethers.provider.getBlock('latest')
@@ -240,6 +240,136 @@ describe('AmountConverter', () => {
       const maxAmount = 2n ** 120n // Large but safe amount (within uint128 limit)
       const result = await converter.getExpectedOut(addresses.USDC, addresses.USDT, maxAmount)
       expect(result).to.be.gt(0)
+    })
+
+    describe('zero price errors:', () => {
+      it('should revert with PriceFromUsdZero when priceFrom is zero in USD mode', async () => {
+        const OracleRouterStubFactory = await ethers.getContractFactory('OracleRouterStub')
+        const oracleRouterStub = await OracleRouterStubFactory.deploy(
+          await (await ethers.getSigners())[0].getAddress(),
+          18,
+          await router.FEED_REGISTRY()
+        )
+        await oracleRouterStub.waitForDeployment()
+
+        await oracleRouterStub.setPricesAndDecimals(
+          addresses.DAI,
+          addresses.USDC,
+          QuoteDenomination.USD,
+          0n, // priceFrom = 0
+          1n * 10n ** 18n, // priceTo = 1
+          18, // decimalsFrom
+          6 // decimalsTo
+        )
+
+        const converterWithStub = await factory.deploy(
+          await oracleRouterStub.getAddress(),
+          [addresses.DAI],
+          [addresses.USDC],
+          false
+        )
+        await converterWithStub.waitForDeployment()
+
+        await expect(
+          converterWithStub.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1'))
+        ).to.be.revertedWithCustomError(converterWithStub, 'PriceFromUsdZero')
+      })
+
+      it('should revert with PriceToUsdZero when priceTo is zero in USD mode', async () => {
+        const OracleRouterStubFactory = await ethers.getContractFactory('OracleRouterStub')
+        const oracleRouterStub = await OracleRouterStubFactory.deploy(
+          await (await ethers.getSigners())[0].getAddress(),
+          18,
+          await router.FEED_REGISTRY()
+        )
+        await oracleRouterStub.waitForDeployment()
+
+        await oracleRouterStub.setPricesAndDecimals(
+          addresses.DAI,
+          addresses.USDC,
+          QuoteDenomination.USD,
+          1n * 10n ** 18n, // priceFrom = 1
+          0n, // priceTo = 0
+          18,
+          6
+        )
+
+        const converterWithStub = await factory.deploy(
+          await oracleRouterStub.getAddress(),
+          [addresses.DAI],
+          [addresses.USDC],
+          false
+        )
+        await converterWithStub.waitForDeployment()
+
+        await expect(
+          converterWithStub.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1'))
+        ).to.be.revertedWithCustomError(converterWithStub, 'PriceToUsdZero')
+      })
+
+      it('should revert with PriceFromEthZero when priceFrom is zero in ETH mode', async () => {
+        const OracleRouterStubFactory = await ethers.getContractFactory('OracleRouterStub')
+        const oracleRouterStub = await OracleRouterStubFactory.deploy(
+          await (await ethers.getSigners())[0].getAddress(),
+          18,
+          await router.FEED_REGISTRY()
+        )
+        await oracleRouterStub.waitForDeployment()
+
+        await oracleRouterStub.setPricesAndDecimals(
+          addresses.STETH,
+          addresses.LDO,
+          QuoteDenomination.ETH,
+          0n, // priceFrom = 0
+          1n * 10n ** 18n, // priceTo = 1
+          18,
+          18
+        )
+
+        const converterEth = await factory.deploy(
+          await oracleRouterStub.getAddress(),
+          [addresses.STETH],
+          [addresses.LDO],
+          true // ETH mode
+        )
+        await converterEth.waitForDeployment()
+
+        await expect(
+          converterEth.getExpectedOut(addresses.STETH, addresses.LDO, ethers.parseEther('1'))
+        ).to.be.revertedWithCustomError(converterEth, 'PriceFromEthZero')
+      })
+
+      it('should revert with PriceToEthZero when priceTo is zero in ETH mode', async () => {
+        const OracleRouterStubFactory = await ethers.getContractFactory('OracleRouterStub')
+        const oracleRouterStub = await OracleRouterStubFactory.deploy(
+          await (await ethers.getSigners())[0].getAddress(),
+          18,
+          await router.FEED_REGISTRY()
+        )
+        await oracleRouterStub.waitForDeployment()
+
+        await oracleRouterStub.setPricesAndDecimals(
+          addresses.STETH,
+          addresses.LDO,
+          QuoteDenomination.ETH,
+          1n * 10n ** 18n, // priceFrom = 1
+          0n, // priceTo = 0
+          18,
+          18
+        )
+
+        const converterEth = await factory.deploy(
+          await oracleRouterStub.getAddress(),
+          [addresses.STETH],
+          [addresses.LDO],
+          true // ETH mode
+        )
+        await converterEth.waitForDeployment()
+
+        await expect(
+          converterEth.getExpectedOut(addresses.STETH, addresses.LDO, ethers.parseEther('1'))
+        ).to.be.revertedWithCustomError(converterEth, 'PriceToEthZero')
+      })
     })
   })
 

@@ -6,7 +6,7 @@ import { AmountConverterTest, OracleRouter } from '../../typechain-types'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
 import { refreshTestFeedData, resetTestFeedRegistryStub } from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
-import { QUOTE_USD, QUOTE_ETH } from '../../utils/oracle-router'
+import { QuoteDenomination } from '../../utils/oracle-router'
 
 const addresses = getContracts()
 
@@ -34,8 +34,10 @@ describe('AmountConverter - Fuzz Tests', () => {
     await refreshTestFeedData([addresses.STETH, addresses.LDO, addresses.DAI, addresses.USDC])
 
     const agent = await getAgentSigner()
-    await router.connect(agent).setTokenFeed(addresses.STETH, QUOTE_ETH, 86400, 18, true)
-    await router.connect(agent).setTokenFeed(addresses.LDO, QUOTE_ETH, 86400, 18, true)
+    await router
+      .connect(agent)
+      .setTokenFeed(addresses.STETH, QuoteDenomination.ETH, 86400, 18, true)
+    await router.connect(agent).setTokenFeed(addresses.LDO, QuoteDenomination.ETH, 86400, 18, true)
   })
 
   beforeEach(async () => {
@@ -50,7 +52,7 @@ describe('AmountConverter - Fuzz Tests', () => {
       tokenTo: addresses.USDC,
       tokenAlt: addresses.DAI,
       getPrices: async (from: string, to: string) =>
-        router.getPricesAndDecimals(from, to, QUOTE_USD),
+        router.getPricesAndDecimals(from, to, QuoteDenomination.USD),
     },
     {
       mode: 'ETH-anchored',
@@ -59,7 +61,7 @@ describe('AmountConverter - Fuzz Tests', () => {
       tokenTo: addresses.LDO,
       tokenAlt: addresses.LDO,
       getPrices: async (from: string, to: string) =>
-        router.getPricesAndDecimals(from, to, QUOTE_ETH),
+        router.getPricesAndDecimals(from, to, QuoteDenomination.ETH),
     },
   ]
 

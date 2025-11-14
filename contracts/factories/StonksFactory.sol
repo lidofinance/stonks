@@ -38,6 +38,7 @@ contract StonksFactory {
         uint256 marginInBasisPoints,
         uint256 priceToleranceInBasisPoints,
         uint256 maxImprovementInBasisPoints,
+        uint256 minFillBps,
         bool allowPartialFill
     );
 
@@ -92,6 +93,7 @@ contract StonksFactory {
      * @param marginInBasisPoints_ Margin represented in basis points
      * @param priceToleranceInBasisPoints_ Price tolerance in basis points
      * @param maxImprovementInBasisPoints_ Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode)
+     * @param minFillBps_ Minimum fill percentage in basis points required for partial order execution
      * @param allowPartialFill_ Whether orders should allow partial fills (useful for rebasable tokens)
      * @return stonks The address of the newly deployed Stonks contract
      */
@@ -104,22 +106,26 @@ contract StonksFactory {
         uint256 marginInBasisPoints_,
         uint256 priceToleranceInBasisPoints_,
         uint256 maxImprovementInBasisPoints_,
+        uint256 minFillBps_,
         bool allowPartialFill_
     ) external returns (address stonks) {
         stonks = address(
             new Stonks(
-                AGENT,
-                manager_,
-                tokenFrom_,
-                tokenTo_,
-                amountConverter_,
-                ORDER_SAMPLE,
-                ORACLE_ROUTER,
-                orderDurationInSeconds_,
-                marginInBasisPoints_,
-                priceToleranceInBasisPoints_,
-                maxImprovementInBasisPoints_,
-                allowPartialFill_
+                Stonks.InitParams(
+                    AGENT,
+                    manager_,
+                    tokenFrom_,
+                    tokenTo_,
+                    amountConverter_,
+                    ORDER_SAMPLE,
+                    ORACLE_ROUTER,
+                    orderDurationInSeconds_,
+                    marginInBasisPoints_,
+                    priceToleranceInBasisPoints_,
+                    maxImprovementInBasisPoints_,
+                    minFillBps_,
+                    allowPartialFill_
+                )
             )
         );
 
@@ -136,6 +142,7 @@ contract StonksFactory {
             marginInBasisPoints_,
             priceToleranceInBasisPoints_,
             maxImprovementInBasisPoints_,
+            minFillBps_,
             allowPartialFill_
         );
     }
