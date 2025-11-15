@@ -43,6 +43,8 @@ contract Order is IERC1271, AssetRecoverer {
     uint256 private constant MIN_POSSIBLE_BALANCE = 10;
     /// @notice Maximum basis points value for percentage calculations.
     uint256 private constant MAX_BASIS_POINTS = 1e4;
+    /// @notice Price scaling factor for ratio calculations (1e18 matches router precision).
+    uint256 private constant PRICE_SCALE = 1e18;
     /// @notice Application-specific data for the CoW order (empty JSON object hash).
     bytes32 private constant APP_DATA = keccak256("{}");
 
@@ -52,8 +54,6 @@ contract Order is IERC1271, AssetRecoverer {
     uint256 private sellAmount;
     /// @notice Minimum amount of tokens to buy in the order.
     uint256 private buyAmount;
-    /// @notice Minimum fill percentage in basis points.
-    uint256 private minFillBps;
     /// @notice Hash of the order for signature validation.
     bytes32 private orderHash;
     /// @notice Address of the Stonks contract that created this order.
@@ -62,6 +62,8 @@ contract Order is IERC1271, AssetRecoverer {
     uint32 private validTo;
     /// @notice Internal flag indicating whether the contract has been initialized.
     bool private initialized;
+    /// @notice Whether this order allows partial fills (cached from Stonks to avoid external calls).
+    bool private allowPartialFill;
 
     /// @notice Cached token addresses to avoid repeated external calls to Stonks.
     address private tokenFrom;
@@ -85,7 +87,7 @@ contract Order is IERC1271, AssetRecoverer {
     error PriceImprovementRejectedInStrictMode(uint256 expectedBuyAmount, uint256 actualBuyAmount);
     error PriceShortfallExceedsTolerance(uint256 minAcceptableBuyAmount, uint256 actualBuyAmount);
     error InsufficientSellBalance(uint256 required, uint256 available);
-    error MinFillBpsExceedsLimit(uint256 maxBasisPoints, uint256 receivedBasisPoints);
+    error ZeroQuotableAmount(uint256 basisSellAmount);
 
     // ==================== Constructor ====================
 
@@ -136,12 +138,6 @@ contract Order is IERC1271, AssetRecoverer {
         // Fail-fast if either side lacks a valid oracle route (prevents stranded approvals/funds).
         stonksContract.assertQuotable();
 
-        // validate minFillBps invariant once up-front
-        minFillBps = stonksContract.MIN_FILL_BPS();
-        if (minFillBps > MAX_BASIS_POINTS) {
-            revert MinFillBpsExceedsLimit(MAX_BASIS_POINTS, minFillBps);
-        }
-
         tokenFrom = tokenFromLocal;
         tokenTo = tokenToLocal;
 
@@ -160,7 +156,7 @@ contract Order is IERC1271, AssetRecoverer {
             buyAmount = minBuyAmount_;
         }
 
-        bool partiallyFillable_ = stonksContract.ALLOW_PARTIAL_FILL();
+        allowPartialFill = stonksContract.ALLOW_PARTIAL_FILL();
 
         GPv2Order.Data memory order = GPv2Order.Data({
             sellToken: tokenFromErc,
@@ -173,7 +169,7 @@ contract Order is IERC1271, AssetRecoverer {
             // Zero-fee → limit order semantics per CoW; solver pays gas via surplus.
             feeAmount: 0,
             kind: GPv2Order.KIND_SELL,
-            partiallyFillable: partiallyFillable_,
+            partiallyFillable: allowPartialFill,
             sellTokenBalance: GPv2Order.BALANCE_ERC20,
             buyTokenBalance: GPv2Order.BALANCE_ERC20
         });
@@ -191,22 +187,10 @@ contract Order is IERC1271, AssetRecoverer {
      * @notice Validates the order's signature and ensures compliance with price and timing constraints.
      * @param hash_ The hash of the order for validation.
      * @return magicValue The magic value of ERC1271.
-     * @dev Checks include:
-     *      - Matching the provided hash with the stored order hash.
-     *      - Confirming order validity within the specified timeframe (`validTo`).
-     *      - Price validation: protects against extreme price improvements and unfavorable moves beyond tolerance.
-     *
-     * Price Logic:
-     * - ACCEPT: Current price equals expected price (perfect match)
-     * - ACCEPT: Current price is better than expected (if within improvement cap)
-     * - REJECT: Current price is much better than expected (beyond improvement cap, likely oracle manipulation)
-     * - ACCEPT: Current price is slightly worse than expected (within tolerance)
-     * - REJECT: Current price is much worse than expected (beyond tolerance)
-     *
-     * Improvement Modes:
-     * - type(uint256).max: Accept any improvement (no cap)
-     * - 0: Reject all improvements (strict mode)
-     * - > 0: Accept improvements up to the specified basis points cap
+     * @dev For partially fillable orders, validates price pro-rata to the currently available balance
+     *      using price ratios to ensure consistent validation at all sizes and prevent rounding issues.
+     * @dev Price validation uses 1e18-scaled ratios to maintain precision across different token decimals
+     *      and handle dust amounts without special cases.
      */
     function isValidSignature(
         bytes32 hash_,
@@ -221,81 +205,109 @@ contract Order is IERC1271, AssetRecoverer {
         }
 
         IStonks stonksContract = IStonks(stonks);
+        uint256 availableBalance = IERC20(tokenFrom).balanceOf(address(this));
 
-        // Early revert if partial fills disabled and balance is insufficient (saves solver gas)
-        if (!stonksContract.ALLOW_PARTIAL_FILL()) {
-            uint256 available = IERC20(tokenFrom).balanceOf(address(this));
-
-            if (available < sellAmount) {
-                revert InsufficientSellBalance(sellAmount, available);
-            }
-        } else {
-            if (minFillBps > 0) {
-                uint256 requiredMinSell = Math.mulDiv(sellAmount, minFillBps, MAX_BASIS_POINTS);
-                uint256 available = IERC20(tokenFrom).balanceOf(address(this));
-
-                if (available < requiredMinSell) {
-                    revert InsufficientSellBalance(requiredMinSell, available);
-                }
+        if (!allowPartialFill) {
+            if (availableBalance < sellAmount) {
+                revert InsufficientSellBalance(sellAmount, availableBalance);
             }
         }
 
-        uint256 currentEstimatedBuyAmount = stonksContract.estimateTradeOutput(sellAmount);
+        // Determine the basis sell amount for price validation
+        uint256 basisSellAmount = allowPartialFill
+            ? (availableBalance < sellAmount ? availableBalance : sellAmount)
+            : sellAmount;
 
-        if (currentEstimatedBuyAmount == buyAmount) {
+        if (basisSellAmount == 0) {
+            revert InsufficientSellBalance(1, availableBalance);
+        }
+
+        uint256 currentEstimatedBuyAmount = stonksContract.estimateTradeOutput(basisSellAmount);
+
+        if (currentEstimatedBuyAmount == 0) {
+            revert ZeroQuotableAmount(basisSellAmount);
+        }
+
+        // Pro-rate the original buyAmount to the basis sell amount
+        uint256 baselineBuyAmount = Math.mulDiv(buyAmount, basisSellAmount, sellAmount);
+
+        // Fast path: exact amount match avoids rounding issues in price ratio comparison
+        if (currentEstimatedBuyAmount == baselineBuyAmount) {
             return ERC1271_MAGIC_VALUE;
         }
 
-        if (currentEstimatedBuyAmount > buyAmount) {
+        // Compute prices scaled to 1e18 for ratio comparison
+        uint256 originalLimitPrice = Math.mulDiv(buyAmount, PRICE_SCALE, sellAmount);
+        uint256 currentExecutionPrice = Math.mulDiv(currentEstimatedBuyAmount, PRICE_SCALE, basisSellAmount);
+
+        // Guard against division by zero in BPS calculations
+        if (originalLimitPrice == 0) {
+            revert PriceShortfallExceedsTolerance(baselineBuyAmount, currentEstimatedBuyAmount);
+        }
+
+        // Fast path: exact price match (handles cases where amounts differ due to rounding but prices match)
+        if (currentExecutionPrice == originalLimitPrice) {
+            return ERC1271_MAGIC_VALUE;
+        }
+
+        if (currentExecutionPrice > originalLimitPrice) {
             uint256 maxImprovementBps = stonksContract.getMaxImprovementBps();
 
-            // No cap: accept any improvement
             if (maxImprovementBps == type(uint256).max) {
                 return ERC1271_MAGIC_VALUE;
             }
 
-            // Strict mode: reject any improvement
             if (maxImprovementBps == 0) {
-                revert PriceImprovementRejectedInStrictMode(buyAmount, currentEstimatedBuyAmount);
+                revert PriceImprovementRejectedInStrictMode(baselineBuyAmount, currentEstimatedBuyAmount);
             }
 
-            // Compute improvement cap in a single mulDiv operation
-            uint256 maxAllowedBuyAmount = Math.mulDiv(
-                buyAmount,
-                MAX_BASIS_POINTS + maxImprovementBps,
-                MAX_BASIS_POINTS
-            );
+            unchecked {
+                // Calculate improvement in basis points: (currentPrice - originalPrice) / originalPrice
+                uint256 improvementBps = Math.mulDiv(
+                    currentExecutionPrice - originalLimitPrice,
+                    MAX_BASIS_POINTS,
+                    originalLimitPrice
+                );
 
-            if (currentEstimatedBuyAmount > maxAllowedBuyAmount) {
-                revert PriceImprovementExceedsLimit(maxAllowedBuyAmount, currentEstimatedBuyAmount);
+                if (improvementBps > maxImprovementBps) {
+                    uint256 maxAllowedBuyAmount = Math.mulDiv(
+                        baselineBuyAmount,
+                        MAX_BASIS_POINTS + maxImprovementBps,
+                        MAX_BASIS_POINTS
+                    );
+                    revert PriceImprovementExceedsLimit(maxAllowedBuyAmount, currentEstimatedBuyAmount);
+                }
             }
 
             return ERC1271_MAGIC_VALUE;
         } else {
             uint256 priceToleranceBps = stonksContract.getPriceTolerance();
 
-            // Strict shortfall mode: reject any shortfall
             if (priceToleranceBps == 0) {
-                revert PriceShortfallExceedsTolerance(buyAmount, currentEstimatedBuyAmount);
+                revert PriceShortfallExceedsTolerance(baselineBuyAmount, currentEstimatedBuyAmount);
             }
 
-            // Defensive check: ensure BPS doesn't exceed MAX_BASIS_POINTS (should be validated in constructor)
             if (priceToleranceBps > MAX_BASIS_POINTS) {
-                revert PriceShortfallExceedsTolerance(buyAmount, currentEstimatedBuyAmount);
+                revert PriceShortfallExceedsTolerance(baselineBuyAmount, currentEstimatedBuyAmount);
             }
 
-            uint256 maxToleratedShortfall = Math.mulDiv(
-                buyAmount,
-                priceToleranceBps,
-                MAX_BASIS_POINTS
-            );
-            uint256 minAcceptableBuyAmount = buyAmount - maxToleratedShortfall;
-
-            if (currentEstimatedBuyAmount < minAcceptableBuyAmount) {
-                revert PriceShortfallExceedsTolerance(
-                    minAcceptableBuyAmount,
-                    currentEstimatedBuyAmount
+            unchecked {
+                // Calculate shortfall in basis points: (originalPrice - currentPrice) / originalPrice
+                uint256 shortfallBps = Math.mulDiv(
+                    originalLimitPrice - currentExecutionPrice,
+                    MAX_BASIS_POINTS,
+                    originalLimitPrice
                 );
+
+                if (shortfallBps > priceToleranceBps) {
+                    uint256 maxToleratedShortfall = Math.mulDiv(
+                        baselineBuyAmount,
+                        priceToleranceBps,
+                        MAX_BASIS_POINTS
+                    );
+                    uint256 minAcceptableBuyAmount = baselineBuyAmount - maxToleratedShortfall;
+                    revert PriceShortfallExceedsTolerance(minAcceptableBuyAmount, currentEstimatedBuyAmount);
+                }
             }
 
             return ERC1271_MAGIC_VALUE;

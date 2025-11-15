@@ -54,8 +54,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         uint256 priceToleranceInBasisPoints;
         /// @notice Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode).
         uint256 maxImprovementInBasisPoints;
-        /// @notice Minimum fill percentage in basis points required for partial order execution.
-        uint256 minFillBps;
         /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
         bool allowPartialFill;
     }
@@ -78,12 +76,10 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     uint256 public immutable MARGIN_DIFFERENCE_IN_BASIS_POINTS;
     /// @notice Price tolerance in basis points allowed for price changes before order becomes invalid.
     uint256 public immutable PRICE_TOLERANCE_IN_BASIS_POINTS;
-    /// @notice Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode).
-    uint256 public immutable MAX_IMPROVEMENT_IN_BASIS_POINTS;
-    /// @notice Minimum fill percentage in basis points required for partial order execution.
-    uint256 public immutable MIN_FILL_BPS;
-    /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
-    bool public immutable ALLOW_PARTIAL_FILL;
+        /// @notice Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode).
+        uint256 public immutable MAX_IMPROVEMENT_IN_BASIS_POINTS;
+        /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
+        bool public immutable ALLOW_PARTIAL_FILL;
 
     /// @notice Oracle router contract used for quotability checks.
     IOracleRouter public immutable ORACLE_ROUTER;
@@ -125,7 +121,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     error InvalidOrderDuration(uint256 min, uint256 max, uint256 received);
     error MarginOverflowsAllowedLimit(uint256 limit, uint256 received);
     error PriceToleranceOverflowsAllowedLimit(uint256 limit, uint256 received);
-    error MinFillOverflowsAllowedLimit(uint256 limit, uint256 received);
     error MinimumPossibleBalanceNotMet(uint256 min, uint256 received);
     error InvalidAmount(uint256 amount);
     error SellAmountExceedsBalance(uint256 available, uint256 requested);
@@ -150,8 +145,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         _validateBps(
             initParams_.marginInBasisPoints,
             initParams_.priceToleranceInBasisPoints,
-            initParams_.maxImprovementInBasisPoints,
-            initParams_.minFillBps
+            initParams_.maxImprovementInBasisPoints
         );
 
         manager = initParams_.manager;
@@ -168,7 +162,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
 
         PRICE_TOLERANCE_IN_BASIS_POINTS = initParams_.priceToleranceInBasisPoints;
         MAX_IMPROVEMENT_IN_BASIS_POINTS = initParams_.maxImprovementInBasisPoints;
-        MIN_FILL_BPS = initParams_.minFillBps;
         ALLOW_PARTIAL_FILL = initParams_.allowPartialFill;
         ORACLE_ROUTER = IOracleRouter(initParams_.oracleRouter);
 
@@ -378,8 +371,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     function _validateBps(
         uint256 marginInBasisPoints_,
         uint256 priceToleranceInBasisPoints_,
-        uint256 maxImprovementInBasisPoints_,
-        uint256 minFillBps_
+        uint256 maxImprovementInBasisPoints_
     ) private pure {
         if (marginInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) {
             revert MarginOverflowsAllowedLimit(BASIS_POINTS_PARAMETERS_LIMIT, marginInBasisPoints_);
@@ -389,9 +381,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
                 BASIS_POINTS_PARAMETERS_LIMIT,
                 priceToleranceInBasisPoints_
             );
-        }
-        if (minFillBps_ > MAX_BASIS_POINTS) {
-            revert MinFillOverflowsAllowedLimit(MAX_BASIS_POINTS, minFillBps_);
         }
         if (
             maxImprovementInBasisPoints_ != type(uint256).max &&

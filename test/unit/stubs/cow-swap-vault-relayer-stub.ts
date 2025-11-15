@@ -101,7 +101,6 @@ describe('CoWSwapVaultRelayerStub', async () => {
       marginInBasisPoints: 1_00,
       priceToleranceInBasisPoints: 50,
       maxImprovementInBasisPoints: 0,
-      minFillBps: 0,
       allowPartialFill: false,
     })
     await stonks.waitForDeployment()

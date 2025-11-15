@@ -14,7 +14,6 @@ interface StonksConfig {
   marginBasisPoints: bigint
   priceToleranceInBasisPoints: bigint
   maxImprovementInBasisPoints: bigint
-  minFillBps: bigint
   allowPartialFill: boolean
 }
 
@@ -51,7 +50,6 @@ async function main() {
     console.log(`  * margin (bps): ${fmt.value(config.marginBasisPoints)}`)
     console.log(`  * price tolerance (bps): ${fmt.value(config.priceToleranceInBasisPoints)}`)
     console.log(`  * max improvement (bps): ${fmt.value(config.maxImprovementInBasisPoints)}`)
-    console.log(`  * min fill (bps): ${fmt.value(config.minFillBps)}`)
     console.log(`  * allow partial fill: ${fmt.value(config.allowPartialFill)}`)
     console.log()
   }
@@ -73,7 +71,6 @@ async function main() {
       config.marginBasisPoints,
       config.priceToleranceInBasisPoints,
       config.maxImprovementInBasisPoints,
-      config.minFillBps,
       config.allowPartialFill
     )
     const receipt = await waitForDeployment(tx)
@@ -99,7 +96,6 @@ async function main() {
       marginInBasisPoints,
       priceToleranceInBasisPoints,
       maxImprovementInBasisPoints,
-      minFillBps,
       allowPartialFill,
     } = stonksDeployedLog.args
 
@@ -143,7 +139,6 @@ async function main() {
       priceToleranceInBasisPoints.toString(),
       config.priceToleranceInBasisPoints.toString()
     )
-    assert.equal(minFillBps.toString(), config.minFillBps.toString())
     assert.equal(allowPartialFill, config.allowPartialFill)
 
     console.log()

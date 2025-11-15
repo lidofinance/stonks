@@ -20,7 +20,6 @@ describe('AmountConverter', () => {
   let routerAddress: string
 
   const USD_QUOTE = addresses.CHAINLINK_USD_QUOTE
-  const ETH_QUOTE = addresses.CHAINLINK_ETH_QUOTE
 
   const readTokenDecimals = async (token: string) => {
     const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
@@ -243,8 +242,13 @@ describe('AmountConverter', () => {
     })
 
     describe('zero price errors:', () => {
+      let OracleRouterStubFactory: any
+
+      beforeEach(async () => {
+        OracleRouterStubFactory = await ethers.getContractFactory('OracleRouterStub')
+      })
+
       it('should revert with PriceFromUsdZero when priceFrom is zero in USD mode', async () => {
-        const OracleRouterStubFactory = await ethers.getContractFactory('OracleRouterStub')
         const oracleRouterStub = await OracleRouterStubFactory.deploy(
           await (await ethers.getSigners())[0].getAddress(),
           18,
@@ -256,10 +260,10 @@ describe('AmountConverter', () => {
           addresses.DAI,
           addresses.USDC,
           QuoteDenomination.USD,
-          0n, // priceFrom = 0
-          1n * 10n ** 18n, // priceTo = 1
-          18, // decimalsFrom
-          6 // decimalsTo
+          0n,
+          1n * 10n ** 18n,
+          18,
+          6
         )
 
         const converterWithStub = await factory.deploy(
@@ -276,7 +280,6 @@ describe('AmountConverter', () => {
       })
 
       it('should revert with PriceToUsdZero when priceTo is zero in USD mode', async () => {
-        const OracleRouterStubFactory = await ethers.getContractFactory('OracleRouterStub')
         const oracleRouterStub = await OracleRouterStubFactory.deploy(
           await (await ethers.getSigners())[0].getAddress(),
           18,
@@ -288,8 +291,8 @@ describe('AmountConverter', () => {
           addresses.DAI,
           addresses.USDC,
           QuoteDenomination.USD,
-          1n * 10n ** 18n, // priceFrom = 1
-          0n, // priceTo = 0
+          1n * 10n ** 18n,
+          0n,
           18,
           6
         )
@@ -308,7 +311,6 @@ describe('AmountConverter', () => {
       })
 
       it('should revert with PriceFromEthZero when priceFrom is zero in ETH mode', async () => {
-        const OracleRouterStubFactory = await ethers.getContractFactory('OracleRouterStub')
         const oracleRouterStub = await OracleRouterStubFactory.deploy(
           await (await ethers.getSigners())[0].getAddress(),
           18,
@@ -320,8 +322,8 @@ describe('AmountConverter', () => {
           addresses.STETH,
           addresses.LDO,
           QuoteDenomination.ETH,
-          0n, // priceFrom = 0
-          1n * 10n ** 18n, // priceTo = 1
+          0n,
+          1n * 10n ** 18n,
           18,
           18
         )
@@ -330,7 +332,7 @@ describe('AmountConverter', () => {
           await oracleRouterStub.getAddress(),
           [addresses.STETH],
           [addresses.LDO],
-          true // ETH mode
+          true
         )
         await converterEth.waitForDeployment()
 
@@ -340,7 +342,6 @@ describe('AmountConverter', () => {
       })
 
       it('should revert with PriceToEthZero when priceTo is zero in ETH mode', async () => {
-        const OracleRouterStubFactory = await ethers.getContractFactory('OracleRouterStub')
         const oracleRouterStub = await OracleRouterStubFactory.deploy(
           await (await ethers.getSigners())[0].getAddress(),
           18,
@@ -352,8 +353,8 @@ describe('AmountConverter', () => {
           addresses.STETH,
           addresses.LDO,
           QuoteDenomination.ETH,
-          1n * 10n ** 18n, // priceFrom = 1
-          0n, // priceTo = 0
+          1n * 10n ** 18n,
+          0n,
           18,
           18
         )
@@ -362,7 +363,7 @@ describe('AmountConverter', () => {
           await oracleRouterStub.getAddress(),
           [addresses.STETH],
           [addresses.LDO],
-          true // ETH mode
+          true
         )
         await converterEth.waitForDeployment()
 

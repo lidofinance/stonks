@@ -21,7 +21,6 @@ export type DeployStonksParams = {
     marginInBps: number
     priceToleranceInBps: number
     maxImprovementInBps?: number
-    minFillBps?: number
     allowPartialFill?: boolean
     amountConverterAddress?: string
   }
@@ -49,7 +48,6 @@ export async function deployStonks({
     marginInBps,
     priceToleranceInBps,
     maxImprovementInBps = 0,
-    minFillBps = 0,
     allowPartialFill = false,
   },
   amountConverterParams,
@@ -157,7 +155,6 @@ export async function deployStonks({
     marginInBps,
     priceToleranceInBps,
     maxImprovementInBps,
-    minFillBps,
     allowPartialFill
   )
   const receipt = await deployStonksTx.wait()

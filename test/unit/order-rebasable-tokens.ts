@@ -194,8 +194,10 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
       await simulateNegativeRebase(tokenFrom, orderAddress, rebaseAmount)
 
       // Verify balance decreased
+      // stETH uses shares-based accounting, so transfers can introduce up to 1 wei rounding
+      // Integer division (initialBalance / 10n) also truncates, contributing to small differences
       const newBalance = await token.balanceOf(orderAddress)
-      expect(newBalance).to.be.equal(initialBalance - rebaseAmount)
+      expect(newBalance).to.be.closeTo(initialBalance - rebaseAmount, 1n)
 
       // Order should still be valid with partial fills enabled
       const [currentHash] = await orderPartial.getOrderDetails()
@@ -217,8 +219,10 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
       await simulateNegativeRebase(tokenFrom, orderAddress, rebaseAmount)
 
       // Verify balance decreased
+      // stETH uses shares-based accounting, so transfers can introduce up to 1 wei rounding
+      // Integer division (initialBalance / 10n) also truncates, contributing to small differences
       const newBalance = await token.balanceOf(orderAddress)
-      expect(newBalance).to.be.equal(initialBalance - rebaseAmount)
+      expect(newBalance).to.be.closeTo(initialBalance - rebaseAmount, 1n)
       expect(newBalance).to.be.lessThan(sellAmount)
 
       // Order should revert with InsufficientSellBalance

@@ -124,7 +124,6 @@ describe('StonksFactory', function () {
           marginInBP,
           toleranceInBP,
           maxImprovementInBP,
-          0, // minFillBps
           allowPartialFill
         )
       )
@@ -142,7 +141,6 @@ describe('StonksFactory', function () {
           marginInBP,
           toleranceInBP,
           maxImprovementInBP,
-          0, // minFillBps
           allowPartialFill
         )
     })

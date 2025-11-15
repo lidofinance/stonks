@@ -297,7 +297,6 @@ describe('Scenario test multi-pair', function () {
             marginInBasisPoints: await stonks.MARGIN_IN_BASIS_POINTS(),
             priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
             maxImprovementInBasisPoints: 100n, // maxImprovement = 100 bps (1%)
-            minFillBps: 0,
             allowPartialFill: await stonks.ALLOW_PARTIAL_FILL(),
           })
           await stonksWithCap.waitForDeployment()
@@ -350,7 +349,6 @@ describe('Scenario test multi-pair', function () {
             marginInBasisPoints: await stonks.MARGIN_IN_BASIS_POINTS(),
             priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
             maxImprovementInBasisPoints: 0n, // maxImprovement = 0 (strict mode)
-            minFillBps: 0,
             allowPartialFill: await stonks.ALLOW_PARTIAL_FILL(),
           })
           await stonksStrict.waitForDeployment()
@@ -403,7 +401,6 @@ describe('Scenario test multi-pair', function () {
             marginInBasisPoints: await stonks.MARGIN_IN_BASIS_POINTS(),
             priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
             maxImprovementInBasisPoints: 100n, // maxImprovement = 100 bps (1%)
-            minFillBps: 0,
             allowPartialFill: await stonks.ALLOW_PARTIAL_FILL(),
           })
           await stonksWithCap.waitForDeployment()
