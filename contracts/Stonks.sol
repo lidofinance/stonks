@@ -451,7 +451,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         if (orderSample_ == address(0)) {
             revert InvalidOrderSampleAddress(orderSample_);
         }
-        
+
         if (oracleRouter_ == address(0)) {
             revert InvalidOracleRouterAddress(oracleRouter_);
         }

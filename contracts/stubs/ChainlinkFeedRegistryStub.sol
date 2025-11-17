@@ -111,7 +111,7 @@ contract ChainlinkFeedRegistryStub is IFeedRegistry, ManageableStub {
      */
     function setFeed(address base, address quote, FeedStub calldata feed) external {
         feeds[base][quote] = feed;
-        
+
         emit FeedSet(base, quote, feed);
     }
 }

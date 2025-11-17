@@ -58,7 +58,7 @@ contract Ownable {
         }
 
         AGENT = agent_;
-        
+
         emit AgentSet(agent_);
     }
 

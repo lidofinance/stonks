@@ -87,7 +87,7 @@ abstract contract ManageableStub {
 
     function _setOwner(address owner_) internal {
         owner = owner_;
-        
+
         emit OwnerSet(owner_);
     }
 }

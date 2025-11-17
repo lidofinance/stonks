@@ -222,7 +222,7 @@ contract Order is IERC1271, AssetRecoverer {
         if (stonksContract.areSignaturesPaused()) {
             revert SignaturesGloballyPaused();
         }
-        
+
         uint256 availableBalance = IERC20(tokenFrom).balanceOf(address(this));
 
         if (!allowPartialFill) {

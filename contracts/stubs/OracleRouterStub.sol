@@ -68,10 +68,7 @@ contract OracleRouterStub is IOracleRouter {
     }
 
     // Stub implementations for interface compliance (not used in tests)
-    function getUsdPrices(
-        address,
-        address
-    ) external pure returns (uint256, uint256) {
+    function getUsdPrices(address, address) external pure returns (uint256, uint256) {
         revert("Not implemented in stub");
     }
 
@@ -83,13 +80,7 @@ contract OracleRouterStub is IOracleRouter {
         revert("Not implemented in stub");
     }
 
-    function setTokenFeed(
-        address,
-        QuoteDenomination,
-        uint32,
-        uint8,
-        bool
-    ) external pure {
+    function setTokenFeed(address, QuoteDenomination, uint32, uint8, bool) external pure {
         revert("Not implemented in stub");
     }
 
@@ -113,4 +104,3 @@ contract OracleRouterStub is IOracleRouter {
         revert("Not implemented in stub");
     }
 }
-

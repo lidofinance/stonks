@@ -52,7 +52,7 @@ contract AmountConverterTest {
         if (multiplierInBP_ > MAX_BASIS_POINTS) {
             revert("Error");
         }
-        
+
         if (multiplierInBP_ <= 0) {
             revert("Error");
         }
