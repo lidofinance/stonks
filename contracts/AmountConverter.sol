@@ -151,7 +151,7 @@ contract AmountConverter is IAmountConverter {
         if (!allowedTokensToSell[tokenFrom_]) {
             revert SellTokenNotAllowed(tokenFrom_);
         }
-        
+
         if (!allowedTokensToBuy[tokenTo_]) {
             revert BuyTokenNotAllowed(tokenTo_);
         }
@@ -161,7 +161,6 @@ contract AmountConverter is IAmountConverter {
         uint8 decimalsOfSellToken;
         uint8 decimalsOfBuyToken;
 
-        // Use merged function with quote denomination parameter
         IOracleRouter.QuoteDenomination quote;
 
         if (USE_ETH_ANCHOR) {

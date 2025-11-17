@@ -337,7 +337,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         if (quote_ == IOracleRouter.QuoteDenomination.USD) {
             (basePrice, quotePrice) = _getUsdPrices(baseToken_, quoteToken_);
         } else {
-            // Read ETH prices directly (no USD conversion)
+            // Read ETH prices directly without USD conversion
             basePrice = _readNormalizedPrice(baseToken_, ETH_DENOMINATION, baseConfig.primaryFeed);
             quotePrice = _readNormalizedPrice(
                 quoteToken_,
@@ -456,7 +456,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         TokenConfig storage baseConfig = tokenConfig[baseToken_];
         TokenConfig storage quoteConfig = tokenConfig[quoteToken_];
 
-        // Gas optimization: if both tokens are ETH-quoted with same staleness, fetch ETH/USD once
+        // If both tokens are ETH-quoted with same staleness, fetch ETH/USD once
         if (
             baseConfig.primaryQuote == IOracleRouter.QuoteDenomination.ETH &&
             quoteConfig.primaryQuote == IOracleRouter.QuoteDenomination.ETH
@@ -484,7 +484,6 @@ contract OracleRouter is IOracleRouter, Ownable {
             revert EthUsdBridgeMissing();
         }
 
-        // copy to memory and override staleness cap
         FeedConfig memory bridgeCopy = bridge;
         bridgeCopy.maxStalenessSeconds = capSeconds_;
 
@@ -564,7 +563,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         if (token_ == address(0)) {
             revert InvalidTokenAddress(token_);
         }
-        
+
         if (maxStalenessSeconds_ == 0) {
             revert InvalidStaleness();
         }
