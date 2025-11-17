@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
 
 import {Order} from "./Order.sol";
 import {AssetRecoverer} from "./AssetRecoverer.sol";
@@ -25,7 +26,7 @@ import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
  *
  * @notice Orchestrates the setup and execution of trades on CoW Swap, utilizing Order contracts for each trade.
  */
-contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
+contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     // ==================== Types ====================
@@ -76,10 +77,10 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     uint256 public immutable MARGIN_DIFFERENCE_IN_BASIS_POINTS;
     /// @notice Price tolerance in basis points allowed for price changes before order becomes invalid.
     uint256 public immutable PRICE_TOLERANCE_IN_BASIS_POINTS;
-        /// @notice Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode).
-        uint256 public immutable MAX_IMPROVEMENT_IN_BASIS_POINTS;
-        /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
-        bool public immutable ALLOW_PARTIAL_FILL;
+    /// @notice Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode).
+    uint256 public immutable MAX_IMPROVEMENT_IN_BASIS_POINTS;
+    /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
+    bool public immutable ALLOW_PARTIAL_FILL;
 
     /// @notice Oracle router contract used for quotability checks.
     IOracleRouter public immutable ORACLE_ROUTER;
@@ -108,6 +109,9 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     event PriceToleranceInBasisPointsSet(uint256 priceToleranceInBasisPoints);
     event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
     event OracleRouterSet(address oracleRouter);
+    event SignaturesPaused(address indexed by);
+    event SignaturesUnpaused(address indexed by);
+    event KillEngaged(address indexed by);
 
     // ==================== Errors ====================
 
@@ -124,6 +128,19 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     error MinimumPossibleBalanceNotMet(uint256 min, uint256 received);
     error InvalidAmount(uint256 amount);
     error SellAmountExceedsBalance(uint256 available, uint256 requested);
+    error StonksKilled();
+
+    // ==================== Emergency State ====================
+
+    bool private _signaturesPaused;
+    bool private _killed;
+
+    modifier notKilled() {
+        if (_killed) {
+            revert StonksKilled();
+        }
+        _;
+    }
 
     // ==================== Constructor ====================
 
@@ -187,7 +204,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
      */
     function placeOrder(
         uint256 minBuyAmount_
-    ) external nonReentrant onlyAgentOrManager returns (address) {
+    ) external nonReentrant onlyAgentOrManager notKilled whenNotPaused returns (address) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
 
         return _placeOrder(balance, minBuyAmount_, balance);
@@ -202,7 +219,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
     function placeOrderWithAmount(
         uint256 sellAmount_,
         uint256 minBuyAmount_
-    ) external nonReentrant onlyAgentOrManager returns (address) {
+    ) external nonReentrant onlyAgentOrManager notKilled whenNotPaused returns (address) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
 
         return _placeOrder(sellAmount_, minBuyAmount_, balance);
@@ -254,6 +271,85 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
      */
     function assertQuotable() external view {
         ORACLE_ROUTER.getUsdPrices(TOKEN_FROM, TOKEN_TO); // reverts internally if unquotable
+    }
+
+    // ==================== Emergency Control Views ====================
+
+    function areSignaturesPaused() external view returns (bool) {
+        return _signaturesPaused;
+    }
+
+    function isCreationPaused() external view returns (bool) {
+        return paused();
+    }
+
+    function isKilled() external view returns (bool) {
+        return _killed;
+    }
+
+    // ==================== Emergency Admin Functions ====================
+
+    /**
+     * @notice Pause order creation. Does not affect recovery or existing orders' validation.
+     */
+    function pauseCreation() external onlyAgentOrManager {
+        _pause();
+    }
+
+    /**
+     * @notice Unpause order creation. No effect if killSwitch was engaged.
+     */
+    function unpauseCreation() external onlyAgentOrManager {
+        _unpause();
+    }
+
+    /**
+     * @notice Pause signatures globally (halts fills).
+     */
+    function pauseSignatures() external onlyAgentOrManager {
+        if (_signaturesPaused) {
+            return;
+        }
+
+        _signaturesPaused = true;
+
+        emit SignaturesPaused(msg.sender);
+    }
+
+    /**
+     * @notice Unpause signatures globally (resume fills).
+     */
+    function unpauseSignatures() external onlyAgentOrManager {
+        if (!_signaturesPaused) {
+            return;
+        }
+
+        _signaturesPaused = false;
+
+        emit SignaturesUnpaused(msg.sender);
+    }
+
+    /**
+     * @notice Engage irreversible kill switch: pauses creation, pauses signatures, marks killed.
+     */
+    function killSwitch() external onlyAgentOrManager {
+        // Set signatures paused if not already, emit telemetry when it changes
+        if (!_signaturesPaused) {
+            _signaturesPaused = true;
+
+            emit SignaturesPaused(msg.sender);
+        }
+        // Pause creation if not already paused
+        if (!paused()) {
+            _pause();
+        }
+
+        // Mark killed (irreversible)
+        if (!_killed) {
+            _killed = true;
+        }
+
+        emit KillEngaged(msg.sender);
     }
 
     // ==================== Public Functions ====================
@@ -335,21 +431,27 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         if (manager_ == address(0)) {
             revert InvalidManagerAddress(manager_);
         }
+
         if (tokenFrom_ == address(0)) {
             revert InvalidTokenFromAddress(tokenFrom_);
         }
+
         if (tokenTo_ == address(0)) {
             revert InvalidTokenToAddress(tokenTo_);
         }
+
         if (tokenFrom_ == tokenTo_) {
             revert TokensCannotBeSame();
         }
+
         if (amountConverter_ == address(0)) {
             revert InvalidAmountConverterAddress(amountConverter_);
         }
+
         if (orderSample_ == address(0)) {
             revert InvalidOrderSampleAddress(orderSample_);
         }
+        
         if (oracleRouter_ == address(0)) {
             revert InvalidOracleRouterAddress(oracleRouter_);
         }
@@ -376,12 +478,14 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard {
         if (marginInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) {
             revert MarginOverflowsAllowedLimit(BASIS_POINTS_PARAMETERS_LIMIT, marginInBasisPoints_);
         }
+
         if (priceToleranceInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT) {
             revert PriceToleranceOverflowsAllowedLimit(
                 BASIS_POINTS_PARAMETERS_LIMIT,
                 priceToleranceInBasisPoints_
             );
         }
+
         if (
             maxImprovementInBasisPoints_ != type(uint256).max &&
             maxImprovementInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT

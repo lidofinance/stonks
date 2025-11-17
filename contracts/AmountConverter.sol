@@ -74,9 +74,11 @@ contract AmountConverter is IAmountConverter {
         if (oracleRouter_ == address(0)) {
             revert InvalidOracleRouterAddress(oracleRouter_);
         }
+
         if (allowedTokensToSellLength == 0) {
             revert InvalidTokensToSellArrayLength();
         }
+
         if (allowedTokensToBuyLength == 0) {
             revert InvalidTokensToBuyArrayLength();
         }
@@ -87,6 +89,7 @@ contract AmountConverter is IAmountConverter {
 
         for (uint256 i; i < allowedTokensToBuyLength; ) {
             address token = allowedTokensToBuy_[i];
+
             if (token == address(0)) {
                 revert InvalidAllowedTokenToBuy(token);
             }
@@ -102,6 +105,7 @@ contract AmountConverter is IAmountConverter {
 
         for (uint256 i; i < allowedTokensToSellLength; ) {
             address token = allowedTokensToSell_[i];
+
             if (token == address(0)) {
                 revert InvalidAllowedTokenToSell(token);
             }
@@ -135,15 +139,19 @@ contract AmountConverter is IAmountConverter {
         if (tokenFrom_ == tokenTo_) {
             revert TokensCannotBeSame();
         }
+
         if (amountFrom_ == 0) {
             revert InvalidAmount(amountFrom_);
         }
+
         if (amountFrom_ > type(uint128).max) {
             revert AmountFromTooLarge(amountFrom_);
         }
+
         if (!allowedTokensToSell[tokenFrom_]) {
             revert SellTokenNotAllowed(tokenFrom_);
         }
+        
         if (!allowedTokensToBuy[tokenTo_]) {
             revert BuyTokenNotAllowed(tokenTo_);
         }
@@ -172,6 +180,7 @@ contract AmountConverter is IAmountConverter {
                 revert PriceFromUsdZero();
             }
         }
+
         if (priceTo == 0) {
             if (USE_ETH_ANCHOR) {
                 revert PriceToEthZero();

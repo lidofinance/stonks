@@ -64,6 +64,8 @@ contract Order is IERC1271, AssetRecoverer {
     bool private initialized;
     /// @notice Whether this order allows partial fills (cached from Stonks to avoid external calls).
     bool private allowPartialFill;
+    /// @notice Order cancellation flag.
+    bool private cancelled;
 
     /// @notice Cached token addresses to avoid repeated external calls to Stonks.
     address private tokenFrom;
@@ -74,6 +76,9 @@ contract Order is IERC1271, AssetRecoverer {
     event RelayerSet(address relayer);
     event DomainSeparatorSet(bytes32 domainSeparator);
     event OrderCreated(address indexed order, bytes32 orderHash, GPv2Order.Data orderData);
+    event OrderCancelledEvent(address indexed order);
+    event RelayerAllowanceRevokedEvent(address indexed order);
+    event OrderFundsReturnedEvent(address indexed order, uint256 amount);
 
     // ==================== Errors ====================
 
@@ -88,6 +93,9 @@ contract Order is IERC1271, AssetRecoverer {
     error PriceShortfallExceedsTolerance(uint256 minAcceptableBuyAmount, uint256 actualBuyAmount);
     error InsufficientSellBalance(uint256 required, uint256 available);
     error ZeroQuotableAmount(uint256 basisSellAmount);
+    error SignaturesGloballyPaused();
+    error OrderCancelled();
+    error NotInitialized();
 
     // ==================== Constructor ====================
 
@@ -205,6 +213,16 @@ contract Order is IERC1271, AssetRecoverer {
         }
 
         IStonks stonksContract = IStonks(stonks);
+        // Check per-order cancellation before global pause
+        if (cancelled) {
+            revert OrderCancelled();
+        }
+
+        // Global signatures pause handled by Stonks
+        if (stonksContract.areSignaturesPaused()) {
+            revert SignaturesGloballyPaused();
+        }
+        
         uint256 availableBalance = IERC20(tokenFrom).balanceOf(address(this));
 
         if (!allowPartialFill) {
@@ -238,7 +256,11 @@ contract Order is IERC1271, AssetRecoverer {
 
         // Compute prices scaled to 1e18 for ratio comparison
         uint256 originalLimitPrice = Math.mulDiv(buyAmount, PRICE_SCALE, sellAmount);
-        uint256 currentExecutionPrice = Math.mulDiv(currentEstimatedBuyAmount, PRICE_SCALE, basisSellAmount);
+        uint256 currentExecutionPrice = Math.mulDiv(
+            currentEstimatedBuyAmount,
+            PRICE_SCALE,
+            basisSellAmount
+        );
 
         // Guard against division by zero in BPS calculations
         if (originalLimitPrice == 0) {
@@ -258,7 +280,10 @@ contract Order is IERC1271, AssetRecoverer {
             }
 
             if (maxImprovementBps == 0) {
-                revert PriceImprovementRejectedInStrictMode(baselineBuyAmount, currentEstimatedBuyAmount);
+                revert PriceImprovementRejectedInStrictMode(
+                    baselineBuyAmount,
+                    currentEstimatedBuyAmount
+                );
             }
 
             unchecked {
@@ -275,7 +300,10 @@ contract Order is IERC1271, AssetRecoverer {
                         MAX_BASIS_POINTS + maxImprovementBps,
                         MAX_BASIS_POINTS
                     );
-                    revert PriceImprovementExceedsLimit(maxAllowedBuyAmount, currentEstimatedBuyAmount);
+                    revert PriceImprovementExceedsLimit(
+                        maxAllowedBuyAmount,
+                        currentEstimatedBuyAmount
+                    );
                 }
             }
 
@@ -306,7 +334,10 @@ contract Order is IERC1271, AssetRecoverer {
                         MAX_BASIS_POINTS
                     );
                     uint256 minAcceptableBuyAmount = baselineBuyAmount - maxToleratedShortfall;
-                    revert PriceShortfallExceedsTolerance(minAcceptableBuyAmount, currentEstimatedBuyAmount);
+                    revert PriceShortfallExceedsTolerance(
+                        minAcceptableBuyAmount,
+                        currentEstimatedBuyAmount
+                    );
                 }
             }
 
@@ -380,5 +411,60 @@ contract Order is IERC1271, AssetRecoverer {
         }
 
         AssetRecoverer.recoverERC20(token_, amount_);
+    }
+
+    // ==================== Emergency State & Admin ====================
+
+    /**
+     * @notice Cancels this order and returns all `tokenFrom` back to Stonks. Also revokes relayer allowance.
+     *         Idempotent: repeated calls have no adverse effect.
+     */
+    function emergencyCancelAndReturn() external onlyAgentOrManager {
+        _ensureInitialized();
+        if (!cancelled) {
+            cancelled = true;
+
+            emit OrderCancelledEvent(address(this));
+        }
+
+        _revokeRelayerAllowance();
+        _returnAllTokenFromToStonks();
+    }
+
+    /**
+     * @notice Revokes relayer allowance without moving funds.
+     *         Idempotent and callable by Manager/Agent.
+     */
+    function emergencyRevokeRelayer() external onlyAgentOrManager {
+        _ensureInitialized();
+        _revokeRelayerAllowance();
+    }
+
+    function _ensureInitialized() private view {
+        if (stonks == address(0) || tokenFrom == address(0)) {
+            revert NotInitialized();
+        }
+    }
+
+    function _revokeRelayerAllowance() private {
+        IERC20 tokenFromErc = IERC20(tokenFrom);
+
+        uint256 beforeAllowance = tokenFromErc.allowance(address(this), RELAYER);
+        tokenFromErc.forceApprove(RELAYER, 0);
+
+        if (beforeAllowance != 0) {
+            emit RelayerAllowanceRevokedEvent(address(this));
+        }
+    }
+
+    function _returnAllTokenFromToStonks() private {
+        IERC20 tokenFromErc = IERC20(tokenFrom);
+        uint256 balance = tokenFromErc.balanceOf(address(this));
+
+        if (balance > 0) {
+            tokenFromErc.safeTransfer(stonks, balance);
+
+            emit OrderFundsReturnedEvent(address(this), balance);
+        }
     }
 }

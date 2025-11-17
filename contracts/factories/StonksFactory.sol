@@ -60,12 +60,15 @@ contract StonksFactory {
         if (agent_ == address(0)) {
             revert InvalidAgentAddress(agent_);
         }
+
         if (relayer_ == address(0)) {
             revert InvalidRelayerAddress(relayer_);
         }
+
         if (settlement_ == address(0)) {
             revert InvalidSettlementAddress(settlement_);
         }
+        
         if (oracleRouter_ == address(0)) {
             revert InvalidOracleRouterAddress(oracleRouter_);
         }

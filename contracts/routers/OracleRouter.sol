@@ -122,6 +122,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         if (unitDecimals_ == 0 || unitDecimals_ > MAX_DECIMALS) {
             revert InvalidUnitDecimals();
         }
+
         if (feedRegistry_ == address(0)) {
             revert InvalidFeedRegistryAddress(feedRegistry_);
         }
@@ -533,9 +534,11 @@ contract OracleRouter is IOracleRouter, Ownable {
         if (rawAnswer <= 0) {
             revert OracleBadAnswer(feedConfig_.aggregator, rawAnswer);
         }
+
         if (answeredInRound < roundId) {
             revert OracleUnanswered(feedConfig_.aggregator, roundId, answeredInRound);
         }
+
         if (block.timestamp - updatedAt > feedConfig_.maxStalenessSeconds) {
             revert OracleStale(feedConfig_.aggregator, updatedAt);
         }
@@ -561,6 +564,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         if (token_ == address(0)) {
             revert InvalidTokenAddress(token_);
         }
+        
         if (maxStalenessSeconds_ == 0) {
             revert InvalidStaleness();
         }
