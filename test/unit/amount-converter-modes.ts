@@ -1,6 +1,6 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
-import { parseEther, parseUnits } from 'ethers'
+import { parseEther } from 'ethers'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import type { AmountConverter, OracleRouter } from '../../typechain-types'
 import { getContracts } from '../../utils/contracts'
@@ -13,6 +13,51 @@ import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-ora
 import { QuoteDenomination } from '../../utils/oracle-router'
 
 const contracts = getContracts()
+type QuoteValue = (typeof QuoteDenomination)[keyof typeof QuoteDenomination]
+
+const calculateExpectedOutput = (
+  amountFrom: bigint,
+  priceFrom: bigint,
+  priceTo: bigint,
+  decimalsFrom: number,
+  decimalsTo: number
+): bigint => {
+  const sellHasMoreOrEqualDecimals = decimalsFrom >= decimalsTo
+  const decimalsDiff = sellHasMoreOrEqualDecimals
+    ? decimalsFrom - decimalsTo
+    : decimalsTo - decimalsFrom
+
+  if (sellHasMoreOrEqualDecimals) {
+    const grossOutput = (amountFrom * priceFrom) / priceTo
+    return decimalsDiff === 0 ? grossOutput : grossOutput / 10n ** BigInt(decimalsDiff)
+  }
+
+  const pow10 = 10n ** BigInt(decimalsDiff)
+  const scaledAmountFrom = amountFrom * pow10
+  return (scaledAmountFrom * priceFrom) / priceTo
+}
+
+const getExpectedOutFromRouter = async (
+  router: OracleRouter,
+  tokenFrom: string,
+  tokenTo: string,
+  amount: bigint,
+  denomination: QuoteValue
+): Promise<bigint> => {
+  const [priceFrom, priceTo, decimalsFrom, decimalsTo] = await router.getPricesAndDecimals(
+    tokenFrom,
+    tokenTo,
+    denomination
+  )
+
+  return calculateExpectedOutput(
+    amount,
+    priceFrom,
+    priceTo,
+    Number(decimalsFrom),
+    Number(decimalsTo)
+  )
+}
 
 describe('AmountConverter - ETH/USD Modes', () => {
   let router: OracleRouter
@@ -25,12 +70,24 @@ describe('AmountConverter - ETH/USD Modes', () => {
     router = await getTestOracleRouter({
       tokens: getAllTestTokens(),
       useRealPrices: true,
+      agent: contracts.AGENT, // Use the same agent address
     })
 
     await refreshTestFeedData(getAllTestTokens())
 
-    await router.setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
-    await router.setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
+    // Use agent signer for setTokenFeed
+    const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+    await (
+      await ethers.getSigners()
+    )[0].sendTransaction({
+      to: contracts.AGENT,
+      value: parseEther('1'),
+    })
+
+    await router
+      .connect(agent)
+      .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
+    await router.connect(agent).setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
 
     factory = await ethers.getContractFactory('AmountConverter')
   })
@@ -59,16 +116,15 @@ describe('AmountConverter - ETH/USD Modes', () => {
         const amount = parseEther('1')
         const result = await ethConverter.getExpectedOut(contracts.STETH, contracts.LDO, amount)
 
-        expect(result).to.be.gt(0)
-
-        const [basePrice, quotePrice] = await router.getPricesAndDecimals(
+        const expected = await getExpectedOutFromRouter(
+          router,
           contracts.STETH,
           contracts.LDO,
-          1
+          amount,
+          QuoteDenomination.ETH
         )
-        const manualCalc = (amount * basePrice) / quotePrice
 
-        expect(result).to.be.closeTo(manualCalc, 2n)
+        expect(result).to.equal(expected)
       })
 
       it('should scale proportionally with amount', async () => {
@@ -77,23 +133,56 @@ describe('AmountConverter - ETH/USD Modes', () => {
         const result1 = await ethConverter.getExpectedOut(contracts.STETH, contracts.LDO, amount1)
         const result2 = await ethConverter.getExpectedOut(contracts.STETH, contracts.LDO, amount2)
 
-        expect(result1).to.be.gt(0)
-        expect(result2).to.be.gt(0)
-        expect(result2).to.be.closeTo(result1 * 2n, 2n)
+        const expected1 = await getExpectedOutFromRouter(
+          router,
+          contracts.STETH,
+          contracts.LDO,
+          amount1,
+          QuoteDenomination.ETH
+        )
+        const expected2 = await getExpectedOutFromRouter(
+          router,
+          contracts.STETH,
+          contracts.LDO,
+          amount2,
+          QuoteDenomination.ETH
+        )
+
+        expect(result1).to.equal(expected1)
+        expect(result2).to.equal(expected2)
+
+        const scaled = expected1 * (amount2 / amount1)
+        expect(expected2).to.be.closeTo(scaled, 1n)
       })
 
       it('should handle small amounts', async () => {
         const amount = parseEther('0.001')
         const result = await ethConverter.getExpectedOut(contracts.STETH, contracts.LDO, amount)
 
-        expect(result).to.be.gt(0)
+        const expected = await getExpectedOutFromRouter(
+          router,
+          contracts.STETH,
+          contracts.LDO,
+          amount,
+          QuoteDenomination.ETH
+        )
+
+        expect(result).to.equal(expected)
       })
 
       it('should handle large amounts', async () => {
         const amount = parseEther('1000')
         const result = await ethConverter.getExpectedOut(contracts.STETH, contracts.LDO, amount)
 
-        expect(result).to.be.gt(0)
+        const expected = await getExpectedOutFromRouter(
+          router,
+          contracts.STETH,
+          contracts.LDO,
+          amount,
+          QuoteDenomination.ETH
+        )
+
+        expect(result).to.equal(expected)
       })
 
       it('should be deterministic', async () => {
@@ -122,20 +211,69 @@ describe('AmountConverter - ETH/USD Modes', () => {
           .withArgs(contracts.DAI)
       })
 
-      it('should revert at oracle level for misconfigured converter', async () => {
-        const badConverter = await factory.deploy(
+      it('should work with mixed denominations via bridging', async () => {
+        const mixedConverter = await factory.deploy(
           await router.getAddress(),
           [contracts.STETH],
           [contracts.DAI],
           true
         )
-        await badConverter.waitForDeployment()
+        await mixedConverter.waitForDeployment()
+
+        // Configure DAI as USD-quoted for bridging test
+        const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+        await (
+          await ethers.getSigners()
+        )[0].sendTransaction({
+          to: contracts.AGENT,
+          value: parseEther('1'),
+        })
+
+        // Ensure ETH/USD feed exists before setting bridge
+        await refreshTestFeedData([]) // Refresh ETH/USD feed
+
+        // Verify feed exists, if not set it up
+        const feedRegistry = await ethers.getContractAt(
+          'ChainlinkFeedRegistryStub',
+          await router.FEED_REGISTRY()
+        )
+        const ethUsdFeed = await feedRegistry.feeds(
+          contracts.CHAINLINK_ETH_QUOTE,
+          contracts.CHAINLINK_USD_QUOTE
+        )
+
+        if (ethUsdFeed.aggregator === ethers.ZeroAddress) {
+          const latestBlock = await ethers.provider.getBlock('latest')
+          const nowTs = BigInt(latestBlock!.timestamp)
+          const ethUsdPrice = 3000n * 10n ** 8n // $3000 with 8 decimals
+          await feedRegistry.setFeed(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE, {
+            aggregator: await feedRegistry.getAddress(),
+            answer: ethUsdPrice,
+            updatedAt: nowTs,
+            startedAt: nowTs,
+            answeredInRound: 1n,
+            roundId: 1n,
+            decimals: 8,
+          })
+        }
+
+        // Now set the bridge (feed should exist now)
+        await router.connect(agent).setEthUsdBridge(86400)
+        await router
+          .connect(agent)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, 18, true)
 
         const amount = parseEther('1')
+        const result = await mixedConverter.getExpectedOut(contracts.STETH, contracts.DAI, amount)
 
-        await expect(badConverter.getExpectedOut(contracts.STETH, contracts.DAI, amount))
-          .to.be.revertedWithCustomError(router, 'TokenNotEthQuoted')
-          .withArgs(contracts.DAI)
+        const expected = await getExpectedOutFromRouter(
+          router,
+          contracts.STETH,
+          contracts.DAI,
+          amount,
+          QuoteDenomination.ETH
+        )
+        expect(result).to.equal(expected)
       })
     })
   })
@@ -158,21 +296,74 @@ describe('AmountConverter - ETH/USD Modes', () => {
         const amount = parseEther('1000')
         const result = await usdConverter.getExpectedOut(contracts.DAI, contracts.USDC, amount)
 
-        expect(result).to.be.gt(0)
-        expect(result).to.be.closeTo(parseUnits('1000', 6), parseUnits('10', 6))
+        const expected = await getExpectedOutFromRouter(
+          router,
+          contracts.DAI,
+          contracts.USDC,
+          amount,
+          QuoteDenomination.USD
+        )
+        expect(result).to.equal(expected)
       })
 
       it('should handle large conversions', async () => {
         const amount = parseEther('100000')
         const result = await usdConverter.getExpectedOut(contracts.DAI, contracts.USDC, amount)
 
-        expect(result).to.be.gt(0)
-        expect(result).to.be.closeTo(parseUnits('100000', 6), parseUnits('1000', 6))
+        const expected = await getExpectedOutFromRouter(
+          router,
+          contracts.DAI,
+          contracts.USDC,
+          amount,
+          QuoteDenomination.USD
+        )
+        expect(result).to.equal(expected)
       })
     })
 
-    describe('ETH-quoted tokens with USD mode', () => {
-      it('should revert when selling ETH-quoted token in USD mode converter', async () => {
+    describe('Mixed denominations with USD mode (bridging)', () => {
+      beforeEach(async () => {
+        const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+        await (
+          await ethers.getSigners()
+        )[0].sendTransaction({
+          to: contracts.AGENT,
+          value: parseEther('1'),
+        })
+
+        // Ensure ETH/USD feed exists before setting bridge
+        await refreshTestFeedData([]) // Refresh ETH/USD feed
+
+        // Verify feed exists, if not set it up
+        const feedRegistry = await ethers.getContractAt(
+          'ChainlinkFeedRegistryStub',
+          await router.FEED_REGISTRY()
+        )
+        const ethUsdFeed = await feedRegistry.feeds(
+          contracts.CHAINLINK_ETH_QUOTE,
+          contracts.CHAINLINK_USD_QUOTE
+        )
+
+        if (ethUsdFeed.aggregator === ethers.ZeroAddress) {
+          const latestBlock = await ethers.provider.getBlock('latest')
+          const nowTs = BigInt(latestBlock!.timestamp)
+          const ethUsdPrice = 3000n * 10n ** 8n // $3000 with 8 decimals
+          await feedRegistry.setFeed(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE, {
+            aggregator: await feedRegistry.getAddress(),
+            answer: ethUsdPrice,
+            updatedAt: nowTs,
+            startedAt: nowTs,
+            answeredInRound: 1n,
+            roundId: 1n,
+            decimals: 8,
+          })
+        }
+
+        // Now set the bridge (feed should exist now)
+        await router.connect(agent).setEthUsdBridge(86400)
+      })
+
+      it('should bridge ETH-quoted token to USD when selling in USD mode converter', async () => {
         const ethTokenConverter = await factory.deploy(
           await router.getAddress(),
           [contracts.STETH],
@@ -182,13 +373,23 @@ describe('AmountConverter - ETH/USD Modes', () => {
         await ethTokenConverter.waitForDeployment()
 
         const amount = parseEther('1')
+        const result = await ethTokenConverter.getExpectedOut(
+          contracts.STETH,
+          contracts.DAI,
+          amount
+        )
 
-        await expect(ethTokenConverter.getExpectedOut(contracts.STETH, contracts.DAI, amount))
-          .to.be.revertedWithCustomError(router, 'TokenNotUsdQuoted')
-          .withArgs(contracts.STETH)
+        const expected = await getExpectedOutFromRouter(
+          router,
+          contracts.STETH,
+          contracts.DAI,
+          amount,
+          QuoteDenomination.USD
+        )
+        expect(result).to.equal(expected)
       })
 
-      it('should revert when buying ETH-quoted token in USD mode converter', async () => {
+      it('should bridge ETH-quoted token to USD when buying in USD mode converter', async () => {
         const ethTokenConverter = await factory.deploy(
           await router.getAddress(),
           [contracts.DAI],
@@ -198,10 +399,47 @@ describe('AmountConverter - ETH/USD Modes', () => {
         await ethTokenConverter.waitForDeployment()
 
         const amount = parseEther('1000')
+        const result = await ethTokenConverter.getExpectedOut(
+          contracts.DAI,
+          contracts.STETH,
+          amount
+        )
 
-        await expect(ethTokenConverter.getExpectedOut(contracts.DAI, contracts.STETH, amount))
-          .to.be.revertedWithCustomError(router, 'TokenNotUsdQuoted')
-          .withArgs(contracts.STETH)
+        const expected = await getExpectedOutFromRouter(
+          router,
+          contracts.DAI,
+          contracts.STETH,
+          amount,
+          QuoteDenomination.USD
+        )
+        expect(result).to.equal(expected)
+      })
+
+      it('should work with both tokens having different denominations', async () => {
+        const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+        await router
+          .connect(agent)
+          .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
+
+        const mixedConverter = await factory.deploy(
+          await router.getAddress(),
+          [contracts.DAI],
+          [contracts.LDO],
+          false
+        )
+        await mixedConverter.waitForDeployment()
+
+        const amount = parseEther('1000')
+        const result = await mixedConverter.getExpectedOut(contracts.DAI, contracts.LDO, amount)
+
+        const expected = await getExpectedOutFromRouter(
+          router,
+          contracts.DAI,
+          contracts.LDO,
+          amount,
+          QuoteDenomination.USD
+        )
+        expect(result).to.equal(expected)
       })
     })
 
@@ -279,14 +517,33 @@ describe('AmountConverter - ETH/USD Modes', () => {
       const amount = parseEther('100')
       const result = await usdConverter.getExpectedOut(contracts.DAI, contracts.USDC, amount)
 
-      expect(result).to.be.gt(0)
-      expect(result).to.be.lt(parseUnits('200', 6))
+      const expected = await getExpectedOutFromRouter(
+        router,
+        contracts.DAI,
+        contracts.USDC,
+        amount,
+        QuoteDenomination.USD
+      )
+      expect(result).to.equal(expected)
     })
 
     it('should handle 18 to 18 decimal conversion (ETH mode)', async () => {
       await refreshTestFeedData([contracts.STETH, contracts.LDO])
-      await router.setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
-      await router.setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
+
+      const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+      await (
+        await ethers.getSigners()
+      )[0].sendTransaction({
+        to: contracts.AGENT,
+        value: parseEther('1'),
+      })
+
+      await router
+        .connect(agent)
+        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
+      await router
+        .connect(agent)
+        .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
 
       const ethConverter = await factory.deploy(
         await router.getAddress(),
@@ -299,7 +556,14 @@ describe('AmountConverter - ETH/USD Modes', () => {
       const amount = parseEther('1.234567890123456789')
       const result = await ethConverter.getExpectedOut(contracts.STETH, contracts.LDO, amount)
 
-      expect(result).to.be.gt(0)
+      const expected = await getExpectedOutFromRouter(
+        router,
+        contracts.STETH,
+        contracts.LDO,
+        amount,
+        QuoteDenomination.ETH
+      )
+      expect(result).to.equal(expected)
     })
   })
 })

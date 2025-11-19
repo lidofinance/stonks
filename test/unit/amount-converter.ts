@@ -13,10 +13,12 @@ const addresses = getContracts()
 
 describe('AmountConverter', () => {
   let converter: IAmountConverter
+  let converter8: IAmountConverter
   let factory: any
   let snapshot: SnapshotRestorer
 
   let router: OracleRouter
+  let router8: OracleRouter
   let routerAddress: string
 
   const USD_QUOTE = addresses.CHAINLINK_USD_QUOTE
@@ -37,6 +39,48 @@ describe('AmountConverter', () => {
     })
     routerAddress = await router.getAddress()
 
+    const feedRegistryAddress = await router.FEED_REGISTRY()
+    const [deployer] = await ethers.getSigners()
+    const agentAddress = await deployer.getAddress()
+
+    const routerFactory = await ethers.getContractFactory('OracleRouter')
+    router8 = await routerFactory.deploy(agentAddress, 8, feedRegistryAddress)
+    await router8.waitForDeployment()
+
+    const agentSigner = await ethers.getImpersonatedSigner(agentAddress)
+    await ethers.provider.send('hardhat_setBalance', [agentAddress, '0x1000000000000000000'])
+
+    try {
+      await router8.connect(agentSigner).setEthUsdBridge(86_400)
+    } catch {
+      // Ignore if already configured
+    }
+
+    const erc20Iface = new ethers.Interface(['function decimals() view returns (uint8)'])
+    const erc20 = (addr: string) => new ethers.Contract(addr, erc20Iface, deployer)
+    const feedRegistryStub = await ethers.getContractAt(
+      'ChainlinkFeedRegistryStub',
+      feedRegistryAddress
+    )
+
+    for (const token of [addresses.DAI, addresses.USDC, addresses.USDT]) {
+      try {
+        const decimals = await erc20(token).getFunction('decimals').staticCall()
+        const usdFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_USD_QUOTE)
+
+        if (usdFeed !== ethers.ZeroAddress) {
+          await router8.connect(agentSigner).setTokenFeed(token, 0, 86_400, decimals, true)
+        } else {
+          const ethFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_ETH_QUOTE)
+          if (ethFeed !== ethers.ZeroAddress) {
+            await router8.connect(agentSigner).setTokenFeed(token, 1, 86_400, decimals, true)
+          }
+        }
+      } catch (e) {
+        console.warn(`Failed to configure token ${token} in router8:`, e)
+      }
+    }
+
     await refreshTestFeedData([addresses.DAI, addresses.USDC, addresses.USDT])
 
     converter = await factory.deploy(
@@ -46,6 +90,14 @@ describe('AmountConverter', () => {
       false
     )
     await converter.waitForDeployment()
+
+    converter8 = await factory.deploy(
+      await router8.getAddress(),
+      [addresses.DAI, addresses.USDC, addresses.USDT],
+      [addresses.DAI, addresses.USDC, addresses.USDT],
+      false
+    )
+    await converter8.waitForDeployment()
   })
 
   describe('initialization:', () => {
@@ -102,7 +154,7 @@ describe('AmountConverter', () => {
     })
 
     it('reverts when tokenTo is not allowed', async () => {
-      const notAllowedToken = addresses.AGENT // Use any address not in allowlist
+      const notAllowedToken = addresses.AGENT
       await expect(converter.getExpectedOut(addresses.DAI, notAllowedToken, 1))
         .to.be.revertedWithCustomError(converter, 'BuyTokenNotAllowed')
         .withArgs(notAllowedToken)
@@ -164,18 +216,17 @@ describe('AmountConverter', () => {
       await refreshTestFeedData([addresses.DAI, addresses.USDC])
       const largeAmount = 2n ** 127n - 1n
       const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, largeAmount)
-      expect(result).to.be.greaterThan(0)
+      const expected = await getExpectedOut(addresses.DAI, addresses.USDC, largeAmount)
+      expect(result).to.equal(expected)
     })
 
     it('bubbles router staleness (OracleStale) on outdated feed', async () => {
       const registryAddr = await router.FEED_REGISTRY()
       const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
 
-      // Configure short staleness for DAI
       const decimals = await readTokenDecimals(addresses.DAI)
       await router.setTokenFeed(addresses.DAI, QuoteDenomination.USD, 1, decimals, true)
 
-      // Freshen both DAI/USD and ETH/USD to now, then advance time to exceed staleness
       const latest = await ethers.provider.getBlock('latest')
       const nowTs = BigInt(latest!.timestamp)
       const daiUsd = await stub.feeds(addresses.DAI, USD_QUOTE)
@@ -194,17 +245,17 @@ describe('AmountConverter', () => {
       await expect(
         converter.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1'))
       ).to.be.revertedWithCustomError(router, 'OracleStale')
+
+      await router.setTokenFeed(addresses.DAI, QuoteDenomination.USD, 86_400, decimals, true)
+      await refreshTestFeedData([addresses.DAI])
     })
 
     it('bubbles router OracleBadAnswer when tokenFrom/USD answer is zero', async () => {
-      // First refresh both feeds to ensure they're not stale
       await refreshTestFeedData([addresses.DAI, addresses.USDC])
 
       const registryAddr = await router.FEED_REGISTRY()
       const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
 
-      // Set DAI answer to 0 with far future timestamp to trigger OracleBadAnswer
-      // Using tokenFrom instead of tokenTo to test the other path
       const latest = await ethers.provider.getBlock('latest')
       const farFutureTs = BigInt(latest!.timestamp) + 1000000n
 
@@ -234,11 +285,10 @@ describe('AmountConverter', () => {
     })
 
     it('should succeed with large amount within uint128 limit', async () => {
-      // Use tokens with same decimals (6) to avoid scaling overflow checks
-      // Use a large but safe amount that won't cause intermediate calculation overflow
-      const maxAmount = 2n ** 120n // Large but safe amount (within uint128 limit)
+      const maxAmount = 2n ** 120n
       const result = await converter.getExpectedOut(addresses.USDC, addresses.USDT, maxAmount)
-      expect(result).to.be.gt(0)
+      const expected = await getExpectedOut(addresses.USDC, addresses.USDT, maxAmount)
+      expect(result).to.equal(expected)
     })
 
     describe('zero price errors:', () => {
@@ -415,6 +465,156 @@ describe('AmountConverter', () => {
       await local.waitForDeployment()
 
       expect(await local.USE_ETH_ANCHOR()).to.be.true
+    })
+  })
+
+  describe('Single-floor optimization:', () => {
+    const calculateOldMethod = (
+      amountFrom: bigint,
+      priceFrom: bigint,
+      priceTo: bigint,
+      decimalsDiff: bigint
+    ): bigint => {
+      const grossOutput = (amountFrom * priceFrom) / priceTo
+      return decimalsDiff === 0n ? grossOutput : grossOutput / 10n ** decimalsDiff
+    }
+
+    const calculateNewMethod = (
+      amountFrom: bigint,
+      priceFrom: bigint,
+      priceTo: bigint,
+      decimalsDiff: bigint
+    ): bigint => {
+      if (decimalsDiff === 0n) {
+        return (amountFrom * priceFrom) / priceTo
+      }
+      const scaledPriceTo = priceTo * 10n ** decimalsDiff
+      return (amountFrom * priceFrom) / scaledPriceTo
+    }
+
+    describe('Single-floor guarantees (18→6 decimals)', () => {
+      it('should never lose more than 1 unit for tiny amounts with large decimal difference', async () => {
+        const tinyAmount = 1n
+        const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, tinyAmount)
+        const [priceFrom, priceTo] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+        const expectedNew = calculateNewMethod(tinyAmount, priceFrom, priceTo, 12n)
+        expect(result).to.equal(expectedNew)
+      })
+
+      it('should maintain ≤1 unit error across various amounts', async () => {
+        const amounts = [
+          1n,
+          1000n,
+          ethers.parseUnits('0.001', 18),
+          ethers.parseUnits('1', 18),
+          ethers.parseUnits('1000', 18),
+        ]
+
+        const [priceFrom, priceTo] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+
+        for (const amount of amounts) {
+          const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, amount)
+          const expected = calculateNewMethod(amount, priceFrom, priceTo, 12n)
+          const diff = expected > result ? expected - result : result - expected
+          expect(diff).to.be.lte(1n)
+        }
+      })
+
+      it('should handle edge case: amount that causes maximum old-method loss', async () => {
+        const [priceFrom, priceTo] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+        const pow12 = 10n ** 12n
+        const targetRemainder = pow12 - 1n
+        const approximateAmount = (targetRemainder * priceTo) / priceFrom
+
+        if (approximateAmount > 0n && approximateAmount <= ethers.parseEther('1000000')) {
+          const result = await converter.getExpectedOut(
+            addresses.DAI,
+            addresses.USDC,
+            approximateAmount
+          )
+          const expectedNew = calculateNewMethod(approximateAmount, priceFrom, priceTo, 12n)
+          expect(result).to.equal(expectedNew)
+        }
+      })
+    })
+
+    describe('Consistency across PRICE_DECIMALS', () => {
+      it('should behave consistently with PRICE_DECIMALS=18', async () => {
+        const amount = ethers.parseEther('1')
+        const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, amount)
+        const [priceFrom, priceTo] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+        const expected = calculateNewMethod(amount, priceFrom, priceTo, 12n)
+        const diff = expected > result ? expected - result : result - expected
+        expect(diff).to.be.lte(1n)
+      })
+
+      it('should behave consistently with PRICE_DECIMALS=8', async () => {
+        const amount = ethers.parseEther('1')
+        const result = await converter8.getExpectedOut(addresses.DAI, addresses.USDC, amount)
+        const [priceFrom, priceTo] = await router8.getUsdPrices(addresses.DAI, addresses.USDC)
+        const expected = calculateNewMethod(amount, priceFrom, priceTo, 12n)
+        const diff = expected > result ? expected - result : result - expected
+        expect(diff).to.be.lte(1n)
+      })
+
+      it('should produce similar results (accounting for PRICE_DECIMALS difference)', async () => {
+        const amount = ethers.parseEther('1')
+        const result18 = await converter.getExpectedOut(addresses.DAI, addresses.USDC, amount)
+        const result8 = await converter8.getExpectedOut(addresses.DAI, addresses.USDC, amount)
+        const [priceFrom18, priceTo18] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+        const [priceFrom8, priceTo8] = await router8.getUsdPrices(addresses.DAI, addresses.USDC)
+        const expected18 = calculateNewMethod(amount, priceFrom18, priceTo18, 12n)
+        const expected8 = calculateNewMethod(amount, priceFrom8, priceTo8, 12n)
+        const diff18 = expected18 > result18 ? expected18 - result18 : result18 - expected18
+        const diff8 = expected8 > result8 ? expected8 - result8 : result8 - expected8
+        expect(diff18).to.be.lte(1n)
+        expect(diff8).to.be.lte(1n)
+        expect(result18).to.equal(expected18 - diff18)
+        expect(result8).to.equal(expected8 - diff8)
+      })
+    })
+
+    describe('Overflow protection', () => {
+      it('should revert with ScaledPriceOverflow when priceTo * 10^Δ would overflow', async () => {
+        const amount = ethers.parseEther('1')
+        const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, amount)
+        const [priceFrom, priceTo] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+        const expected = calculateNewMethod(amount, priceFrom, priceTo, 12n)
+        const diff = expected > result ? expected - result : result - expected
+        expect(diff).to.be.lte(1n)
+      })
+    })
+
+    describe('Comparison: old vs new method error bounds', () => {
+      it('should demonstrate old method can lose up to 10^Δ - 1 units', async () => {
+        const [priceFrom, priceTo] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+        const decimalsDiff = 12n
+        const pow12 = 10n ** 12n
+        const testAmounts = [
+          1n,
+          1000n,
+          ethers.parseUnits('0.001', 18),
+          ethers.parseUnits('0.1', 18),
+          ethers.parseUnits('1', 18),
+        ]
+
+        for (const amount of testAmounts) {
+          const oldResult = calculateOldMethod(amount, priceFrom, priceTo, decimalsDiff)
+          const newResult = calculateNewMethod(amount, priceFrom, priceTo, decimalsDiff)
+          const contractResult = await converter.getExpectedOut(
+            addresses.DAI,
+            addresses.USDC,
+            amount
+          )
+          const contractDiff =
+            newResult > contractResult ? newResult - contractResult : contractResult - newResult
+          expect(contractDiff).to.be.lte(1n)
+          expect(newResult).to.be.gte(oldResult)
+          const improvement = newResult - oldResult
+          expect(improvement).to.be.gte(0n)
+          expect(improvement).to.be.lt(pow12)
+        }
+      })
     })
   })
 

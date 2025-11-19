@@ -1,6 +1,6 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
-import { parseEther, parseUnits } from 'ethers'
+import { parseEther } from 'ethers'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import type { AmountConverter, AmountConverterFactory, OracleRouter } from '../../typechain-types'
 import { getContracts } from '../../utils/contracts'
@@ -13,6 +13,52 @@ import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-ora
 import { QuoteDenomination } from '../../utils/oracle-router'
 
 const contracts = getContracts()
+
+const calculateExpectedOutput = (
+  amountFrom: bigint,
+  priceFrom: bigint,
+  priceTo: bigint,
+  decimalsFrom: number,
+  decimalsTo: number
+): bigint => {
+  const sellHasMoreOrEqualDecimals = decimalsFrom >= decimalsTo
+  const decimalsDiff = sellHasMoreOrEqualDecimals
+    ? decimalsFrom - decimalsTo
+    : decimalsTo - decimalsFrom
+
+  if (sellHasMoreOrEqualDecimals) {
+    const grossOutput = (amountFrom * priceFrom) / priceTo
+    return decimalsDiff === 0 ? grossOutput : grossOutput / 10n ** BigInt(decimalsDiff)
+  }
+
+  const pow10 = 10n ** BigInt(decimalsDiff)
+  const scaledAmountFrom = amountFrom * pow10
+  return (scaledAmountFrom * priceFrom) / priceTo
+}
+
+type QuoteValue = (typeof QuoteDenomination)[keyof typeof QuoteDenomination]
+
+const getExpectedOutFromRouter = async (
+  router: OracleRouter,
+  tokenFrom: string,
+  tokenTo: string,
+  amount: bigint,
+  denomination: QuoteValue
+): Promise<bigint> => {
+  const [priceFrom, priceTo, decimalsFrom, decimalsTo] = await router.getPricesAndDecimals(
+    tokenFrom,
+    tokenTo,
+    denomination
+  )
+
+  return calculateExpectedOutput(
+    amount,
+    priceFrom,
+    priceTo,
+    Number(decimalsFrom),
+    Number(decimalsTo)
+  )
+}
 
 describe('Integration: AmountConverter Denominations', () => {
   let router: OracleRouter
@@ -64,8 +110,6 @@ describe('Integration: AmountConverter Denominations', () => {
       const amount = parseEther('10')
       const result = await converter.getExpectedOut(contracts.STETH, contracts.LDO, amount)
 
-      expect(result).to.be.gt(0)
-
       const [basePrice, quotePrice] = await router.getPricesAndDecimals(
         contracts.STETH,
         contracts.LDO,
@@ -73,14 +117,12 @@ describe('Integration: AmountConverter Denominations', () => {
       )
       const manualCalc = (amount * basePrice) / quotePrice
 
-      expect(result).to.be.closeTo(manualCalc, 2n)
+      expect(result).to.equal(manualCalc)
     })
 
     it('should handle small conversions', async () => {
       const amount = parseEther('0.1')
       const result = await converter.getExpectedOut(contracts.STETH, contracts.LDO, amount)
-
-      expect(result).to.be.gt(0)
 
       // Verify using router directly
       const [basePrice, quotePrice] = await router.getPricesAndDecimals(
@@ -89,7 +131,7 @@ describe('Integration: AmountConverter Denominations', () => {
         1
       )
       const manualCalc = (amount * basePrice) / quotePrice
-      expect(result).to.be.closeTo(manualCalc, 2n)
+      expect(result).to.equal(manualCalc)
     })
 
     it('should produce consistent results for multiple conversions', async () => {
@@ -132,42 +174,60 @@ describe('Integration: AmountConverter Denominations', () => {
       const amount = parseEther('1')
       const result = await converter.getExpectedOut(contracts.STETH, contracts.DAI, amount)
 
-      expect(result).to.be.gt(0)
+      const expected = await getExpectedOutFromRouter(
+        router,
+        contracts.STETH,
+        contracts.DAI,
+        amount,
+        QuoteDenomination.USD
+      )
 
-      // stETH should be worth roughly 2000-4000 DAI
-      expect(result).to.be.gte(parseEther('1000'))
-      expect(result).to.be.lte(parseEther('10000'))
+      expect(result).to.equal(expected)
     })
 
     it('should convert stETH → USDC (6 decimals) using USD prices', async () => {
       const amount = parseEther('1')
       const result = await converter.getExpectedOut(contracts.STETH, contracts.USDC, amount)
 
-      expect(result).to.be.gt(0)
+      const expected = await getExpectedOutFromRouter(
+        router,
+        contracts.STETH,
+        contracts.USDC,
+        amount,
+        QuoteDenomination.USD
+      )
 
-      // Result should be in 6 decimals
-      expect(result).to.be.gte(parseUnits('1000', 6))
-      expect(result).to.be.lte(parseUnits('10000', 6))
+      expect(result).to.equal(expected)
     })
 
     it('should convert stETH → USDT (6 decimals) correctly', async () => {
       const amount = parseEther('1')
       const result = await converter.getExpectedOut(contracts.STETH, contracts.USDT, amount)
 
-      expect(result).to.be.gt(0)
+      const expected = await getExpectedOutFromRouter(
+        router,
+        contracts.STETH,
+        contracts.USDT,
+        amount,
+        QuoteDenomination.USD
+      )
 
-      // Result should be in 6 decimals, similar to USDC
-      expect(result).to.be.gte(parseUnits('1000', 6))
-      expect(result).to.be.lte(parseUnits('10000', 6))
+      expect(result).to.equal(expected)
     })
 
     it('should handle precision differences between stETH (18) and USDC (6)', async () => {
       const amount = parseEther('1.123456789123456789')
       const result = await converter.getExpectedOut(contracts.STETH, contracts.USDC, amount)
 
-      expect(result).to.be.gt(0)
-      // Result should be in 6 decimals - verify it's a reasonable value
-      expect(result).to.be.gte(parseUnits('1000', 6))
+      const expected = await getExpectedOutFromRouter(
+        router,
+        contracts.STETH,
+        contracts.USDC,
+        amount,
+        QuoteDenomination.USD
+      )
+
+      expect(result).to.equal(expected)
     })
   })
 })

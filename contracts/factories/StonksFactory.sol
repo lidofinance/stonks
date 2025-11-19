@@ -68,7 +68,7 @@ contract StonksFactory {
         if (settlement_ == address(0)) {
             revert InvalidSettlementAddress(settlement_);
         }
-        
+
         if (oracleRouter_ == address(0)) {
             revert InvalidOracleRouterAddress(oracleRouter_);
         }

@@ -48,6 +48,7 @@ contract AmountConverter is IAmountConverter {
     error TokensCannotBeSame();
     error InvalidDecimalsDifference(uint8 diff);
     error AmountFromTooLarge(uint256 amount);
+    error ScaledPriceOverflow();
     error PriceFromUsdZero();
     error PriceToUsdZero();
     error PriceFromEthZero();
@@ -59,8 +60,8 @@ contract AmountConverter is IAmountConverter {
      * @param oracleRouter_ Oracle router for price fetching
      * @param allowedTokensToSell_ List of addresses which are allowed to use as sell tokens
      * @param allowedTokensToBuy_ List of addresses of tokens that are allowed to be bought
-     * @param useEthAnchor_ If true, uses ETH-anchored pricing (both tokens must be ETH-quoted).
-     *                      If false, uses USD pricing (supports any denomination mix).
+     * @param useEthAnchor_ If true, prices are requested in ETH (tokens already quoted in ETH avoid a bridge, others are automatically bridged).
+     *                      If false, prices are requested in USD (router handles bridging as needed).
      */
     constructor(
         address oracleRouter_,
@@ -202,13 +203,20 @@ contract AmountConverter is IAmountConverter {
         }
 
         if (sellHasMoreOrEqualDecimals) {
-            // Round down is default for mulDiv.
-            uint256 grossOutput = Math.mulDiv(amountFrom_, priceFrom, priceTo);
-
             if (decimalsDiff == 0) {
-                expectedOutputAmount = grossOutput;
+                expectedOutputAmount = Math.mulDiv(amountFrom_, priceFrom, priceTo);
             } else {
-                expectedOutputAmount = grossOutput / (10 ** decimalsDiff);
+                uint256 pow10 = 10 ** decimalsDiff;
+
+                // Pre-multiply overflow check: ensure priceTo * pow10 won't overflow.
+                if (pow10 > type(uint256).max / priceTo) {
+                    revert ScaledPriceOverflow();
+                }
+
+                unchecked {
+                    uint256 scaledPriceTo = priceTo * pow10;
+                    expectedOutputAmount = Math.mulDiv(amountFrom_, priceFrom, scaledPriceTo);
+                }
             }
         } else {
             // Scale the input first to avoid overflow on multiplication by 10**diff.

@@ -17,7 +17,7 @@ export const getExpectedOut = async (
   ).getAddress()
   const feedRegistry = await ethers.getContractAt('IFeedRegistry', feedRegistryAddress)
 
-  const PRICE_DECIMALS = 8n
+  const PRICE_DECIMALS = 18n
 
   const readPriceNormalized = async (base: string, quote: string): Promise<bigint> => {
     const decimals = await feedRegistry.decimals(base, quote)

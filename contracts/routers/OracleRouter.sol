@@ -54,6 +54,11 @@ contract OracleRouter is IOracleRouter, Ownable {
         uint32 ethUsdMaxStalenessOverrideSeconds; // 0 => use global bridge staleness
     }
 
+    struct BridgeCache {
+        uint256 price;
+        uint32 capSeconds;
+    }
+
     // ==================== Storage Variables ====================
 
     /// @notice Mapping from token address to its price feed configuration.
@@ -107,8 +112,6 @@ contract OracleRouter is IOracleRouter, Ownable {
     error OracleBadAnswer(address aggregator, int256 answer);
     error OracleUnanswered(address aggregator, uint80 roundId, uint80 answeredInRound);
     error OracleQuantizedToZero(address aggregator, uint8 feedDecimals, uint8 unitDecimals);
-    error TokenNotEthQuoted(address token);
-    error TokenNotUsdQuoted(address token);
 
     // ==================== Constructor ====================
 
@@ -280,13 +283,15 @@ contract OracleRouter is IOracleRouter, Ownable {
     }
 
     /**
-     * @notice Gets prices and decimal places for two tokens with the same quote denomination.
-     * @dev Both tokens must be configured with the same primary quote denomination (USD or ETH).
+     * @notice Gets prices and decimal places for two tokens in the requested quote denomination.
+     * @dev Tokens can have different primary quote denominations (USD or ETH). If a token's
+     *      primary quote doesn't match the requested quote, the price will be bridged through
+     *      ETH/USD to convert to the requested denomination.
      * @param baseToken_ Address of the base token.
      * @param quoteToken_ Address of the quote token.
-     * @param quote_ Expected quote denomination (USD or ETH) for both tokens.
-     * @return basePrice Price of the base token (normalized to PRICE_UNIT).
-     * @return quotePrice Price of the quote token (normalized to PRICE_UNIT).
+     * @param quote_ Requested quote denomination (USD or ETH) for the returned prices.
+     * @return basePrice Price of the base token in the requested quote (normalized to PRICE_UNIT).
+     * @return quotePrice Price of the quote token in the requested quote (normalized to PRICE_UNIT).
      * @return baseTokenDecimals Number of decimals for the base token.
      * @return quoteTokenDecimals Number of decimals for the quote token.
      */
@@ -311,14 +316,6 @@ contract OracleRouter is IOracleRouter, Ownable {
             revert TokenNotConfigured(baseToken_);
         }
 
-        if (baseConfig.primaryQuote != quote_) {
-            if (quote_ == IOracleRouter.QuoteDenomination.USD) {
-                revert TokenNotUsdQuoted(baseToken_);
-            } else {
-                revert TokenNotEthQuoted(baseToken_);
-            }
-        }
-
         TokenConfig storage quoteConfig = tokenConfig[quoteToken_];
         quoteTokenDecimals = quoteConfig.tokenDecimals;
 
@@ -326,25 +323,16 @@ contract OracleRouter is IOracleRouter, Ownable {
             revert TokenNotConfigured(quoteToken_);
         }
 
-        if (quoteConfig.primaryQuote != quote_) {
-            if (quote_ == IOracleRouter.QuoteDenomination.USD) {
-                revert TokenNotUsdQuoted(quoteToken_);
-            } else {
-                revert TokenNotEthQuoted(quoteToken_);
-            }
-        }
+        BridgeCache memory sharedBridge = _sharedBridgeIfSameCap(
+            baseConfig.primaryQuote != quote_,
+            quoteConfig.primaryQuote != quote_,
+            baseConfig,
+            quoteConfig
+        );
 
-        if (quote_ == IOracleRouter.QuoteDenomination.USD) {
-            (basePrice, quotePrice) = _getUsdPrices(baseToken_, quoteToken_);
-        } else {
-            // Read ETH prices directly without USD conversion
-            basePrice = _readNormalizedPrice(baseToken_, ETH_DENOMINATION, baseConfig.primaryFeed);
-            quotePrice = _readNormalizedPrice(
-                quoteToken_,
-                ETH_DENOMINATION,
-                quoteConfig.primaryFeed
-            );
-        }
+        // Get prices in the requested quote denomination, bridging through ETH/USD if needed
+        basePrice = _getPriceInQuote(baseToken_, baseConfig, quote_, sharedBridge);
+        quotePrice = _getPriceInQuote(quoteToken_, quoteConfig, quote_, sharedBridge);
     }
 
     /**
@@ -415,34 +403,23 @@ contract OracleRouter is IOracleRouter, Ownable {
     }
 
     /**
-     * @dev Gets USD price for a token. Optimized to accept pre-fetched ethUsd to avoid redundant reads.
+     * @dev Gets USD price for a token, optionally reusing a shared ETH/USD bridge price.
      * @param token_ Address of the token to price.
-     * @param ethUsd_ Pre-fetched ETH/USD price, or 0 to fetch internally (prices are never 0).
+     * @param config_ Token configuration.
+     * @param sharedBridge_ Cached ETH/USD bridge price and cap (if available).
      * @return price USD price of the token, normalized to PRICE_UNIT.
      */
-    function _getUsdPrice(address token_, uint256 ethUsd_) internal view returns (uint256 price) {
-        TokenConfig storage config = tokenConfig[token_];
-
-        if (!config.isActive || config.tokenDecimals == 0) {
+    function _getUsdPrice(
+        address token_,
+        TokenConfig storage config_,
+        BridgeCache memory sharedBridge_
+    ) internal view returns (uint256 price) {
+        if (!config_.isActive || config_.tokenDecimals == 0) {
             revert TokenNotConfigured(token_);
         }
 
-        if (config.primaryQuote == IOracleRouter.QuoteDenomination.USD) {
-            return _readNormalizedPrice(token_, USD_DENOMINATION, config.primaryFeed);
-        }
-
-        // Token is ETH-quoted, need to bridge via ETH/USD
-        uint256 tokenToEth = _readNormalizedPrice(token_, ETH_DENOMINATION, config.primaryFeed);
-
-        // Use provided ethUsd or fetch if not provided (0 means fetch)
-        uint256 ethUsdPrice;
-        if (ethUsd_ != 0) {
-            ethUsdPrice = ethUsd_;
-        } else {
-            ethUsdPrice = _readEthUsdWithCap(_effectiveEthUsdStaleness(config));
-        }
-
-        price = Math.mulDiv(tokenToEth, ethUsdPrice, PRICE_UNIT);
+        return
+            _getPriceInQuote(token_, config_, IOracleRouter.QuoteDenomination.USD, sharedBridge_);
     }
 
     /**
@@ -456,25 +433,41 @@ contract OracleRouter is IOracleRouter, Ownable {
         TokenConfig storage baseConfig = tokenConfig[baseToken_];
         TokenConfig storage quoteConfig = tokenConfig[quoteToken_];
 
-        // If both tokens are ETH-quoted with same staleness, fetch ETH/USD once
-        if (
-            baseConfig.primaryQuote == IOracleRouter.QuoteDenomination.ETH &&
-            quoteConfig.primaryQuote == IOracleRouter.QuoteDenomination.ETH
-        ) {
-            uint32 baseCap = _effectiveEthUsdStaleness(baseConfig);
-            uint32 quoteCap = _effectiveEthUsdStaleness(quoteConfig);
+        BridgeCache memory sharedBridge = _sharedBridgeIfSameCap(
+            baseConfig.primaryQuote == IOracleRouter.QuoteDenomination.ETH,
+            quoteConfig.primaryQuote == IOracleRouter.QuoteDenomination.ETH,
+            baseConfig,
+            quoteConfig
+        );
 
-            if (baseCap == quoteCap) {
-                uint256 ethUsd = _readEthUsdWithCap(baseCap);
-                baseUsdPrice = _getUsdPrice(baseToken_, ethUsd);
-                quoteUsdPrice = _getUsdPrice(quoteToken_, ethUsd);
-                return (baseUsdPrice, quoteUsdPrice);
-            }
+        baseUsdPrice = _getUsdPrice(baseToken_, baseConfig, sharedBridge);
+        quoteUsdPrice = _getUsdPrice(quoteToken_, quoteConfig, sharedBridge);
+    }
+
+    function _sharedBridgeIfSameCap(
+        bool firstNeedsBridge_,
+        bool secondNeedsBridge_,
+        TokenConfig storage firstConfig_,
+        TokenConfig storage secondConfig_
+    ) internal view returns (BridgeCache memory cache) {
+        if (!firstNeedsBridge_ || !secondNeedsBridge_) {
+            return cache;
         }
 
-        // Fallback: fetch prices independently (0 = fetch internally)
-        baseUsdPrice = _getUsdPrice(baseToken_, 0);
-        quoteUsdPrice = _getUsdPrice(quoteToken_, 0);
+        uint32 firstCap = _effectiveEthUsdStaleness(firstConfig_);
+        uint32 secondCap = _effectiveEthUsdStaleness(secondConfig_);
+
+        if (firstCap != secondCap) {
+            return cache;
+        }
+
+        uint256 price = _readEthUsdWithCap(firstCap);
+
+        if (price == 0) {
+            return cache;
+        }
+
+        cache = BridgeCache({price: price, capSeconds: firstCap});
     }
 
     function _readEthUsdWithCap(uint32 capSeconds_) internal view returns (uint256) {
@@ -502,6 +495,58 @@ contract OracleRouter is IOracleRouter, Ownable {
             return overrideSeconds;
         } else {
             return maxStaleness;
+        }
+    }
+
+    function _getPriceInQuote(
+        address token_,
+        TokenConfig storage config_,
+        IOracleRouter.QuoteDenomination requestedQuote_,
+        BridgeCache memory sharedBridge_
+    ) internal view returns (uint256 price) {
+        // If the token's primary quote matches the requested quote, use it directly
+        if (config_.primaryQuote == requestedQuote_) {
+            if (requestedQuote_ == IOracleRouter.QuoteDenomination.USD) {
+                return _readNormalizedPrice(token_, USD_DENOMINATION, config_.primaryFeed);
+            } else {
+                return _readNormalizedPrice(token_, ETH_DENOMINATION, config_.primaryFeed);
+            }
+        }
+
+        // Need to bridge through ETH/USD
+        // Get the token's price in its primary quote
+        uint256 tokenInPrimaryQuote;
+        if (config_.primaryQuote == IOracleRouter.QuoteDenomination.USD) {
+            tokenInPrimaryQuote = _readNormalizedPrice(
+                token_,
+                USD_DENOMINATION,
+                config_.primaryFeed
+            );
+        } else {
+            tokenInPrimaryQuote = _readNormalizedPrice(
+                token_,
+                ETH_DENOMINATION,
+                config_.primaryFeed
+            );
+        }
+
+        // Get ETH/USD price for bridging
+        uint32 cap = _effectiveEthUsdStaleness(config_);
+        uint256 ethUsdPrice;
+
+        if (sharedBridge_.price != 0 && sharedBridge_.capSeconds == cap) {
+            ethUsdPrice = sharedBridge_.price;
+        } else {
+            ethUsdPrice = _readEthUsdWithCap(cap);
+        }
+
+        // Convert to requested quote
+        if (requestedQuote_ == IOracleRouter.QuoteDenomination.USD) {
+            // Token is ETH-quoted, need USD: token/ETH * ETH/USD = token/USD
+            price = Math.mulDiv(tokenInPrimaryQuote, ethUsdPrice, PRICE_UNIT);
+        } else {
+            // Token is USD-quoted, need ETH: token/USD / ETH/USD = token/ETH
+            price = Math.mulDiv(tokenInPrimaryQuote, PRICE_UNIT, ethUsdPrice);
         }
     }
 
