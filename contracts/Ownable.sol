@@ -18,13 +18,17 @@ contract Ownable {
 
     /// @notice Address of the manager with restricted access to certain functions.
     address public manager;
+    /// @notice Address of the emergency operator with access to critical emergency controls (pause/kill).
+    address public emergencyOperator;
 
     event ManagerSet(address manager);
+    event EmergencyOperatorSet(address emergencyOperator);
     event AgentSet(address agent);
 
     error InvalidAgentAddress(address agent);
     error NotAgentOrManager(address sender);
     error NotAgent(address sender);
+    error NotEmergencyOperator(address sender);
 
     /**
      * @dev Modifier to restrict function access from the agent.
@@ -42,6 +46,17 @@ contract Ownable {
     modifier onlyAgentOrManager() {
         if (msg.sender != AGENT && msg.sender != manager) {
             revert NotAgentOrManager(msg.sender);
+        }
+        _;
+    }
+
+    /**
+     * @dev Modifier to restrict function access for critical emergency controls (pause/kill).
+     *      Allows the agent, the manager, or the dedicated emergency operator.
+     */
+    modifier onlyEmergencyOperator() {
+        if (msg.sender != AGENT && msg.sender != manager && msg.sender != emergencyOperator) {
+            revert NotEmergencyOperator(msg.sender);
         }
         _;
     }
@@ -72,5 +87,15 @@ contract Ownable {
         manager = manager_;
 
         emit ManagerSet(manager_);
+    }
+
+    /**
+     * @dev Sets the emergency operator address.
+     * @param emergencyOperator_ The address of the emergency operator.
+     */
+    function setEmergencyOperator(address emergencyOperator_) external onlyAgent {
+        emergencyOperator = emergencyOperator_;
+
+        emit EmergencyOperatorSet(emergencyOperator_);
     }
 }

@@ -21,16 +21,21 @@ describe('Stonks - Emergency Controls', function () {
   const MARGIN_IN_BPS = 500
 
   let manager: Signer
+  let agent: Signer
+  let stranger: Signer
   let stonks: Stonks
   let order: Order
   let orderHash: string
   let oracleRouter: OracleRouter
   let amountConverterTest: AmountConverterTest
   let snapshot: SnapshotRestorer
+  let emergencyOperator: Signer
 
   this.beforeAll(async function () {
     snapshot = await takeSnapshot()
-    manager = (await ethers.getSigners())[0]
+    const signers = await ethers.getSigners()
+    manager = signers[0]
+    stranger = signers[1]
 
     const amountConverterTestFactory = await ethers.getContractFactory('AmountConverterTest')
 
@@ -74,6 +79,15 @@ describe('Stonks - Emergency Controls', function () {
       },
     })
     stonks = stonksInstance
+
+    // Configure emergency operator to use the dedicated multisig in tests
+    agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+    await ethers.provider.send('hardhat_setBalance', [
+      contracts.EMERGENCY_MULTISIG,
+      '0x1000000000000000000',
+    ])
+    await stonks.connect(agent).setEmergencyOperator(contracts.EMERGENCY_MULTISIG)
+    emergencyOperator = await ethers.getImpersonatedSigner(contracts.EMERGENCY_MULTISIG)
     await fillUpERC20FromTreasury({
       token: contracts.STETH,
       amount: ethers.parseEther('1'),
@@ -93,8 +107,36 @@ describe('Stonks - Emergency Controls', function () {
     expect(await order.isValidSignature(orderHash, '0x')).to.equal(MAGIC_VALUE)
   })
 
+  describe('emergency operator configuration', function () {
+    it('allows agent to set emergency operator', async function () {
+      const [, , newEmergency] = await ethers.getSigners()
+      const newEmergencyAddress = await newEmergency.getAddress()
+
+      await stonks.connect(agent).setEmergencyOperator(newEmergencyAddress)
+      expect(await stonks.emergencyOperator()).to.equal(newEmergencyAddress)
+
+      // restore original emergency multisig for other tests
+      await stonks.connect(agent).setEmergencyOperator(contracts.EMERGENCY_MULTISIG)
+      expect(await stonks.emergencyOperator()).to.equal(contracts.EMERGENCY_MULTISIG)
+    })
+
+    it('rejects manager attempting to set emergency operator', async function () {
+      const [, , newEmergency] = await ethers.getSigners()
+      await expect(stonks.connect(manager).setEmergencyOperator(await newEmergency.getAddress()))
+        .to.be.revertedWithCustomError(stonks, 'NotAgent')
+        .withArgs(await manager.getAddress())
+    })
+
+    it('rejects stranger attempting to set emergency operator', async function () {
+      const [, , newEmergency] = await ethers.getSigners()
+      await expect(stonks.connect(stranger).setEmergencyOperator(await newEmergency.getAddress()))
+        .to.be.revertedWithCustomError(stonks, 'NotAgent')
+        .withArgs(await stranger.getAddress())
+    })
+  })
+
   it('signatures pause halts fills and unpause restores', async function () {
-    // pause signatures
+    // pause signatures (manager is allowed emergency operator)
     await stonks.pauseSignatures()
     expect(await stonks.areSignaturesPaused()).to.equal(true)
     await expect(order.isValidSignature(orderHash, '0x')).to.be.revertedWithCustomError(
@@ -127,7 +169,8 @@ describe('Stonks - Emergency Controls', function () {
   })
 
   it('killSwitch is irreversible, pauses creation and signatures', async function () {
-    await stonks.killSwitch()
+    // Engage kill switch via emergency operator multisig
+    await stonks.connect(emergencyOperator).killSwitch()
     expect(await stonks.isKilled()).to.equal(true)
     expect(await stonks.isCreationPaused()).to.equal(true)
     expect(await stonks.areSignaturesPaused()).to.equal(true)
@@ -141,6 +184,88 @@ describe('Stonks - Emergency Controls', function () {
       order,
       'SignaturesGloballyPaused'
     )
+  })
+
+  describe('emergency operator access control', function () {
+    it('allows manager to pause and unpause creation and signatures', async function () {
+      // ensure clean state
+      if (await stonks.isCreationPaused()) {
+        await stonks.connect(agent).unpauseCreation()
+      }
+      if (await stonks.areSignaturesPaused()) {
+        await stonks.connect(agent).unpauseSignatures()
+      }
+
+      await stonks.connect(manager).pauseCreation()
+      expect(await stonks.isCreationPaused()).to.equal(true)
+
+      await stonks.connect(manager).unpauseCreation()
+      expect(await stonks.isCreationPaused()).to.equal(false)
+
+      await stonks.connect(manager).pauseSignatures()
+      expect(await stonks.areSignaturesPaused()).to.equal(true)
+
+      await stonks.connect(manager).unpauseSignatures()
+      expect(await stonks.areSignaturesPaused()).to.equal(false)
+    })
+
+    it('allows agent to pause and unpause creation and signatures', async function () {
+      // ensure clean state
+      if (await stonks.isCreationPaused()) {
+        await stonks.connect(agent).unpauseCreation()
+      }
+      if (await stonks.areSignaturesPaused()) {
+        await stonks.connect(agent).unpauseSignatures()
+      }
+
+      await stonks.connect(agent).pauseCreation()
+      expect(await stonks.isCreationPaused()).to.equal(true)
+
+      await stonks.connect(agent).unpauseCreation()
+      expect(await stonks.isCreationPaused()).to.equal(false)
+
+      await stonks.connect(agent).pauseSignatures()
+      expect(await stonks.areSignaturesPaused()).to.equal(true)
+
+      await stonks.connect(agent).unpauseSignatures()
+      expect(await stonks.areSignaturesPaused()).to.equal(false)
+    })
+
+    it('allows emergency operator multisig to pause and unpause creation and signatures', async function () {
+      // ensure clean state
+      if (await stonks.isCreationPaused()) {
+        await stonks.connect(agent).unpauseCreation()
+      }
+      if (await stonks.areSignaturesPaused()) {
+        await stonks.connect(agent).unpauseSignatures()
+      }
+
+      await stonks.connect(emergencyOperator).pauseCreation()
+      expect(await stonks.isCreationPaused()).to.equal(true)
+
+      await stonks.connect(emergencyOperator).unpauseCreation()
+      expect(await stonks.isCreationPaused()).to.equal(false)
+
+      await stonks.connect(emergencyOperator).pauseSignatures()
+      expect(await stonks.areSignaturesPaused()).to.equal(true)
+
+      await stonks.connect(emergencyOperator).unpauseSignatures()
+      expect(await stonks.areSignaturesPaused()).to.equal(false)
+    })
+
+    it('rejects stranger calling pause or kill controls', async function () {
+      await expect(stonks.connect(stranger).pauseCreation())
+        .to.be.revertedWithCustomError(stonks, 'NotEmergencyOperator')
+        .withArgs(await stranger.getAddress())
+
+      await expect(stonks.connect(stranger).pauseSignatures())
+        .to.be.revertedWithCustomError(stonks, 'NotEmergencyOperator')
+        .withArgs(await stranger.getAddress())
+
+      await expect(stonks.connect(stranger).killSwitch())
+        .to.be.revertedWithCustomError(stonks, 'NotEmergencyOperator')
+        .withArgs(await stranger.getAddress())
+    })
   })
 
   this.afterAll(async function () {

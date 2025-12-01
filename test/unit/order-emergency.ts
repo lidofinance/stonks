@@ -21,16 +21,21 @@ describe('Order - Emergency Controls & Signature Pause', function () {
   const MARGIN_IN_BPS = 500
 
   let manager: Signer
+  let stranger: Signer
   let stonks: Stonks
   let order: Order
   let orderHash: string
   let oracleRouter: OracleRouter
   let amountConverterTest: AmountConverterTest
   let snapshot: SnapshotRestorer
+  let agent: Signer
+  let emergencyOperator: Signer
 
   this.beforeAll(async function () {
     snapshot = await takeSnapshot()
-    manager = (await ethers.getSigners())[0]
+    const signers = await ethers.getSigners()
+    manager = signers[0]
+    stranger = signers[1]
 
     const amountConverterTestFactory = await ethers.getContractFactory('AmountConverterTest')
 
@@ -74,6 +79,7 @@ describe('Order - Emergency Controls & Signature Pause', function () {
       },
     })
     stonks = stonksInstance
+    agent = await ethers.getImpersonatedSigner(contracts.AGENT)
     await fillUpERC20FromTreasury({
       token: contracts.STETH,
       amount: ethers.parseEther('1'),
@@ -87,6 +93,14 @@ describe('Order - Emergency Controls & Signature Pause', function () {
     const evt = await getPlaceOrderData(rc)
     order = await ethers.getContractAt('Order', evt.address, manager)
     orderHash = await formOrderHashFromTxReceipt(rc)
+
+    // configure emergency operator on the Order itself
+    await ethers.provider.send('hardhat_setBalance', [
+      contracts.EMERGENCY_MULTISIG,
+      '0x1000000000000000000',
+    ])
+    await order.connect(agent).setEmergencyOperator(contracts.EMERGENCY_MULTISIG)
+    emergencyOperator = await ethers.getImpersonatedSigner(contracts.EMERGENCY_MULTISIG)
   })
 
   it('baseline sanity: validation works', async function () {
@@ -139,8 +153,58 @@ describe('Order - Emergency Controls & Signature Pause', function () {
     expect(await freshOrder.isValidSignature(freshHash, '0x')).to.equal(MAGIC_VALUE)
   })
 
+  it('allows manager to call emergency controls on Order', async function () {
+    const tokenFrom = await stonks.TOKEN_FROM()
+    const token = await ethers.getContractAt('IERC20', tokenFrom)
+    const balBefore = await token.balanceOf(order)
+    expect(balBefore).to.be.gt(0n)
+
+    await order.connect(manager).emergencyRevokeRelayer()
+    await order.connect(manager).emergencyCancelAndReturn()
+
+    const balAfter = await token.balanceOf(order)
+    expect(balAfter).to.be.closeTo(0n, 2n)
+  })
+
+  it('allows agent to call emergency controls on Order', async function () {
+    const tokenFrom = await stonks.TOKEN_FROM()
+    const token = await ethers.getContractAt('IERC20', tokenFrom)
+    const balBefore = await token.balanceOf(order)
+    expect(balBefore).to.be.gt(0n)
+
+    await order.connect(agent).emergencyRevokeRelayer()
+    await order.connect(agent).emergencyCancelAndReturn()
+
+    const balAfter = await token.balanceOf(order)
+    expect(balAfter).to.be.closeTo(0n, 2n)
+  })
+
+  it('allows emergency operator multisig to call emergency controls on Order', async function () {
+    const tokenFrom = await stonks.TOKEN_FROM()
+    const token = await ethers.getContractAt('IERC20', tokenFrom)
+    const balBefore = await token.balanceOf(order)
+    expect(balBefore).to.be.gt(0n)
+
+    await order.connect(emergencyOperator).emergencyRevokeRelayer()
+    await order.connect(emergencyOperator).emergencyCancelAndReturn()
+
+    const balAfter = await token.balanceOf(order)
+    expect(balAfter).to.be.closeTo(0n, 2n)
+  })
+
+  it('rejects stranger for Order emergency controls', async function () {
+    await expect(order.connect(stranger).emergencyCancelAndReturn())
+      .to.be.revertedWithCustomError(order, 'NotEmergencyOperator')
+      .withArgs(await stranger.getAddress())
+
+    await expect(order.connect(stranger).emergencyRevokeRelayer())
+      .to.be.revertedWithCustomError(order, 'NotEmergencyOperator')
+      .withArgs(await stranger.getAddress())
+  })
+
   this.afterAll(async function () {
     await snapshot.restore()
+
     resetTestOracleRouter()
     resetTestFeedRegistryStub()
   })

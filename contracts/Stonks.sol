@@ -292,21 +292,21 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     /**
      * @notice Pause order creation. Does not affect recovery or existing orders' validation.
      */
-    function pauseCreation() external onlyAgentOrManager {
+    function pauseCreation() external onlyEmergencyOperator {
         _pause();
     }
 
     /**
      * @notice Unpause order creation. No effect if killSwitch was engaged.
      */
-    function unpauseCreation() external onlyAgentOrManager {
+    function unpauseCreation() external onlyEmergencyOperator {
         _unpause();
     }
 
     /**
      * @notice Pause signatures globally (halts fills).
      */
-    function pauseSignatures() external onlyAgentOrManager {
+    function pauseSignatures() external onlyEmergencyOperator {
         if (_signaturesPaused) {
             return;
         }
@@ -319,7 +319,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     /**
      * @notice Unpause signatures globally (resume fills).
      */
-    function unpauseSignatures() external onlyAgentOrManager {
+    function unpauseSignatures() external onlyEmergencyOperator {
         if (!_signaturesPaused) {
             return;
         }
@@ -332,7 +332,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     /**
      * @notice Engage irreversible kill switch: pauses creation, pauses signatures, marks killed.
      */
-    function killSwitch() external onlyAgentOrManager {
+    function killSwitch() external onlyEmergencyOperator {
         // Set signatures paused if not already, emit telemetry when it changes
         if (!_signaturesPaused) {
             _signaturesPaused = true;

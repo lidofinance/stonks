@@ -418,8 +418,9 @@ contract Order is IERC1271, AssetRecoverer {
     /**
      * @notice Cancels this order and returns all `tokenFrom` back to Stonks. Also revokes relayer allowance.
      *         Idempotent: repeated calls have no adverse effect.
+     * @dev Restricted to emergency operators (agent, manager, or emergency operator multisig).
      */
-    function emergencyCancelAndReturn() external onlyAgentOrManager {
+    function emergencyCancelAndReturn() external onlyEmergencyOperator {
         _ensureInitialized();
         if (!cancelled) {
             cancelled = true;
@@ -433,9 +434,9 @@ contract Order is IERC1271, AssetRecoverer {
 
     /**
      * @notice Revokes relayer allowance without moving funds.
-     *         Idempotent and callable by Manager/Agent.
+     *         Idempotent and callable by emergency operators.
      */
-    function emergencyRevokeRelayer() external onlyAgentOrManager {
+    function emergencyRevokeRelayer() external onlyEmergencyOperator {
         _ensureInitialized();
         _revokeRelayerAllowance();
     }
