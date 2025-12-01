@@ -126,16 +126,16 @@ describe('OracleRouter - Bridging Tests', function () {
     // Configure tokens with mixed denominations
     await oracleRouter
       .connect(agent)
-      .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, 18, true)
+      .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
     await oracleRouter
       .connect(agent)
-      .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, 6, true)
+      .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, true)
     await oracleRouter
       .connect(agent)
-      .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
+      .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
     await oracleRouter
       .connect(agent)
-      .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
+      .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
     // Update all feeds to be fresh
     await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
@@ -533,10 +533,10 @@ describe('OracleRouter - Bridging Tests', function () {
       const agent = await getAgentSigner()
       await freshRouter
         .connect(agent)
-        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
+        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
       await freshRouter
         .connect(agent)
-        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
 
       // Should revert when trying to bridge without ETH/USD bridge configured
       await expect(

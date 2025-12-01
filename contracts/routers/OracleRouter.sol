@@ -98,7 +98,6 @@ contract OracleRouter is IOracleRouter, Ownable {
     error InvalidUnitDecimals();
     error InvalidTokenDecimals();
     error TokenNotConfigured(address token);
-    error TokenDecimalsMismatch(uint8 erc20Decimals, uint8 providedDecimals);
     error TokenStateUnchanged(address token, bool currentState);
     error EthUsdBridgeMissing();
     error FeedMissing(address base, address quote);
@@ -165,17 +164,15 @@ contract OracleRouter is IOracleRouter, Ownable {
      * @param token_ Address of the token to configure.
      * @param primaryQuote_ Primary quote denomination (USD or ETH).
      * @param maxStalenessSeconds_ Maximum allowed staleness for the price feed.
-     * @param tokenDecimals_ Number of decimals for the token.
      * @param isActive_ Whether the token should be active for price queries.
      */
     function setTokenFeed(
         address token_,
         IOracleRouter.QuoteDenomination primaryQuote_,
         uint32 maxStalenessSeconds_,
-        uint8 tokenDecimals_,
         bool isActive_
     ) external onlyAgentOrManager {
-        _setTokenFeed(token_, primaryQuote_, maxStalenessSeconds_, tokenDecimals_, isActive_);
+        _setTokenFeed(token_, primaryQuote_, maxStalenessSeconds_, isActive_);
     }
 
     /**
@@ -602,7 +599,6 @@ contract OracleRouter is IOracleRouter, Ownable {
         address token_,
         IOracleRouter.QuoteDenomination primaryQuote_,
         uint32 maxStalenessSeconds_,
-        uint8 tokenDecimals_,
         bool isActive_
     ) internal {
         if (token_ == address(0)) {
@@ -613,22 +609,10 @@ contract OracleRouter is IOracleRouter, Ownable {
             revert InvalidStaleness();
         }
 
-        uint8 erc20Decimals;
-        if (tokenDecimals_ != 0) {
-            erc20Decimals = tokenDecimals_;
-        } else {
-            erc20Decimals = IERC20Metadata(token_).decimals();
-        }
+        uint8 erc20Decimals = IERC20Metadata(token_).decimals();
 
         if (erc20Decimals == 0 || erc20Decimals > MAX_DECIMALS) {
             revert InvalidTokenDecimals();
-        }
-
-        if (tokenDecimals_ != 0) {
-            uint8 onchain = IERC20Metadata(token_).decimals();
-            if (onchain != erc20Decimals) {
-                revert TokenDecimalsMismatch(onchain, erc20Decimals);
-            }
         }
 
         address quote;

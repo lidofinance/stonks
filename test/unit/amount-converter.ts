@@ -69,11 +69,11 @@ describe('AmountConverter', () => {
         const usdFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_USD_QUOTE)
 
         if (usdFeed !== ethers.ZeroAddress) {
-          await router8.connect(agentSigner).setTokenFeed(token, 0, 86_400, decimals, true)
+          await router8.connect(agentSigner).setTokenFeed(token, 0, 86_400, true)
         } else {
           const ethFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_ETH_QUOTE)
           if (ethFeed !== ethers.ZeroAddress) {
-            await router8.connect(agentSigner).setTokenFeed(token, 1, 86_400, decimals, true)
+            await router8.connect(agentSigner).setTokenFeed(token, 1, 86_400, true)
           }
         }
       } catch (e) {
@@ -225,7 +225,7 @@ describe('AmountConverter', () => {
       const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
 
       const decimals = await readTokenDecimals(addresses.DAI)
-      await router.setTokenFeed(addresses.DAI, QuoteDenomination.USD, 1, decimals, true)
+      await router.setTokenFeed(addresses.DAI, QuoteDenomination.USD, 1, true)
 
       const latest = await ethers.provider.getBlock('latest')
       const nowTs = BigInt(latest!.timestamp)
@@ -246,7 +246,7 @@ describe('AmountConverter', () => {
         converter.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1'))
       ).to.be.revertedWithCustomError(router, 'OracleStale')
 
-      await router.setTokenFeed(addresses.DAI, QuoteDenomination.USD, 86_400, decimals, true)
+      await router.setTokenFeed(addresses.DAI, QuoteDenomination.USD, 86_400, true)
       await refreshTestFeedData([addresses.DAI])
     })
 

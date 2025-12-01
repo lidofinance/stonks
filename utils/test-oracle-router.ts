@@ -49,20 +49,16 @@ async function initializeGlobalOracleRouter(config: TestOracleRouterConfig): Pro
     // Ignore if already configured
   }
 
-  const erc20Iface = new ethers.Interface(['function decimals() view returns (uint8)'])
-  const erc20 = (addr: string) => new ethers.Contract(addr, erc20Iface, deployer)
-
   for (const token of tokens) {
     try {
-      const decimals = await erc20(token).getFunction('decimals').staticCall()
       const usdFeed = await stub.getFeed(token, contracts.CHAINLINK_USD_QUOTE)
 
       if (usdFeed !== ethers.ZeroAddress) {
-        await oracleRouter.connect(agentSigner).setTokenFeed(token, 0, 86_400, decimals, true)
+        await oracleRouter.connect(agentSigner).setTokenFeed(token, 0, 86_400, true)
       } else {
         const ethFeed = await stub.getFeed(token, contracts.CHAINLINK_ETH_QUOTE)
         if (ethFeed !== ethers.ZeroAddress) {
-          await oracleRouter.connect(agentSigner).setTokenFeed(token, 1, 86_400, decimals, true)
+          await oracleRouter.connect(agentSigner).setTokenFeed(token, 1, 86_400, true)
         } else {
           console.warn(`No feeds available for token ${token}, skipping configuration`)
         }

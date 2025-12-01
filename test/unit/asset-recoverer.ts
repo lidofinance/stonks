@@ -105,16 +105,6 @@ describe('Asset recoverer', async function () {
       const NFT721 = await ethers.getContractFactory('NFT_721')
       nft721 = await NFT721.deploy('NFT_721', 'N721')
       await nft721.waitForDeployment()
-
-      // Generate a clean EOA address for testing
-      const tokenHolder = ethers.getCreateAddress({
-        from: '0x0000000000000000000000000000000000000000',
-        nonce: 0,
-      })
-
-      const NFT1155 = await ethers.getContractFactory('NFT_1155')
-      nft1155 = await NFT1155.deploy('https://game.example/api/item/{id}.json', tokenHolder)
-      await nft1155.waitForDeployment()
     })
 
     describe('recovering Ether:', async function () {
@@ -214,8 +204,8 @@ describe('Asset recoverer', async function () {
       this.beforeEach(async function () {
         snapshotId = await network.provider.send('evm_snapshot')
 
-        const nftHolder = (await ethers.getSigners())[0].address
-        await nft721.transferFrom(nftHolder, subjectAddress, nftId)
+        const nftReceiver = (await ethers.getSigners())[0].address
+        await nft721.transferFrom(nftReceiver, subjectAddress, nftId)
       })
 
       this.afterEach(async function () {
@@ -260,15 +250,35 @@ describe('Asset recoverer', async function () {
     })
 
     describe('recovering ERC1155:', async function () {
-      it('should successfully recover recover ERC1155', async () => {
-        // Generate the same tokenHolder address as used in deployment
-        const tokenHolder = ethers.getCreateAddress({
-          from: '0x0000000000000000000000000000000000000000',
+      let nft1155Receiver: string
+      let nft1155ReceiverSigner: Signer
+
+      this.beforeAll(async function () {
+        nft1155Receiver = ethers.getCreateAddress({
+          from: '0x0000000000000000000000000000000000000001',
           nonce: 0,
         })
 
-        expect(await nft1155.balanceOf(tokenHolder, nftId)).to.equal(10)
+        await setBalance(nft1155Receiver, ethers.parseEther('1'))
+        await impersonateAccount(nft1155Receiver)
+        nft1155ReceiverSigner = await ethers.getSigner(nft1155Receiver)
+
+        const NFT1155 = await ethers.getContractFactory('NFT_1155')
+        nft1155 = await NFT1155.deploy('https://game.example/api/item/{id}.json', nft1155Receiver)
+
+        await nft1155.waitForDeployment()
+      })
+
+      it('should successfully recover recover ERC1155', async () => {
+        expect(await nft1155.balanceOf(nft1155Receiver, nftId)).to.equal(10)
+        expect(await nft1155.balanceOf(subjectAddress, nftId)).to.equal(0)
         expect(await nft1155.balanceOf(contracts.AGENT, nftId)).to.equal(0)
+
+        await expect(
+          nft1155
+            .connect(nft1155ReceiverSigner)
+            .safeTransferFrom(nft1155Receiver, subjectAddress, BigInt(nftId), BigInt(4), '0x')
+        ).to.be.revertedWith('ERC1155: transfer to non-ERC1155Receiver implementer')
       })
     })
   })

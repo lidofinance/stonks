@@ -1,0 +1,565 @@
+import { ethers } from 'hardhat'
+import { expect } from 'chai'
+import { takeSnapshot, SnapshotRestorer, time } from '@nomicfoundation/hardhat-network-helpers'
+import type {
+  AmountConverter,
+  AmountConverterFactory,
+  OracleRouter,
+  Stonks,
+} from '../../typechain-types'
+import { getContracts } from '../../utils/contracts'
+import {
+  getTestFeedRegistryStub,
+  getAllTestTokens,
+  updateTokenFeed,
+  resetTestFeedRegistryStub,
+  refreshFeedData,
+} from '../../utils/test-feed-registry'
+import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
+import { QuoteDenomination } from '../../utils/oracle-router'
+import { deployStonks } from '../../scripts/deployments/stonks'
+import { getRouterPriceDecimals } from '../utils/oracle-router-helpers'
+
+const contracts = getContracts()
+
+describe('Integration: OracleRouter Failure Scenarios', function () {
+  let router: OracleRouter
+  let factory: AmountConverterFactory
+  let snapshot: SnapshotRestorer
+  let feedRegistryAddress: string
+
+  const feedConfig = {
+    tokens: getAllTestTokens(),
+    useRealPrices: true,
+  }
+
+  const getCurrentTimestamp = async () => {
+    const block = await ethers.provider.getBlock('latest')
+    return BigInt(block!.timestamp)
+  }
+
+  before(async function () {
+    snapshot = await takeSnapshot()
+
+    router = await getTestOracleRouter({
+      tokens: getAllTestTokens(),
+      useRealPrices: true,
+      agent: contracts.AGENT,
+    })
+
+    const feedRegistry = await getTestFeedRegistryStub(feedConfig)
+    feedRegistryAddress = await feedRegistry.getAddress()
+
+    await refreshFeedData(feedConfig)
+
+    const factoryContract = await ethers.getContractFactory('AmountConverterFactory')
+    factory = await factoryContract.deploy(await router.getAddress())
+    await factory.waitForDeployment()
+  })
+
+  after(async function () {
+    await snapshot.restore()
+    resetTestOracleRouter()
+    resetTestFeedRegistryStub()
+  })
+
+  describe('AmountConverter Integration Failures', function () {
+    describe('Router error propagation', function () {
+      it('should revert with OracleBadAnswer when router receives zero price from feed', async function () {
+        const converter = await deployConverter([contracts.DAI], [contracts.USDC], false)
+
+        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
+        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+
+        await router
+          .connect(agentSigner)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
+        await router
+          .connect(agentSigner)
+          .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
+
+        const currentTimestamp = await getCurrentTimestamp()
+
+        const feedRegistry = await ethers.getContractAt(
+          'ChainlinkFeedRegistryStub',
+          feedRegistryAddress
+        )
+        const feed = await feedRegistry.feeds(contracts.DAI, contracts.CHAINLINK_USD_QUOTE)
+
+        await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
+          answer: 0n,
+          updatedAt: currentTimestamp,
+          roundId: 1n,
+          answeredInRound: 1n,
+        })
+
+        await expect(
+          converter.getExpectedOut(contracts.DAI, contracts.USDC, ethers.parseEther('1'))
+        )
+          .to.be.revertedWithCustomError(router, 'OracleBadAnswer')
+          .withArgs(feed.aggregator, 0n)
+      })
+
+      it('should revert with OracleBadAnswer when router receives zero price for buy token from feed', async function () {
+        const converter = await deployConverter([contracts.DAI], [contracts.USDC], false)
+
+        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
+        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+
+        await router
+          .connect(agentSigner)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
+        await router
+          .connect(agentSigner)
+          .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
+
+        const currentTimestamp = await getCurrentTimestamp()
+
+        const feedRegistry = await ethers.getContractAt(
+          'ChainlinkFeedRegistryStub',
+          feedRegistryAddress
+        )
+        const feed = await feedRegistry.feeds(contracts.USDC, contracts.CHAINLINK_USD_QUOTE)
+
+        await updateTokenFeed(feedConfig, contracts.USDC, contracts.CHAINLINK_USD_QUOTE, {
+          answer: 0n,
+          updatedAt: currentTimestamp,
+          roundId: 1n,
+          answeredInRound: 1n,
+        })
+
+        await expect(
+          converter.getExpectedOut(contracts.DAI, contracts.USDC, ethers.parseEther('1'))
+        )
+          .to.be.revertedWithCustomError(router, 'OracleBadAnswer')
+          .withArgs(feed.aggregator, 0n)
+      })
+
+      it('should revert with OracleBadAnswer when router receives zero price for sell token in ETH mode', async function () {
+        const converter = await deployConverter([contracts.STETH], [contracts.LDO], true)
+
+        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
+        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+
+        await router.connect(agentSigner).setEthUsdBridge(86_400)
+        await router
+          .connect(agentSigner)
+          .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
+        await router
+          .connect(agentSigner)
+          .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86_400, true)
+
+        const currentTimestamp = await getCurrentTimestamp()
+
+        const feedRegistry = await ethers.getContractAt(
+          'ChainlinkFeedRegistryStub',
+          feedRegistryAddress
+        )
+        const feed = await feedRegistry.feeds(contracts.STETH, contracts.CHAINLINK_ETH_QUOTE)
+
+        await updateTokenFeed(feedConfig, contracts.STETH, contracts.CHAINLINK_ETH_QUOTE, {
+          answer: 0n,
+          updatedAt: currentTimestamp,
+          roundId: 1n,
+          answeredInRound: 1n,
+        })
+
+        await expect(
+          converter.getExpectedOut(contracts.STETH, contracts.LDO, ethers.parseEther('1'))
+        )
+          .to.be.revertedWithCustomError(router, 'OracleBadAnswer')
+          .withArgs(feed.aggregator, 0n)
+      })
+
+      it('should revert with OracleBadAnswer when router receives zero price for buy token in ETH mode', async function () {
+        const converter = await deployConverter([contracts.STETH], [contracts.LDO], true)
+
+        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
+        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+
+        await router.connect(agentSigner).setEthUsdBridge(86_400)
+        await router
+          .connect(agentSigner)
+          .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
+        await router
+          .connect(agentSigner)
+          .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86_400, true)
+
+        const currentTimestamp = await getCurrentTimestamp()
+
+        const feedRegistry = await ethers.getContractAt(
+          'ChainlinkFeedRegistryStub',
+          feedRegistryAddress
+        )
+        const feed = await feedRegistry.feeds(contracts.LDO, contracts.CHAINLINK_ETH_QUOTE)
+
+        await updateTokenFeed(feedConfig, contracts.LDO, contracts.CHAINLINK_ETH_QUOTE, {
+          answer: 0n,
+          updatedAt: currentTimestamp,
+          roundId: 1n,
+          answeredInRound: 1n,
+        })
+
+        await expect(
+          converter.getExpectedOut(contracts.STETH, contracts.LDO, ethers.parseEther('1'))
+        )
+          .to.be.revertedWithCustomError(router, 'OracleBadAnswer')
+          .withArgs(feed.aggregator, 0n)
+      })
+
+      it('should revert with OracleQuantizedToZero when feed normalizes to zero', async function () {
+        const unitDecimals = 6
+        const freshRouterFactory = await ethers.getContractFactory('OracleRouter')
+        const freshRouter = await freshRouterFactory.deploy(
+          contracts.AGENT,
+          unitDecimals,
+          feedRegistryAddress
+        )
+        await freshRouter.waitForDeployment()
+
+        const freshFactoryContract = await ethers.getContractFactory('AmountConverterFactory')
+        const freshFactory = await freshFactoryContract.deploy(await freshRouter.getAddress())
+        await freshFactory.waitForDeployment()
+
+        const converter = await deployConverterWithFactory(
+          freshFactory,
+          [contracts.DAI],
+          [contracts.USDC],
+          false
+        )
+
+        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
+        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+
+        await freshRouter
+          .connect(agentSigner)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
+        await freshRouter
+          .connect(agentSigner)
+          .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
+
+        const currentTimestamp = await getCurrentTimestamp()
+        const feedRegistry = await ethers.getContractAt(
+          'ChainlinkFeedRegistryStub',
+          feedRegistryAddress
+        )
+        const feed = await feedRegistry.feeds(contracts.DAI, contracts.CHAINLINK_USD_QUOTE)
+
+        const priceDecimals = await getRouterPriceDecimals(freshRouter)
+        const feedDecimals = 8n
+
+        // Explicit precondition with exact values
+        expect(priceDecimals).to.equal(6n)
+        expect(feedDecimals).to.equal(8n)
+
+        const minNonZeroFeedPrice = 1n
+        await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
+          answer: minNonZeroFeedPrice,
+          updatedAt: currentTimestamp,
+          roundId: 1n,
+          answeredInRound: 1n,
+          decimals: Number(feedDecimals),
+        })
+
+        await expect(
+          converter.getExpectedOut(contracts.DAI, contracts.USDC, ethers.parseEther('1'))
+        )
+          .to.be.revertedWithCustomError(freshRouter, 'OracleQuantizedToZero')
+          .withArgs(feed.aggregator, Number(feedDecimals), Number(priceDecimals))
+      })
+    })
+
+    describe('Bridge missing in ETH mode', function () {
+      it('should revert with EthUsdBridgeMissing when bridge not configured and bridging needed', async function () {
+        const freshRouterFactory = await ethers.getContractFactory('OracleRouter')
+        const freshRouter = await freshRouterFactory.deploy(
+          contracts.AGENT,
+          18,
+          feedRegistryAddress
+        )
+        await freshRouter.waitForDeployment()
+
+        const freshFactoryContract = await ethers.getContractFactory('AmountConverterFactory')
+        const freshFactory = await freshFactoryContract.deploy(await freshRouter.getAddress())
+        await freshFactory.waitForDeployment()
+
+        const converter = await deployConverterWithFactory(
+          freshFactory,
+          [contracts.DAI],
+          [contracts.USDC],
+          true
+        )
+
+        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
+        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+
+        await freshRouter
+          .connect(agentSigner)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
+        await freshRouter
+          .connect(agentSigner)
+          .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
+
+        const currentTimestamp = await getCurrentTimestamp()
+
+        await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
+          updatedAt: currentTimestamp,
+          roundId: 1n,
+          answeredInRound: 1n,
+        })
+        await updateTokenFeed(feedConfig, contracts.USDC, contracts.CHAINLINK_USD_QUOTE, {
+          updatedAt: currentTimestamp,
+          roundId: 1n,
+          answeredInRound: 1n,
+        })
+
+        await expect(
+          converter.getExpectedOut(contracts.DAI, contracts.USDC, ethers.parseEther('1'))
+        ).to.be.revertedWithCustomError(freshRouter, 'EthUsdBridgeMissing')
+      })
+    })
+
+    describe('Feed staleness between calls', function () {
+      it('should revert with OracleStale when feed becomes stale between converter calls', async function () {
+        const converter = await deployConverter([contracts.DAI], [contracts.USDC], false)
+
+        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
+        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+
+        await router
+          .connect(agentSigner)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 5, true)
+        await router
+          .connect(agentSigner)
+          .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
+
+        // deterministically ensure both feeds are positive and fresh
+        await refreshFeedData(feedConfig, [contracts.DAI, contracts.USDC])
+
+        const freshTimestamp = await getCurrentTimestamp()
+        await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
+          updatedAt: freshTimestamp,
+          roundId: 1n,
+          answeredInRound: 1n,
+        })
+        await updateTokenFeed(feedConfig, contracts.USDC, contracts.CHAINLINK_USD_QUOTE, {
+          updatedAt: freshTimestamp,
+          roundId: 1n,
+          answeredInRound: 1n,
+        })
+
+        const firstCall = await converter.getExpectedOut(
+          contracts.DAI,
+          contracts.USDC,
+          ethers.parseEther('1')
+        )
+
+        const [priceFrom, priceTo, decimalsFrom, decimalsTo] = await router.getPricesAndDecimals(
+          contracts.DAI,
+          contracts.USDC,
+          QuoteDenomination.USD
+        )
+        const amountFrom = ethers.parseEther('1')
+
+        // DAI and USDC decimals are known and fixed for this scenario
+        expect(decimalsFrom).to.equal(18n)
+        expect(decimalsTo).to.equal(6n)
+
+        const decimalsDiff = decimalsFrom - decimalsTo
+        const pow10 = 10n ** decimalsDiff
+        const scaledPriceTo = priceTo * pow10
+        const expectedFirstCall = (amountFrom * priceFrom) / scaledPriceTo
+
+        expect(firstCall).to.equal(expectedFirstCall)
+
+        await time.increase(6)
+
+        await expect(
+          converter.getExpectedOut(contracts.DAI, contracts.USDC, ethers.parseEther('1'))
+        ).to.be.revertedWithCustomError(router, 'OracleStale')
+
+        await router
+          .connect(agentSigner)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
+      })
+    })
+  })
+
+  describe('Stonks Integration Failures', function () {
+    describe('Unquotable token handling', function () {
+      it('should revert with TokenNotConfigured when assertQuotable called with unconfigured base token', async function () {
+        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
+        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+
+        const freshRouterFactory = await ethers.getContractFactory('OracleRouter')
+        const freshRouter = await freshRouterFactory.deploy(
+          contracts.AGENT,
+          18,
+          feedRegistryAddress
+        )
+        await freshRouter.waitForDeployment()
+
+        const daiConfigFresh = await freshRouter.tokenConfig(contracts.DAI)
+        expect(daiConfigFresh.isActive).to.equal(false)
+        expect(daiConfigFresh.tokenDecimals).to.equal(0)
+
+        const stonksFactory = await ethers.getContractFactory('StonksFactory')
+        const factory = await stonksFactory.deploy(
+          contracts.AGENT,
+          contracts.SETTLEMENT,
+          contracts.VAULT_RELAYER,
+          await freshRouter.getAddress()
+        )
+        await factory.waitForDeployment()
+
+        const amountConverterFactory = await ethers.getContractFactory('AmountConverterFactory')
+        const acFactory = await amountConverterFactory.deploy(await freshRouter.getAddress())
+        await acFactory.waitForDeployment()
+
+        const acTx = await acFactory.deployAmountConverter([contracts.DAI], [contracts.USDC], false)
+        const acReceipt = await acTx.wait()
+        const acEvent = acReceipt?.logs.find((log: any) => {
+          try {
+            return acFactory.interface.parseLog(log)?.name === 'AmountConverterDeployed'
+          } catch {
+            return false
+          }
+        })
+        const acAddress = acFactory.interface.parseLog(acEvent as any)?.args[0]
+
+        const deployTx = await factory.deployStonks(
+          (await ethers.getSigners())[0].address,
+          contracts.DAI,
+          contracts.USDC,
+          acAddress,
+          300,
+          100,
+          100,
+          0,
+          false
+        )
+        const receipt = await deployTx.wait()
+        const stonksEvent = receipt?.logs.find((log: any) => {
+          try {
+            return factory.interface.parseLog(log)?.name === 'StonksDeployed'
+          } catch {
+            return false
+          }
+        })
+        const stonksAddress = factory.interface.parseLog(stonksEvent as any)?.args[0]
+        const stonks = await ethers.getContractAt('Stonks', stonksAddress)
+
+        await expect(stonks.assertQuotable())
+          .to.be.revertedWithCustomError(freshRouter, 'TokenNotConfigured')
+          .withArgs(contracts.DAI)
+      })
+
+      it('should revert with TokenNotConfigured when assertQuotable called with unconfigured quote token', async function () {
+        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
+        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+
+        const freshRouterFactory = await ethers.getContractFactory('OracleRouter')
+        const freshRouter = await freshRouterFactory.deploy(
+          contracts.AGENT,
+          18,
+          feedRegistryAddress
+        )
+        await freshRouter.waitForDeployment()
+
+        const usdcConfigFresh = await freshRouter.tokenConfig(contracts.USDC)
+        expect(usdcConfigFresh.isActive).to.equal(false)
+        expect(usdcConfigFresh.tokenDecimals).to.equal(0)
+
+        await freshRouter
+          .connect(agentSigner)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
+
+        const stonksFactory = await ethers.getContractFactory('StonksFactory')
+        const factory = await stonksFactory.deploy(
+          contracts.AGENT,
+          contracts.SETTLEMENT,
+          contracts.VAULT_RELAYER,
+          await freshRouter.getAddress()
+        )
+        await factory.waitForDeployment()
+
+        const amountConverterFactory = await ethers.getContractFactory('AmountConverterFactory')
+        const acFactory = await amountConverterFactory.deploy(await freshRouter.getAddress())
+        await acFactory.waitForDeployment()
+
+        const acTx = await acFactory.deployAmountConverter([contracts.DAI], [contracts.USDC], false)
+        const acReceipt = await acTx.wait()
+        const acEvent = acReceipt?.logs.find((log: any) => {
+          try {
+            return acFactory.interface.parseLog(log)?.name === 'AmountConverterDeployed'
+          } catch {
+            return false
+          }
+        })
+        const acAddress = acFactory.interface.parseLog(acEvent as any)?.args[0]
+
+        const deployTx = await factory.deployStonks(
+          (await ethers.getSigners())[0].address,
+          contracts.DAI,
+          contracts.USDC,
+          acAddress,
+          300,
+          100,
+          100,
+          0,
+          false
+        )
+        const receipt = await deployTx.wait()
+        const stonksEvent = receipt?.logs.find((log: any) => {
+          try {
+            return factory.interface.parseLog(log)?.name === 'StonksDeployed'
+          } catch {
+            return false
+          }
+        })
+        const stonksAddress = factory.interface.parseLog(stonksEvent as any)?.args[0]
+        const stonks = await ethers.getContractAt('Stonks', stonksAddress)
+
+        await expect(stonks.assertQuotable())
+          .to.be.revertedWithCustomError(freshRouter, 'TokenNotConfigured')
+          .withArgs(contracts.USDC)
+      })
+    })
+  })
+
+  async function deployConverter(
+    allowedTokensToSell: string[],
+    allowedTokensToBuy: string[],
+    useEthAnchor: boolean
+  ): Promise<AmountConverter> {
+    return deployConverterWithFactory(
+      factory,
+      allowedTokensToSell,
+      allowedTokensToBuy,
+      useEthAnchor
+    )
+  }
+
+  async function deployConverterWithFactory(
+    factoryInstance: AmountConverterFactory,
+    allowedTokensToSell: string[],
+    allowedTokensToBuy: string[],
+    useEthAnchor: boolean
+  ): Promise<AmountConverter> {
+    const tx = await factoryInstance.deployAmountConverter(
+      allowedTokensToSell,
+      allowedTokensToBuy,
+      useEthAnchor
+    )
+    const receipt = await tx.wait()
+    const event = receipt?.logs.find((log: any) => {
+      try {
+        return factoryInstance.interface.parseLog(log)?.name === 'AmountConverterDeployed'
+      } catch {
+        return false
+      }
+    })
+    const converterAddress = factoryInstance.interface.parseLog(event as any)?.args[0]
+    return ethers.getContractAt('AmountConverter', converterAddress)
+  }
+})

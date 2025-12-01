@@ -124,12 +124,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
         bridgeInfo.age <= pair.priceFeedHeartbeatTimeout
       ) {
         await oracleRouter.setEthUsdBridge(pair.priceFeedHeartbeatTimeout)
-        await oracleRouter.setTokenFeed(
-          tokenAddr,
-          QuoteDenomination.ETH,
-          pair.priceFeedHeartbeatTimeout,
-          tokenDecimals,
-          true
+        await oracleRouter.setTokenFeed(tokenAddr, QuoteDenomination.ETH, pair.priceFeedHeartbeatTimeout, true
         )
         return
       }
@@ -145,12 +140,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
         usdInfo.age !== null &&
         usdInfo.age <= pair.priceFeedHeartbeatTimeout
       ) {
-        await oracleRouter.setTokenFeed(
-          tokenAddr,
-          QuoteDenomination.USD,
-          pair.priceFeedHeartbeatTimeout,
-          tokenDecimals,
-          true
+        await oracleRouter.setTokenFeed(tokenAddr, QuoteDenomination.USD, pair.priceFeedHeartbeatTimeout, true
         )
         return
       }

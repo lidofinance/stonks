@@ -80,7 +80,7 @@ contract OracleRouterStub is IOracleRouter {
         revert("Not implemented in stub");
     }
 
-    function setTokenFeed(address, QuoteDenomination, uint32, uint8, bool) external pure {
+    function setTokenFeed(address, QuoteDenomination, uint32, bool) external pure {
         revert("Not implemented in stub");
     }
 

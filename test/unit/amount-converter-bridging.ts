@@ -116,12 +116,12 @@ describe('AmountConverter - Bridging Tests', () => {
 
     // Now set the bridge (feed should exist now)
     await router.connect(agent).setEthUsdBridge(86400)
-    await router.connect(agent).setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, 18, true)
-    await router.connect(agent).setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, 6, true)
+    await router.connect(agent).setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
+    await router.connect(agent).setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, true)
     await router
       .connect(agent)
-      .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
-    await router.connect(agent).setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
+      .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
+    await router.connect(agent).setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
     factory = await ethers.getContractFactory('AmountConverter')
   })
@@ -363,10 +363,10 @@ describe('AmountConverter - Bridging Tests', () => {
       // Configure tokens but don't set ETH/USD bridge
       await freshRouter
         .connect(agent)
-        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
+        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
       await freshRouter
         .connect(agent)
-        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, 18, true)
+        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
 
       const converter = await factory.deploy(
         await freshRouter.getAddress(),

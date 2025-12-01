@@ -90,7 +90,7 @@ describe('OracleRouter Decimal Fuzzing', function () {
             await router.connect(agentSigner).setEthUsdBridge(86_400)
             await router
               .connect(agentSigner)
-              .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, tokenDecimals, true)
+              .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
             const nowTs = await getCurrentTimestamp()
             await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {

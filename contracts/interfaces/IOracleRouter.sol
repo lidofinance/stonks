@@ -37,7 +37,6 @@ interface IOracleRouter {
         address token_,
         QuoteDenomination primaryQuote_,
         uint32 maxStalenessSeconds_,
-        uint8 tokenDecimals_,
         bool isActive_
     ) external;
 

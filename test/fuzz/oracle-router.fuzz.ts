@@ -48,10 +48,10 @@ describe('OracleRouter - Fuzz Tests', () => {
 
     await oracleRouter
       .connect(signer)
-      .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86400, 18, true)
+      .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86400, true)
     await oracleRouter
       .connect(signer)
-      .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, 18, true)
+      .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
   })
 
   describe('Price validation', () => {
@@ -210,7 +210,7 @@ describe('OracleRouter - Fuzz Tests', () => {
       await oracleRouter.connect(signer).setEthUsdBridge(86_400)
       await oracleRouter
         .connect(signer)
-        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, 18, true)
+        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
 
       const nowTs = await currentChainTs()
 
@@ -256,7 +256,7 @@ describe('OracleRouter - Fuzz Tests', () => {
       await oracleRouter.connect(signer).setEthUsdBridge(86_400)
       await oracleRouter
         .connect(signer)
-        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, 18, true)
+        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
       // Override to tighter cap
       await oracleRouter.connect(signer).setTokenEthUsdStalenessOverride(contracts.STETH, 60)
 
@@ -292,10 +292,10 @@ describe('OracleRouter - Fuzz Tests', () => {
             const signer = await ethers.getImpersonatedSigner(contracts.AGENT)
             await oracleRouter
               .connect(signer)
-              .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86_400, 18, true)
+              .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86_400, true)
             await oracleRouter
               .connect(signer)
-              .setTokenFeed(contracts.DAI, QuoteDenomination.USD, capSec, 18, true)
+              .setTokenFeed(contracts.DAI, QuoteDenomination.USD, capSec, true)
 
             const nowTs = await currentChainTs()
             await updateTokenFeed(feedConfig, contracts.STETH, contracts.CHAINLINK_USD_QUOTE, {

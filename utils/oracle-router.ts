@@ -38,11 +38,6 @@ export async function deployAndConfigureOracleRouter(
   )
   await router.waitForDeployment()
 
-  const erc20Interface = new ethers.Interface(['function decimals() view returns (uint8)'])
-  const readDecimals = async (token: string) => {
-    const c = new ethers.Contract(token, erc20Interface, deployer)
-    return c.getFunction('decimals').staticCall()
-  }
   // Bridge ETH/USD (skip silently if registry lacks ETH/USD in stub)
   try {
     await router.setEthUsdBridge(maxStaleness)
@@ -52,24 +47,12 @@ export async function deployAndConfigureOracleRouter(
 
   // Configure TOKEN/USD feeds
   for (const token of tokensUsd) {
-    await router.setTokenFeed(
-      token,
-      QuoteDenomination.USD,
-      maxStaleness,
-      await readDecimals(token),
-      true
-    )
+    await router.setTokenFeed(token, QuoteDenomination.USD, maxStaleness, true)
   }
 
   // Configure TOKEN/ETH feeds (optional)
   for (const token of tokensEth) {
-    await router.setTokenFeed(
-      token,
-      QuoteDenomination.ETH,
-      maxStaleness,
-      await readDecimals(token),
-      true
-    )
+    await router.setTokenFeed(token, QuoteDenomination.ETH, maxStaleness, true)
   }
 
   return router

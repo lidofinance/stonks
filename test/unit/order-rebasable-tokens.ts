@@ -50,8 +50,8 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
 
     await refreshTestFeedData([contracts.STETH, contracts.LDO])
 
-    await oracleRouter.setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
-    await oracleRouter.setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
+    await oracleRouter.setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
+    await oracleRouter.setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
     amountConverterTest = await amountConverterTestFactory.deploy(
       await oracleRouter.getAddress(),

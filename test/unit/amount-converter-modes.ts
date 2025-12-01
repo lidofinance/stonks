@@ -86,8 +86,8 @@ describe('AmountConverter - ETH/USD Modes', () => {
 
     await router
       .connect(agent)
-      .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
-    await router.connect(agent).setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
+      .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
+    await router.connect(agent).setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
     factory = await ethers.getContractFactory('AmountConverter')
   })
@@ -261,7 +261,7 @@ describe('AmountConverter - ETH/USD Modes', () => {
         await router.connect(agent).setEthUsdBridge(86400)
         await router
           .connect(agent)
-          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, 18, true)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
 
         const amount = parseEther('1')
         const result = await mixedConverter.getExpectedOut(contracts.STETH, contracts.DAI, amount)
@@ -419,7 +419,7 @@ describe('AmountConverter - ETH/USD Modes', () => {
         const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
         await router
           .connect(agent)
-          .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
+          .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
         const mixedConverter = await factory.deploy(
           await router.getAddress(),
@@ -540,10 +540,10 @@ describe('AmountConverter - ETH/USD Modes', () => {
 
       await router
         .connect(agent)
-        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
+        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
       await router
         .connect(agent)
-        .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
+        .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
       const ethConverter = await factory.deploy(
         await router.getAddress(),

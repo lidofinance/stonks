@@ -36,8 +36,8 @@ describe('AmountConverter - Fuzz Tests', () => {
     const agent = await getAgentSigner()
     await router
       .connect(agent)
-      .setTokenFeed(addresses.STETH, QuoteDenomination.ETH, 86400, 18, true)
-    await router.connect(agent).setTokenFeed(addresses.LDO, QuoteDenomination.ETH, 86400, 18, true)
+      .setTokenFeed(addresses.STETH, QuoteDenomination.ETH, 86400, true)
+    await router.connect(agent).setTokenFeed(addresses.LDO, QuoteDenomination.ETH, 86400, true)
   })
 
   beforeEach(async () => {

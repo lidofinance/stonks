@@ -75,8 +75,8 @@ describe('Integration: AmountConverter Denominations', () => {
 
     await refreshTestFeedData(getAllTestTokens())
 
-    await router.setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, 18, true)
-    await router.setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, 18, true)
+    await router.setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
+    await router.setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
     const factoryContract = await ethers.getContractFactory('AmountConverterFactory')
     factory = await factoryContract.deploy(await router.getAddress())
@@ -150,7 +150,7 @@ describe('Integration: AmountConverter Denominations', () => {
     beforeEach(async () => {
       // Reconfigure STETH as USD-quoted for mixed denomination tests
       // This uses the ETH/USD bridge internally
-      await router.setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86400, 18, true)
+      await router.setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86400, true)
       await router.setEthUsdBridge(86400)
 
       const tx = await factory.deployAmountConverter(
