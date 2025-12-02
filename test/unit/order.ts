@@ -60,6 +60,7 @@ describe('Order', async function () {
 
     const { stonks: stonksInstance } = await deployStonks({
       factoryParams: {
+        admin: contracts.ADMIN,
         agent: contracts.AGENT,
         relayer: contracts.VAULT_RELAYER,
         settlement: contracts.SETTLEMENT,
@@ -141,6 +142,7 @@ describe('Order', async function () {
       const contractFactory = await ethers.getContractFactory('Order')
 
       const contract = await contractFactory.deploy(
+        contracts.ADMIN,
         contracts.AGENT,
         contracts.VAULT_RELAYER,
         contracts.DOMAIN_SEPARATOR
@@ -152,6 +154,11 @@ describe('Order', async function () {
         .to.emit(contract, 'DomainSeparatorSet')
         .withArgs(contracts.DOMAIN_SEPARATOR)
     })
+    it('sample instance should have correct admin and agent addresses', async () => {
+      const orderSample = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
+      expect(await orderSample.ADMIN()).to.equal(contracts.ADMIN)
+      expect(await orderSample.AGENT()).to.equal(contracts.AGENT)
+    })
     it('sample instance should be initialized by default', async () => {
       const subject = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
       await expect(
@@ -161,6 +168,10 @@ describe('Order', async function () {
   })
 
   describe('initialization (from Stonks):', function () {
+    it('should have correct admin and agent addresses', async () => {
+      expect(await subject.ADMIN()).to.equal(contracts.ADMIN)
+      expect(await subject.AGENT()).to.equal(contracts.AGENT)
+    })
     it('should have correct order parameters', async () => {
       const [tokenFrom, tokenTo, orderDurationInSeconds] = await stonks.getOrderParameters()
       const token = await ethers.getContractAt('IERC20', tokenFrom)
@@ -313,7 +324,7 @@ describe('Order', async function () {
       const signer = (await ethers.getSigners())[4]
       const localSubject = subject.connect(signer)
       await expect(localSubject.recoverERC20(contracts.DAI, BigInt(1)))
-        .revertedWithCustomError(subject, 'NotAgentOrManager')
+        .revertedWithCustomError(subject, 'NotAdminOrManager')
         .withArgs(await signer.getAddress())
     })
     it('should successfully recover a token', async () => {
@@ -343,7 +354,7 @@ describe('Order', async function () {
     it('should revert recoverEther when called by stranger', async () => {
       const stranger = (await ethers.getSigners())[4]
       await expect(subject.connect(stranger).recoverEther())
-        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .to.be.revertedWithCustomError(subject, 'NotAdminOrManager')
         .withArgs(await stranger.getAddress())
     })
 

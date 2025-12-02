@@ -41,17 +41,17 @@ describe('AmountConverter', () => {
 
     const feedRegistryAddress = await router.FEED_REGISTRY()
     const [deployer] = await ethers.getSigners()
-    const agentAddress = await deployer.getAddress()
+    const adminAddress = await deployer.getAddress()
 
     const routerFactory = await ethers.getContractFactory('OracleRouter')
-    router8 = await routerFactory.deploy(agentAddress, 8, feedRegistryAddress)
+    router8 = await routerFactory.deploy(adminAddress, 8, feedRegistryAddress)
     await router8.waitForDeployment()
 
-    const agentSigner = await ethers.getImpersonatedSigner(agentAddress)
-    await ethers.provider.send('hardhat_setBalance', [agentAddress, '0x1000000000000000000'])
+    const adminSigner = await ethers.getImpersonatedSigner(adminAddress)
+    await ethers.provider.send('hardhat_setBalance', [adminAddress, '0x1000000000000000000'])
 
     try {
-      await router8.connect(agentSigner).setEthUsdBridge(86_400)
+      await router8.connect(adminSigner).setEthUsdBridge(86_400)
     } catch {
       // Ignore if already configured
     }
@@ -69,11 +69,11 @@ describe('AmountConverter', () => {
         const usdFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_USD_QUOTE)
 
         if (usdFeed !== ethers.ZeroAddress) {
-          await router8.connect(agentSigner).setTokenFeed(token, 0, 86_400, true)
+          await router8.connect(adminSigner).setTokenFeed(token, 0, 86_400, true)
         } else {
           const ethFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_ETH_QUOTE)
           if (ethFeed !== ethers.ZeroAddress) {
-            await router8.connect(agentSigner).setTokenFeed(token, 1, 86_400, true)
+            await router8.connect(adminSigner).setTokenFeed(token, 1, 86_400, true)
           }
         }
       } catch (e) {

@@ -50,6 +50,7 @@ describe('Stonks', function () {
 
     const { stonks, amountConverter: tokenConverter } = await deployStonksWithTestOracle({
       factoryParams: {
+        admin: contracts.ADMIN,
         agent: contracts.AGENT,
         relayer: contracts.VAULT_RELAYER,
         settlement: contracts.SETTLEMENT,
@@ -79,6 +80,7 @@ describe('Stonks', function () {
     const notZeroAddress = '0x0000000000000000000000000000000000000999'
 
     let validParams: {
+      admin: string
       agent: string
       manager: string
       tokenFrom: string
@@ -99,13 +101,14 @@ describe('Stonks', function () {
       )) as OracleRouter__factory
       const oracleRouter = await (
         await oracleRouterFactory.deploy(
-          contracts.AGENT,
+          contracts.ADMIN,
           18,
           contracts.CHAINLINK_PRICE_FEED_REGISTRY
         )
       ).getAddress()
 
       validParams = {
+        admin: contracts.ADMIN,
         agent: contracts.AGENT,
         manager: managerAddress,
         tokenFrom: contracts.STETH,
@@ -124,6 +127,8 @@ describe('Stonks', function () {
     it('should set correct constructor params', async () => {
       const stonks = await ContractFactory.deploy(validParams)
 
+      expect(await stonks.ADMIN()).to.equal(validParams.admin)
+      expect(await stonks.AGENT()).to.equal(validParams.agent)
       const [tokenFrom, tokenTo, orderDurationInSeconds] = await stonks.getOrderParameters()
       const priceToleranceInBasisPoints = await stonks.getPriceTolerance()
 
@@ -155,6 +160,12 @@ describe('Stonks', function () {
         .withArgs(validParams.priceToleranceInBasisPoints)
     })
 
+    it('should not initialize with admin zero address', async function () {
+      const invalidParams = { ...validParams, admin: ethers.ZeroAddress }
+      await expect(ContractFactory.deploy(invalidParams))
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidAdminAddress')
+        .withArgs(ethers.ZeroAddress)
+    })
     it('should not initialize with agent zero address', async function () {
       await expect(
         ContractFactory.deploy({
@@ -360,12 +371,12 @@ describe('Stonks', function () {
 
       // Deactivate tokens in router to make them unquotable
       const oracleRouter = await ethers.getContractAt('OracleRouter', await subject.ORACLE_ROUTER())
-      const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
-      await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+      const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+      await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
 
       const [tokenFrom, tokenTo] = await subject.getOrderParameters()
-      await oracleRouter.connect(agentSigner).setTokenActive(tokenFrom, false)
-      await oracleRouter.connect(agentSigner).setTokenActive(tokenTo, false)
+      await oracleRouter.connect(adminSigner).setTokenActive(tokenFrom, false)
+      await oracleRouter.connect(adminSigner).setTokenActive(tokenTo, false)
 
       // Should revert when trying to place order because assertQuotable fails
       // The revert happens during Order.initialize when it calls assertQuotable
@@ -494,47 +505,47 @@ describe('Stonks', function () {
       stranger = (await ethers.getSigners())[3]
     })
 
-    it('should revert placeOrder when called by non-agent/manager', async function () {
+    it('should revert placeOrder when called by non-admin/manager', async function () {
       const stonksAsStranger = subject.connect(stranger)
       await expect(stonksAsStranger.placeOrder(100))
-        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .to.be.revertedWithCustomError(subject, 'NotAdminOrManager')
         .withArgs(await stranger.getAddress())
     })
 
-    it('should revert placeOrderWithAmount when called by non-agent/manager', async function () {
+    it('should revert placeOrderWithAmount when called by non-admin/manager', async function () {
       const stonksAsStranger = subject.connect(stranger)
       await expect(stonksAsStranger.placeOrderWithAmount(ethers.parseEther('1'), 100))
-        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .to.be.revertedWithCustomError(subject, 'NotAdminOrManager')
         .withArgs(await stranger.getAddress())
     })
 
-    it('should revert recoverERC20 when called by non-agent/manager', async function () {
+    it('should revert recoverERC20 when called by non-admin/manager', async function () {
       const stonksAsStranger = subject.connect(stranger)
       await expect(stonksAsStranger.recoverERC20(contracts.DAI, 1))
-        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .to.be.revertedWithCustomError(subject, 'NotAdminOrManager')
         .withArgs(await stranger.getAddress())
     })
 
-    it('should revert recoverEther when called by non-agent/manager', async function () {
+    it('should revert recoverEther when called by non-admin/manager', async function () {
       const stonksAsStranger = subject.connect(stranger)
       await expect(stonksAsStranger.recoverEther())
-        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .to.be.revertedWithCustomError(subject, 'NotAdminOrManager')
         .withArgs(await stranger.getAddress())
     })
 
-    it('should revert recoverERC721 when called by non-agent/manager', async function () {
+    it('should revert recoverERC721 when called by non-admin/manager', async function () {
       const stonksAsStranger = subject.connect(stranger)
       const mockNftAddress = '0x0000000000000000000000000000000000000001'
       await expect(stonksAsStranger.recoverERC721(mockNftAddress, 1))
-        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .to.be.revertedWithCustomError(subject, 'NotAdminOrManager')
         .withArgs(await stranger.getAddress())
     })
 
-    it('should revert recoverERC1155 when called by non-agent/manager', async function () {
+    it('should revert recoverERC1155 when called by non-admin/manager', async function () {
       const stonksAsStranger = subject.connect(stranger)
       const mockNftAddress = '0x0000000000000000000000000000000000000001'
       await expect(stonksAsStranger.recoverERC1155(mockNftAddress, 1))
-        .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+        .to.be.revertedWithCustomError(subject, 'NotAdminOrManager')
         .withArgs(await stranger.getAddress())
     })
   })

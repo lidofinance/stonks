@@ -20,7 +20,7 @@ describe('OracleRouter', function () {
   let oracleRouter: OracleRouter
   let oracleRouterFactory: OracleRouter__factory
   let snapshot: SnapshotRestorer
-  let agentAddress: string
+  let adminAddress: string
   let feedRegistryAddress: string
 
   const feedConfig = {
@@ -33,10 +33,10 @@ describe('OracleRouter', function () {
     return BigInt(block!.timestamp)
   }
 
-  const getAgentSigner = async () => {
-    const agentSigner = await ethers.getImpersonatedSigner(agentAddress)
-    await ethers.provider.send('hardhat_setBalance', [agentAddress, '0x1000000000000000000'])
-    return agentSigner
+  const getAdminSigner = async () => {
+    const adminSigner = await ethers.getImpersonatedSigner(adminAddress)
+    await ethers.provider.send('hardhat_setBalance', [adminAddress, '0x1000000000000000000'])
+    return adminSigner
   }
 
   const readNormalizedFeedPrice = async (
@@ -140,14 +140,14 @@ describe('OracleRouter', function () {
   before(async function () {
     snapshot = await takeSnapshot()
     oracleRouterFactory = await ethers.getContractFactory('OracleRouter')
-    agentAddress = contracts.AGENT
+    adminAddress = contracts.ADMIN
     const stub = await getTestFeedRegistryStub(feedConfig)
     feedRegistryAddress = await stub.getAddress()
   })
 
   beforeEach(async function () {
     await refreshFeedData(feedConfig)
-    oracleRouter = await oracleRouterFactory.deploy(agentAddress, 18, feedRegistryAddress)
+    oracleRouter = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
     await oracleRouter.waitForDeployment()
   })
 
@@ -158,27 +158,27 @@ describe('OracleRouter', function () {
       expect(await oracleRouter.FEED_REGISTRY()).to.equal(feedRegistryAddress)
     })
 
-    it('reverts with zero agent address', async function () {
+    it('reverts with zero admin address', async function () {
       await expect(
         oracleRouterFactory.deploy(ethers.ZeroAddress, 18, feedRegistryAddress)
-      ).to.be.revertedWithCustomError(oracleRouter, 'InvalidAgentAddress')
+      ).to.be.revertedWithCustomError(oracleRouter, 'InvalidAdminAddress')
     })
 
     it('reverts with zero unit decimals', async function () {
       await expect(
-        oracleRouterFactory.deploy(agentAddress, 0, feedRegistryAddress)
+        oracleRouterFactory.deploy(adminAddress, 0, feedRegistryAddress)
       ).to.be.revertedWithCustomError(oracleRouter, 'InvalidUnitDecimals')
     })
 
     it('reverts with unit decimals > 38', async function () {
       await expect(
-        oracleRouterFactory.deploy(agentAddress, 39, feedRegistryAddress)
+        oracleRouterFactory.deploy(adminAddress, 39, feedRegistryAddress)
       ).to.be.revertedWithCustomError(oracleRouter, 'InvalidUnitDecimals')
     })
 
     it('reverts with zero feed registry address', async function () {
       await expect(
-        oracleRouterFactory.deploy(agentAddress, 18, ethers.ZeroAddress)
+        oracleRouterFactory.deploy(adminAddress, 18, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(oracleRouter, 'InvalidFeedRegistryAddress')
     })
   })
@@ -214,8 +214,8 @@ describe('OracleRouter', function () {
     })
 
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
     })
 
     it('configures bridge', async function () {
@@ -228,24 +228,24 @@ describe('OracleRouter', function () {
     })
 
     it('emits EthUsdBridgeConfigured', async function () {
-      const freshRouter = await oracleRouterFactory.deploy(agentAddress, 18, feedRegistryAddress)
+      const freshRouter = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
       await freshRouter.waitForDeployment()
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
-      await expect(freshRouter.connect(agentSigner).setEthUsdBridge(86_400))
+      await expect(freshRouter.connect(adminSigner).setEthUsdBridge(86_400))
         .to.emit(freshRouter, 'EthUsdBridgeConfigured')
         .withArgs(anyValue, anyValue, 86_400, anyValue, anyValue)
     })
 
     it('reverts with zero staleness', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       await expect(
-        oracleRouter.connect(agentSigner).setEthUsdBridge(0)
+        oracleRouter.connect(adminSigner).setEthUsdBridge(0)
       ).to.be.revertedWithCustomError(oracleRouter, 'InvalidStaleness')
     })
 
     it('reverts when ETH/USD feed is missing', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       const feedRegistry = await ethers.getContractAt(
         'ChainlinkFeedRegistryStub',
         feedRegistryAddress
@@ -262,7 +262,7 @@ describe('OracleRouter', function () {
       })
 
       await expect(
-        oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+        oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
       ).to.be.revertedWithCustomError(oracleRouter, 'FeedMissing')
 
       // restore
@@ -277,16 +277,16 @@ describe('OracleRouter', function () {
       })
     })
 
-    it('reverts sync when called by non-agent', async function () {
-      const [, nonAgentSigner] = await ethers.getSigners()
+    it('reverts sync when called by non-admin', async function () {
+      const [, nonAdminSigner] = await ethers.getSigners()
       await expect(
-        oracleRouter.connect(nonAgentSigner).syncEthUsdBridge()
-      ).to.be.revertedWithCustomError(oracleRouter, 'NotAgentOrManager')
+        oracleRouter.connect(nonAdminSigner).syncEthUsdBridge()
+      ).to.be.revertedWithCustomError(oracleRouter, 'NotAdminOrManager')
     })
 
     it('syncs bridge', async function () {
-      const agentSigner = await getAgentSigner()
-      await expect(oracleRouter.connect(agentSigner).syncEthUsdBridge())
+      const adminSigner = await getAdminSigner()
+      await expect(oracleRouter.connect(adminSigner).syncEthUsdBridge())
         .to.emit(oracleRouter, 'EthUsdBridgeConfigured')
         .withArgs(anyValue, anyValue, 86_400, anyValue, anyValue)
 
@@ -303,19 +303,19 @@ describe('OracleRouter', function () {
       await refreshFeedData(feedConfig)
 
       // Deploy OracleRouter with 18 decimals
-      oracleRouter18 = await oracleRouterFactory.deploy(agentAddress, 18, feedRegistryAddress)
+      oracleRouter18 = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
       await oracleRouter18.waitForDeployment()
 
-      const agentSigner = await getAgentSigner()
-      await oracleRouter18.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter18.connect(adminSigner).setEthUsdBridge(86_400)
     })
 
     it('should correctly scale 8-decimal feed to 18-decimal unit', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
       // Configure a token with 8-decimal feed
       await oracleRouter18
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
       const targetDecimals = BigInt(await oracleRouter18.PRICE_DECIMALS())
@@ -334,11 +334,11 @@ describe('OracleRouter', function () {
     })
 
     it('should correctly scale 18-decimal feed to 18-decimal unit', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
       // Configure a token with 18-decimal feed (if any exist)
       await oracleRouter18
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86_400, true)
 
       const targetDecimals = BigInt(await oracleRouter18.PRICE_DECIMALS())
@@ -357,15 +357,15 @@ describe('OracleRouter', function () {
     })
 
     it('should handle cross-decimal conversions correctly with 18-decimal unit', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
       // Configure tokens with different decimals
       await oracleRouter18
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
       await oracleRouter18
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.USDT, QuoteDenomination.USD, 86_400, true)
 
       const targetDecimals = BigInt(await oracleRouter18.PRICE_DECIMALS())
@@ -386,10 +386,10 @@ describe('OracleRouter', function () {
     })
 
     it('should maintain precision with 18-decimal unit', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
       await oracleRouter18
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
       // Test that we don't lose precision due to scaling
@@ -403,17 +403,17 @@ describe('OracleRouter', function () {
     })
 
     it('should scale differently than 8-decimal router for same tokens', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
-      const router8 = await oracleRouterFactory.deploy(agentAddress, 8, feedRegistryAddress)
+      const router8 = await oracleRouterFactory.deploy(adminAddress, 8, feedRegistryAddress)
       await router8.waitForDeployment()
-      await router8.connect(agentSigner).setEthUsdBridge(86_400)
+      await router8.connect(adminSigner).setEthUsdBridge(86_400)
       await router8
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
       await oracleRouter18
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
       const [price8, _] = await router8.getUsdPrices(contracts.DAI, contracts.DAI)
@@ -430,18 +430,18 @@ describe('OracleRouter', function () {
     let oracleRouterLegacy: OracleRouter
 
     beforeEach(async function () {
-      oracleRouterLegacy = await oracleRouterFactory.deploy(agentAddress, 8, feedRegistryAddress)
+      oracleRouterLegacy = await oracleRouterFactory.deploy(adminAddress, 8, feedRegistryAddress)
       await oracleRouterLegacy.waitForDeployment()
-      const agentSigner = await getAgentSigner()
-      await oracleRouterLegacy.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouterLegacy.connect(adminSigner).setEthUsdBridge(86_400)
     })
 
     it('should correctly scale 8-decimal feed to 8-decimal unit', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
       // Configure a token with 8-decimal feed
       await oracleRouterLegacy
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
       const targetDecimals = BigInt(await oracleRouterLegacy.PRICE_DECIMALS())
@@ -460,11 +460,11 @@ describe('OracleRouter', function () {
     })
 
     it('should correctly scale 18-decimal feed to 8-decimal unit', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
       // Configure a token with 18-decimal feed (if any exist)
       await oracleRouterLegacy
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86_400, true)
 
       const targetDecimals = BigInt(await oracleRouterLegacy.PRICE_DECIMALS())
@@ -483,17 +483,17 @@ describe('OracleRouter', function () {
     })
 
     it('should handle cross-decimal conversions correctly', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
       // Configure tokens with different decimals
-      await oracleRouterLegacy.connect(agentSigner).setTokenFeed(
+      await oracleRouterLegacy.connect(adminSigner).setTokenFeed(
         contracts.DAI, // 18 decimals
         QuoteDenomination.USD,
         86_400,
         true
       )
 
-      await oracleRouterLegacy.connect(agentSigner).setTokenFeed(
+      await oracleRouterLegacy.connect(adminSigner).setTokenFeed(
         contracts.USDT, // 6 decimals
         QuoteDenomination.USD,
         86_400,
@@ -521,10 +521,10 @@ describe('OracleRouter', function () {
     })
 
     it('should maintain precision with 8-decimal unit', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
       await oracleRouterLegacy
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
       // Test that we don't lose precision due to scaling
@@ -535,15 +535,15 @@ describe('OracleRouter', function () {
 
   describe('Token Configuration', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
     })
 
     describe('setTokenFeed', function () {
       it('configures token with USD feed', async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         await oracleRouter
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
         const tokenConfig = await oracleRouter.tokenConfig(contracts.DAI)
@@ -555,10 +555,10 @@ describe('OracleRouter', function () {
       })
 
       it('emits TokenConfigured', async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         await expect(
           oracleRouter
-            .connect(agentSigner)
+            .connect(adminSigner)
             .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
         )
           .to.emit(oracleRouter, 'TokenConfigured')
@@ -566,25 +566,25 @@ describe('OracleRouter', function () {
       })
 
       it('reverts with zero token address', async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         await expect(
           oracleRouter
-            .connect(agentSigner)
+            .connect(adminSigner)
             .setTokenFeed(ethers.ZeroAddress, QuoteDenomination.USD, 86_400, true)
         ).to.be.revertedWithCustomError(oracleRouter, 'InvalidTokenAddress')
       })
 
       it('reverts with zero staleness', async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         await expect(
           oracleRouter
-            .connect(agentSigner)
+            .connect(adminSigner)
             .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 0, true)
         ).to.be.revertedWithCustomError(oracleRouter, 'InvalidStaleness')
       })
 
       it('reverts when USD feed is missing', async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         const feedRegistry = await ethers.getContractAt(
           'ChainlinkFeedRegistryStub',
           feedRegistryAddress
@@ -603,7 +603,7 @@ describe('OracleRouter', function () {
 
         await expect(
           oracleRouter
-            .connect(agentSigner)
+            .connect(adminSigner)
             .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
         ).to.be.revertedWithCustomError(oracleRouter, 'FeedMissing')
 
@@ -622,9 +622,9 @@ describe('OracleRouter', function () {
 
     describe('setTokenFeed', function () {
       it('configures token with ETH feed', async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         await oracleRouter
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
 
         const tokenConfig = await oracleRouter.tokenConfig(contracts.STETH)
@@ -636,10 +636,10 @@ describe('OracleRouter', function () {
       })
 
       it('emits TokenConfigured for ETH feed', async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         await expect(
           oracleRouter
-            .connect(agentSigner)
+            .connect(adminSigner)
             .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
         )
           .to.emit(oracleRouter, 'TokenConfigured')
@@ -649,57 +649,57 @@ describe('OracleRouter', function () {
 
     describe('setTokenActive', function () {
       beforeEach(async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         await oracleRouter
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
       })
 
       it('toggles token active status', async function () {
-        const agentSigner = await getAgentSigner()
-        await oracleRouter.connect(agentSigner).setTokenActive(contracts.DAI, false)
+        const adminSigner = await getAdminSigner()
+        await oracleRouter.connect(adminSigner).setTokenActive(contracts.DAI, false)
         let tokenConfig = await oracleRouter.tokenConfig(contracts.DAI)
         expect(tokenConfig.isActive).to.be.false
 
-        await oracleRouter.connect(agentSigner).setTokenActive(contracts.DAI, true)
+        await oracleRouter.connect(adminSigner).setTokenActive(contracts.DAI, true)
         tokenConfig = await oracleRouter.tokenConfig(contracts.DAI)
         expect(tokenConfig.isActive).to.be.true
       })
 
       it('emits TokenActiveUpdated', async function () {
-        const agentSigner = await getAgentSigner()
-        await expect(oracleRouter.connect(agentSigner).setTokenActive(contracts.DAI, false))
+        const adminSigner = await getAdminSigner()
+        await expect(oracleRouter.connect(adminSigner).setTokenActive(contracts.DAI, false))
           .to.emit(oracleRouter, 'TokenActiveUpdated')
           .withArgs(contracts.DAI, false)
       })
 
       it('reverts with zero token address', async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         await expect(
-          oracleRouter.connect(agentSigner).setTokenActive(ethers.ZeroAddress, true)
+          oracleRouter.connect(adminSigner).setTokenActive(ethers.ZeroAddress, true)
         ).to.be.revertedWithCustomError(oracleRouter, 'InvalidTokenAddress')
       })
 
       it('reverts when activating unconfigured token', async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         await expect(
-          oracleRouter.connect(agentSigner).setTokenActive(contracts.USDC, true)
+          oracleRouter.connect(adminSigner).setTokenActive(contracts.USDC, true)
         ).to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
       })
     })
 
     describe('setTokenEthUsdStalenessOverride', function () {
       beforeEach(async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         await oracleRouter
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
       })
 
       it('sets ETH/USD staleness override', async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         await expect(
-          oracleRouter.connect(agentSigner).setTokenEthUsdStalenessOverride(contracts.DAI, 43_200)
+          oracleRouter.connect(adminSigner).setTokenEthUsdStalenessOverride(contracts.DAI, 43_200)
         )
           .to.emit(oracleRouter, 'TokenEthUsdStalenessOverridden')
           .withArgs(contracts.DAI, 43_200)
@@ -709,34 +709,34 @@ describe('OracleRouter', function () {
       })
 
       it('reverts with zero token address', async function () {
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         await expect(
           oracleRouter
-            .connect(agentSigner)
+            .connect(adminSigner)
             .setTokenEthUsdStalenessOverride(ethers.ZeroAddress, 43_200)
         ).to.be.revertedWithCustomError(oracleRouter, 'InvalidTokenAddress')
       })
 
-      it('reverts when called by non-agent', async function () {
-        const [, nonAgentSigner] = await ethers.getSigners()
+      it('reverts when called by non-admin', async function () {
+        const [, nonAdminSigner] = await ethers.getSigners()
         await expect(
           oracleRouter
-            .connect(nonAgentSigner)
+            .connect(nonAdminSigner)
             .setTokenEthUsdStalenessOverride(contracts.DAI, 43_200)
-        ).to.be.revertedWithCustomError(oracleRouter, 'NotAgentOrManager')
+        ).to.be.revertedWithCustomError(oracleRouter, 'NotAdminOrManager')
       })
     })
   })
 
   describe('Sync Functions', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86_400, true)
     })
 
@@ -751,28 +751,28 @@ describe('OracleRouter', function () {
     })
 
     it('syncTokenFeed emits TokenConfigured', async function () {
-      const agentSigner = await getAgentSigner()
-      await expect(oracleRouter.connect(agentSigner).syncTokenFeed(contracts.DAI))
+      const adminSigner = await getAdminSigner()
+      await expect(oracleRouter.connect(adminSigner).syncTokenFeed(contracts.DAI))
         .to.emit(oracleRouter, 'TokenConfigured')
         .withArgs(contracts.DAI, 0, anyValue, anyValue, 86_400, 18, anyValue, anyValue, true)
     })
 
-    it('syncTokenFeed reverts for unconfigured token and non-agent', async function () {
-      const agentSigner = await getAgentSigner()
+    it('syncTokenFeed reverts for unconfigured token and non-admin', async function () {
+      const adminSigner = await getAdminSigner()
       await expect(
-        oracleRouter.connect(agentSigner).syncTokenFeed(contracts.USDC)
+        oracleRouter.connect(adminSigner).syncTokenFeed(contracts.USDC)
       ).to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
 
-      const [, nonAgentSigner] = await ethers.getSigners()
+      const [, nonAdminSigner] = await ethers.getSigners()
       await expect(
-        oracleRouter.connect(nonAgentSigner).syncTokenFeed(contracts.DAI)
-      ).to.be.revertedWithCustomError(oracleRouter, 'NotAgentOrManager')
+        oracleRouter.connect(nonAdminSigner).syncTokenFeed(contracts.DAI)
+      ).to.be.revertedWithCustomError(oracleRouter, 'NotAdminOrManager')
     })
   })
 
   describe('Price Queries', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
       // Ensure ETH/USD feed exists and is fresh before setting bridge
       const currentTimestamp = await getCurrentTimestamp()
@@ -785,16 +785,16 @@ describe('OracleRouter', function () {
         }
       )
 
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
 
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86_400, true)
 
       // keep feeds fresh for price reads
@@ -825,13 +825,13 @@ describe('OracleRouter', function () {
 
       it('handles ETH bridge path', async function () {
         // Configure STETH as ETH-quoted for this test (beforeEach configures it as USD-quoted)
-        const agentSigner = await getAgentSigner()
+        const adminSigner = await getAdminSigner()
         const currentTimestamp = await getCurrentTimestamp()
         await updateTokenFeed(feedConfig, contracts.STETH, contracts.CHAINLINK_ETH_QUOTE, {
           updatedAt: currentTimestamp,
         })
         await oracleRouter
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
 
         const [stethUsdPrice, daiUsdPrice] = await oracleRouter.getUsdPrices(
@@ -916,9 +916,9 @@ describe('OracleRouter', function () {
         })
 
         it('should revert if base token inactive', async function () {
-          const agent = await getAgentSigner()
+          const admin = await getAdminSigner()
 
-          await oracleRouter.connect(agent).setTokenActive(contracts.DAI, false)
+          await oracleRouter.connect(admin).setTokenActive(contracts.DAI, false)
 
           await expect(
             oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QuoteDenomination.USD)
@@ -928,9 +928,9 @@ describe('OracleRouter', function () {
         })
 
         it('should revert if quote token inactive', async function () {
-          const agent = await getAgentSigner()
+          const admin = await getAdminSigner()
 
-          await oracleRouter.connect(agent).setTokenActive(contracts.USDC, false)
+          await oracleRouter.connect(admin).setTokenActive(contracts.USDC, false)
 
           await expect(
             oracleRouter.getPricesAndDecimals(contracts.DAI, contracts.USDC, QuoteDenomination.USD)
@@ -942,12 +942,12 @@ describe('OracleRouter', function () {
 
       describe('Bridging - Mixed Denominations', function () {
         beforeEach(async function () {
-          const agent = await getAgentSigner()
+          const admin = await getAdminSigner()
           const currentTimestamp = await getCurrentTimestamp()
 
           // Configure LDO as ETH-quoted
           await oracleRouter
-            .connect(agent)
+            .connect(admin)
             .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
           // Update feeds to be fresh
@@ -965,9 +965,9 @@ describe('OracleRouter', function () {
         })
 
         it('should bridge ETH-quoted base token to USD when requesting USD quote', async function () {
-          const agent = await getAgentSigner()
+          const admin = await getAdminSigner()
           await oracleRouter
-            .connect(agent)
+            .connect(admin)
             .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
 
           const currentTimestamp = await getCurrentTimestamp()
@@ -1011,9 +1011,9 @@ describe('OracleRouter', function () {
         })
 
         it('should bridge both tokens when both are ETH-quoted and requesting USD', async function () {
-          const agent = await getAgentSigner()
+          const admin = await getAdminSigner()
           await oracleRouter
-            .connect(agent)
+            .connect(admin)
             .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
 
           const currentTimestamp = await getCurrentTimestamp()
@@ -1039,14 +1039,14 @@ describe('OracleRouter', function () {
         })
 
         it('should bridge USD-quoted base token to ETH when requesting ETH quote', async function () {
-          const agent = await getAgentSigner()
+          const admin = await getAdminSigner()
           // Configure STETH as USD-quoted so it needs bridging (beforeEach configures it as USD-quoted, but we need to ensure it's fresh)
           const currentTimestamp = await getCurrentTimestamp()
           await updateTokenFeed(feedConfig, contracts.STETH, contracts.CHAINLINK_USD_QUOTE, {
             updatedAt: currentTimestamp,
           })
           await oracleRouter
-            .connect(agent)
+            .connect(admin)
             .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86400, true)
 
           const [daiPrice, stethPrice, daiDecimals, stethDecimals] =
@@ -1068,9 +1068,9 @@ describe('OracleRouter', function () {
         })
 
         it('should bridge USD-quoted quote token to ETH when requesting ETH quote', async function () {
-          const agent = await getAgentSigner()
+          const admin = await getAdminSigner()
           await oracleRouter
-            .connect(agent)
+            .connect(admin)
             .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
 
           const currentTimestamp = await getCurrentTimestamp()
@@ -1122,20 +1122,20 @@ describe('OracleRouter', function () {
         })
 
         it('should revert if ETH/USD bridge is not configured when bridging is needed', async function () {
-          const agent = await getAgentSigner()
+          const admin = await getAdminSigner()
           // Deploy a fresh router without bridge configured
           const freshRouter = await oracleRouterFactory.deploy(
-            agentAddress,
+            adminAddress,
             18,
             feedRegistryAddress
           )
           await freshRouter.waitForDeployment()
 
           await freshRouter
-            .connect(agent)
+            .connect(admin)
             .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
           await freshRouter
-            .connect(agent)
+            .connect(admin)
             .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
 
           // Should revert when trying to bridge without ETH/USD bridge configured
@@ -1169,14 +1169,14 @@ describe('OracleRouter', function () {
 
       describe('Edge cases', function () {
         it('should work with maximum valid staleness value', async function () {
-          const agent = await getAgentSigner()
+          const admin = await getAdminSigner()
           const maxStaleness = 2 ** 32 - 1
 
           await oracleRouter
-            .connect(agent)
+            .connect(admin)
             .setTokenFeed(contracts.DAI, QuoteDenomination.USD, maxStaleness, true)
           await oracleRouter
-            .connect(agent)
+            .connect(admin)
             .setTokenFeed(contracts.USDC, QuoteDenomination.USD, maxStaleness, true)
 
           const result = await oracleRouter.getPricesAndDecimals(
@@ -1199,10 +1199,10 @@ describe('OracleRouter', function () {
 
   describe('Oracle Staleness', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(1)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(1)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 1, true)
     })
 
@@ -1230,11 +1230,11 @@ describe('OracleRouter', function () {
     })
 
     it('accepts updatedAt exactly at staleness boundary', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       const maxStalenessSeconds = 10
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(maxStalenessSeconds)
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(maxStalenessSeconds)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, maxStalenessSeconds, true)
 
       // anchor on a known block timestamp
@@ -1266,10 +1266,10 @@ describe('OracleRouter', function () {
 
   describe('Oracle Bad Answer', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
     })
 
@@ -1316,8 +1316,8 @@ describe('OracleRouter', function () {
 
   describe('Scale Factors', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
 
       const feedRegistry = await ethers.getContractAt(
         'ChainlinkFeedRegistryStub',
@@ -1346,12 +1346,12 @@ describe('OracleRouter', function () {
     })
 
     it('handles different aggregator decimals', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
 
       const daiConfig = await oracleRouter.tokenConfig(contracts.DAI)
@@ -1366,8 +1366,8 @@ describe('OracleRouter', function () {
 
   describe('Edge Cases', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
 
       const feedRegistry = await ethers.getContractAt(
         'ChainlinkFeedRegistryStub',
@@ -1386,9 +1386,9 @@ describe('OracleRouter', function () {
     })
 
     it('handles same token for base and quote', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
       const [firstUsdPrice, secondUsdPrice] = await oracleRouter.getUsdPrices(
@@ -1399,10 +1399,10 @@ describe('OracleRouter', function () {
     })
 
     it('handles maximum staleness values', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       const maxStalenessSeconds = 2 ** 32 - 1
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, maxStalenessSeconds, true)
 
       const tokenConfig = await oracleRouter.tokenConfig(contracts.DAI)
@@ -1414,10 +1414,10 @@ describe('OracleRouter', function () {
 
   describe('Feed drift detection', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
     })
 
@@ -1467,7 +1467,7 @@ describe('OracleRouter', function () {
     })
 
     it('recovers after syncTokenFeed', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       const feedRegistry = await ethers.getContractAt(
         'ChainlinkFeedRegistryStub',
         feedRegistryAddress
@@ -1489,7 +1489,7 @@ describe('OracleRouter', function () {
         oracleRouter.getUsdPrices(contracts.DAI, contracts.DAI)
       ).to.be.revertedWithCustomError(oracleRouter, 'FeedConfigOutOfSync')
 
-      await oracleRouter.connect(agentSigner).syncTokenFeed(contracts.DAI)
+      await oracleRouter.connect(adminSigner).syncTokenFeed(contracts.DAI)
       const [firstUsdPrice, secondUsdPrice] = await oracleRouter.getUsdPrices(
         contracts.DAI,
         contracts.DAI
@@ -1505,14 +1505,14 @@ describe('OracleRouter', function () {
     it('reverts when normalization floors to zero at chosen PRICE_UNIT', async function () {
       const smallUnitFactory = await ethers.getContractFactory('OracleRouter')
       const smallUnitRouter = await smallUnitFactory.deploy(
-        agentAddress,
+        adminAddress,
         2, // PRICE_DECIMALS = 2
         feedRegistryAddress
       )
       await smallUnitRouter.waitForDeployment()
 
-      const agentSigner = await getAgentSigner()
-      await smallUnitRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await smallUnitRouter.connect(adminSigner).setEthUsdBridge(86_400)
 
       const feedRegistry = await ethers.getContractAt(
         'ChainlinkFeedRegistryStub',
@@ -1531,7 +1531,7 @@ describe('OracleRouter', function () {
 
       await expect(
         smallUnitRouter
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
       ).to.emit(smallUnitRouter, 'TokenConfigured')
 
@@ -1545,20 +1545,20 @@ describe('OracleRouter', function () {
 
   describe('Per-token ETH/USD staleness override', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
       // Configure STETH as ETH-quoted so the override applies
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 300, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
     })
 
     it('uses min(override, global) when override is set', async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setTokenEthUsdStalenessOverride(contracts.STETH, 60)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setTokenEthUsdStalenessOverride(contracts.STETH, 60)
 
       // Make ETH/USD bridge stale (5 minutes old, which is > 60 second override)
       const currentTimestamp = await getCurrentTimestamp()
@@ -1585,8 +1585,8 @@ describe('OracleRouter', function () {
     })
 
     it('falls back to global when override is zero', async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setTokenEthUsdStalenessOverride(contracts.STETH, 0)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setTokenEthUsdStalenessOverride(contracts.STETH, 0)
 
       // anchor to the latest mined block timestamp to avoid drift
       const latestBlock = await ethers.provider.getBlock('latest')
@@ -1622,14 +1622,14 @@ describe('OracleRouter', function () {
 
   describe('getPricesAndDecimals()', function () {
     beforeEach(async function () {
-      const agent = await getAgentSigner()
+      const admin = await getAdminSigner()
 
       // Configure ETH-quoted tokens for testing
       await oracleRouter
-        .connect(agent)
+        .connect(admin)
         .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
       await oracleRouter
-        .connect(agent)
+        .connect(admin)
         .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
     })
 
@@ -1739,10 +1739,10 @@ describe('OracleRouter', function () {
       })
 
       it('should revert if base token inactive', async function () {
-        const agent = await getAgentSigner()
+        const admin = await getAdminSigner()
 
         // Deactivate stETH
-        await oracleRouter.connect(agent).setTokenActive(contracts.STETH, false)
+        await oracleRouter.connect(admin).setTokenActive(contracts.STETH, false)
 
         await expect(
           oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QuoteDenomination.ETH)
@@ -1752,10 +1752,10 @@ describe('OracleRouter', function () {
       })
 
       it('should revert if quote token inactive', async function () {
-        const agent = await getAgentSigner()
+        const admin = await getAdminSigner()
 
         // Deactivate LDO
-        await oracleRouter.connect(agent).setTokenActive(contracts.LDO, false)
+        await oracleRouter.connect(admin).setTokenActive(contracts.LDO, false)
 
         await expect(
           oracleRouter.getPricesAndDecimals(contracts.STETH, contracts.LDO, QuoteDenomination.ETH)
@@ -1767,18 +1767,18 @@ describe('OracleRouter', function () {
 
     describe('Bridging - Mixed Denominations (ETH Quote)', function () {
       beforeEach(async function () {
-        const agent = await getAgentSigner()
+        const admin = await getAdminSigner()
         const currentTimestamp = await getCurrentTimestamp()
 
         // Ensure ETH/USD bridge is configured
-        await oracleRouter.connect(agent).setEthUsdBridge(86400)
+        await oracleRouter.connect(admin).setEthUsdBridge(86400)
 
         // Configure USD-quoted tokens
         await oracleRouter
-          .connect(agent)
+          .connect(admin)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
         await oracleRouter
-          .connect(agent)
+          .connect(admin)
           .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, true)
 
         // Update feeds to be fresh
@@ -1862,16 +1862,16 @@ describe('OracleRouter', function () {
       })
 
       it('should revert if ETH/USD bridge is not configured when bridging is needed', async function () {
-        const agent = await getAgentSigner()
+        const admin = await getAdminSigner()
         // Deploy a fresh router without bridge configured
-        const freshRouter = await oracleRouterFactory.deploy(agentAddress, 18, feedRegistryAddress)
+        const freshRouter = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
         await freshRouter.waitForDeployment()
 
         await freshRouter
-          .connect(agent)
+          .connect(admin)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
         await freshRouter
-          .connect(agent)
+          .connect(admin)
           .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
 
         // Should revert when trying to bridge without ETH/USD bridge configured
@@ -1908,18 +1908,18 @@ describe('OracleRouter', function () {
     describe('Edge cases', function () {
       it('should work without ETH/USD bridge configured (does not need bridge)', async function () {
         // getPricesAndDecimals should not require ETH/USD bridge since it reads ETH prices directly
-        const agent = await getAgentSigner()
+        const admin = await getAdminSigner()
 
         // Deploy a fresh router without bridge
-        const freshRouter = await oracleRouterFactory.deploy(agentAddress, 18, feedRegistryAddress)
+        const freshRouter = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
         await freshRouter.waitForDeployment()
 
         // Configure only ETH-quoted tokens (no bridge)
         await freshRouter
-          .connect(agent)
+          .connect(admin)
           .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
         await freshRouter
-          .connect(agent)
+          .connect(admin)
           .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
         // Should work without bridge
@@ -1939,16 +1939,16 @@ describe('OracleRouter', function () {
       })
 
       it('should work with tokens that have different decimals', async function () {
-        const agent = await getAgentSigner()
+        const admin = await getAdminSigner()
 
         // Configure STETH as USD-quoted for this test
         await oracleRouter
-          .connect(agent)
+          .connect(admin)
           .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86400, true)
 
         // Configure a token with 6 decimals
         await oracleRouter
-          .connect(agent)
+          .connect(admin)
           .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, true)
 
         // Should handle the decimal difference - use USD since both are USD-quoted
@@ -1973,12 +1973,12 @@ describe('OracleRouter', function () {
 
   describe('Edge Cases', function () {
     it('should handle maximum valid staleness value', async function () {
-      const agent = await getAgentSigner()
+      const admin = await getAdminSigner()
       const maxStaleness = 2n ** 32n - 1n
 
       await expect(
         oracleRouter
-          .connect(agent)
+          .connect(admin)
           .setTokenFeed(contracts.USDT, QuoteDenomination.USD, maxStaleness, true)
       ).to.not.be.reverted
     })
@@ -1986,22 +1986,22 @@ describe('OracleRouter', function () {
 
   describe('Bridge Cache Edge Cases', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
     })
 
     it('should fetch bridge twice when tokens have different staleness caps', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenEthUsdStalenessOverride(contracts.STETH, 3_600)
 
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86_400, true)
       const [stethPrice, ldoPrice] = await oracleRouter.getUsdPrices(contracts.STETH, contracts.LDO)
 
@@ -2013,19 +2013,19 @@ describe('OracleRouter', function () {
     })
 
     it('should use bridge cache when both tokens have same staleness cap', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86_400, true)
 
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenEthUsdStalenessOverride(contracts.STETH, 3_600)
-      await oracleRouter.connect(agentSigner).setTokenEthUsdStalenessOverride(contracts.LDO, 3_600)
+      await oracleRouter.connect(adminSigner).setTokenEthUsdStalenessOverride(contracts.LDO, 3_600)
       const [stethPrice, ldoPrice] = await oracleRouter.getUsdPrices(contracts.STETH, contracts.LDO)
 
       const expectedSteth = await getExpectedUsdBridgePrice(oracleRouter, contracts.STETH)
@@ -2036,24 +2036,24 @@ describe('OracleRouter', function () {
     })
 
     it('should handle bridge cache invalidation when override changes', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
 
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86_400, true)
 
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenEthUsdStalenessOverride(contracts.STETH, 3_600)
-      await oracleRouter.connect(agentSigner).setTokenEthUsdStalenessOverride(contracts.LDO, 3_600)
+      await oracleRouter.connect(adminSigner).setTokenEthUsdStalenessOverride(contracts.LDO, 3_600)
 
       const [price1, price2] = await oracleRouter.getUsdPrices(contracts.STETH, contracts.LDO)
 
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenEthUsdStalenessOverride(contracts.STETH, 7_200)
 
       const [price3, price4] = await oracleRouter.getUsdPrices(contracts.STETH, contracts.LDO)
@@ -2064,16 +2064,16 @@ describe('OracleRouter', function () {
 
   describe('Price Consistency Invariants', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
     })
 
@@ -2132,20 +2132,20 @@ describe('OracleRouter', function () {
 
   describe('Error Propagation', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
     })
 
     it('should revert with base token error when base is stale and quote is fresh', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 1, true)
 
       const currentTimestamp = await getCurrentTimestamp()
@@ -2163,14 +2163,14 @@ describe('OracleRouter', function () {
         .to.be.revertedWithCustomError(oracleRouter, 'OracleStale')
         .withArgs(anyValue, staleTimestamp)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
     })
 
     it('should revert with quote token error when quote is stale and base is fresh', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 1, true)
 
       const currentTimestamp = await getCurrentTimestamp()
@@ -2188,14 +2188,14 @@ describe('OracleRouter', function () {
         .to.be.revertedWithCustomError(oracleRouter, 'OracleStale')
         .withArgs(anyValue, staleTimestamp)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
     })
 
     it('should revert with bridge error when bridge is stale during bridging', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
 
       const currentTimestamp = await getCurrentTimestamp()
@@ -2216,9 +2216,9 @@ describe('OracleRouter', function () {
     })
 
     it('should include correct aggregator address in error', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 1, true)
 
       const feedRegistry = await ethers.getContractAt(
@@ -2243,14 +2243,14 @@ describe('OracleRouter', function () {
 
   describe('Extreme Values', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
     })
 
     it('should handle maximum valid price value without overflow', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
       const currentTimestamp = await getCurrentTimestamp()
@@ -2277,9 +2277,9 @@ describe('OracleRouter', function () {
     })
 
     it('should revert with Math: mulDiv overflow when price causes overflow during normalization', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
       const currentTimestamp = await getCurrentTimestamp()
@@ -2304,9 +2304,9 @@ describe('OracleRouter', function () {
     })
 
     it('should handle minimum non-zero price (1 wei)', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
       const currentTimestamp = await getCurrentTimestamp()
@@ -2333,9 +2333,9 @@ describe('OracleRouter', function () {
     })
 
     it('should handle price that normalizes to exactly PRICE_UNIT', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
       const priceDecimals = await getRouterPriceDecimals(oracleRouter)
@@ -2359,11 +2359,11 @@ describe('OracleRouter', function () {
     })
 
     it('should handle maximum staleness value (type(uint32).max)', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       const maxStaleness = 2n ** 32n - 1n
 
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, maxStaleness, true)
 
       const veryOldTimestamp = 1n
@@ -2378,14 +2378,14 @@ describe('OracleRouter', function () {
     })
 
     it('should handle override staleness greater than global staleness', async function () {
-      const agentSigner = await getAgentSigner()
-      await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+      const adminSigner = await getAdminSigner()
+      await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
 
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenEthUsdStalenessOverride(contracts.STETH, 100_000)
 
       const currentTimestamp = await getCurrentTimestamp()
@@ -2410,17 +2410,17 @@ describe('OracleRouter', function () {
 
   describe('Timestamp Edge Cases', function () {
     beforeEach(async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
     })
 
     it('should revert with OracleStale when feed has updatedAt = 0', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       const feedRegistry = await ethers.getContractAt(
         'ChainlinkFeedRegistryStub',
         feedRegistryAddress
@@ -2431,10 +2431,10 @@ describe('OracleRouter', function () {
       const validAnswer = currentFeed.answer > 0n ? currentFeed.answer : 100000000n
 
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 1, true)
       await oracleRouter
-        .connect(agentSigner)
+        .connect(adminSigner)
         .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 1, true)
 
       const currentTimestamp = await getCurrentTimestamp()
@@ -2514,7 +2514,7 @@ describe('OracleRouter', function () {
 
   describe('Decimal Validation', function () {
     it('should revert with InvalidTokenDecimals when token decimals exceed MAX_DECIMALS', async function () {
-      const agentSigner = await getAgentSigner()
+      const adminSigner = await getAdminSigner()
       const maxDecimals = await oracleRouter.MAX_DECIMALS()
 
       const mockTokenFactory = await ethers.getContractFactory('ERC_20')
@@ -2540,12 +2540,12 @@ describe('OracleRouter', function () {
       if (tokenDecimals > maxDecimals) {
         await expect(
           oracleRouter
-            .connect(agentSigner)
+            .connect(adminSigner)
             .setTokenFeed(await mockToken.getAddress(), QuoteDenomination.USD, 86_400, true)
         ).to.be.revertedWithCustomError(oracleRouter, 'InvalidTokenDecimals')
       } else {
         await oracleRouter
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(await mockToken.getAddress(), QuoteDenomination.USD, 86_400, true)
         const config = await oracleRouter.tokenConfig(await mockToken.getAddress())
         expect(config.tokenDecimals).to.equal(tokenDecimals)

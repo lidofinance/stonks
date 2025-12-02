@@ -7,6 +7,7 @@ import { AmountConverter, Stonks, OracleRouter, OracleRouter__factory } from '..
 
 export type DeployStonksParams = {
   factoryParams: {
+    admin: string
     agent: string
     relayer: string
     settlement: string
@@ -38,7 +39,7 @@ type ReturnType = {
 }
 
 export async function deployStonks({
-  factoryParams: { agent, settlement, relayer, priceFeedRegistry, oracleRouterAddress },
+  factoryParams: { admin, agent, settlement, relayer, priceFeedRegistry, oracleRouterAddress },
   stonksParams: {
     manager,
     tokenFrom,
@@ -54,6 +55,7 @@ export async function deployStonks({
   skipRouterConfiguration = false,
 }: DeployStonksParams): Promise<ReturnType> {
   const { stonksFactory } = await deployStonksFactory(
+    admin,
     agent,
     settlement,
     relayer,
@@ -72,7 +74,7 @@ export async function deployStonks({
     if (!oracleRouterAddressLocal) {
       const [deployer] = await ethers.getSigners()
       oracleRouter = await new OracleRouter__factory(deployer).deploy(
-        deployer.address,
+        admin,
         18,
         priceFeedRegistry as any
       )
@@ -84,21 +86,18 @@ export async function deployStonks({
         await oracleRouter!.setEthUsdBridge(86_400)
       } catch (_) {}
 
-      const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
-      const erc20 = (addr: string) => new ethers.Contract(addr, tokenInterface, deployer)
       const configureToken = async (tokenAddr: string) => {
-        const dec = await erc20(tokenAddr).getFunction('decimals').staticCall()
         // Try USD first, fallback to ETH if it reverts for any reason
         try {
-          await oracleRouter!.setTokenFeed(tokenAddr, 0, 86_400, dec, true)
+          await oracleRouter!.setTokenFeed(tokenAddr, 0, 86_400, true)
           return
         } catch (_) {}
         try {
-          await oracleRouter!.setTokenFeed(tokenAddr, 1, 86_400, dec, true)
+          await oracleRouter!.setTokenFeed(tokenAddr, 1, 86_400, true)
           return
         } catch (e) {
           // final attempt: USD again to surface error details
-          await oracleRouter!.setTokenFeed(tokenAddr, 0, 86_400, dec, true)
+          await oracleRouter!.setTokenFeed(tokenAddr, 0, 86_400, true)
         }
       }
       await configureToken(tokenFrom)
@@ -109,17 +108,12 @@ export async function deployStonks({
       // Ensure the router has both pair feeds configured when reusing an external router
       if (!skipRouterConfiguration) {
         try {
-          const [signer0] = await ethers.getSigners()
-          const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
-          const erc20 = (addr: string) => new ethers.Contract(addr, tokenInterface, signer0)
-          const tokenFromDecimals = await erc20(tokenFrom).getFunction('decimals').staticCall()
-          const tokenToDecimals = await erc20(tokenTo).getFunction('decimals').staticCall()
           try {
             await oracleRouter!.setEthUsdBridge(86_400)
           } catch (_) {}
 
-          await oracleRouter!.setTokenFeed(tokenFrom, 0, 86_400, tokenFromDecimals, true)
-          await oracleRouter!.setTokenFeed(tokenTo, 0, 86_400, tokenToDecimals, true)
+          await oracleRouter!.setTokenFeed(tokenFrom, 0, 86_400, true)
+          await oracleRouter!.setTokenFeed(tokenTo, 0, 86_400, true)
         } catch (_) {
           // ignore if caller is not authorized or feeds already set
         }

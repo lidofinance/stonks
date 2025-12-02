@@ -21,7 +21,7 @@ describe('Stonks - Emergency Controls', function () {
   const MARGIN_IN_BPS = 500
 
   let manager: Signer
-  let agent: Signer
+  let admin: Signer
   let stranger: Signer
   let stonks: Stonks
   let order: Order
@@ -55,6 +55,7 @@ describe('Stonks - Emergency Controls', function () {
 
     const { stonks: stonksInstance } = await deployStonks({
       factoryParams: {
+        admin: contracts.ADMIN,
         agent: contracts.AGENT,
         relayer: contracts.VAULT_RELAYER,
         settlement: contracts.SETTLEMENT,
@@ -81,12 +82,13 @@ describe('Stonks - Emergency Controls', function () {
     stonks = stonksInstance
 
     // Configure emergency operator to use the dedicated multisig in tests
-    agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+    admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
+    await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
     await ethers.provider.send('hardhat_setBalance', [
       contracts.EMERGENCY_MULTISIG,
       '0x1000000000000000000',
     ])
-    await stonks.connect(agent).setEmergencyOperator(contracts.EMERGENCY_MULTISIG)
+    await stonks.connect(admin).setEmergencyOperator(contracts.EMERGENCY_MULTISIG)
     emergencyOperator = await ethers.getImpersonatedSigner(contracts.EMERGENCY_MULTISIG)
     await fillUpERC20FromTreasury({
       token: contracts.STETH,
@@ -108,29 +110,29 @@ describe('Stonks - Emergency Controls', function () {
   })
 
   describe('emergency operator configuration', function () {
-    it('allows agent to set emergency operator', async function () {
+    it('allows admin to set emergency operator', async function () {
       const [, , newEmergency] = await ethers.getSigners()
       const newEmergencyAddress = await newEmergency.getAddress()
 
-      await stonks.connect(agent).setEmergencyOperator(newEmergencyAddress)
+      await stonks.connect(admin).setEmergencyOperator(newEmergencyAddress)
       expect(await stonks.emergencyOperator()).to.equal(newEmergencyAddress)
 
       // restore original emergency multisig for other tests
-      await stonks.connect(agent).setEmergencyOperator(contracts.EMERGENCY_MULTISIG)
+      await stonks.connect(admin).setEmergencyOperator(contracts.EMERGENCY_MULTISIG)
       expect(await stonks.emergencyOperator()).to.equal(contracts.EMERGENCY_MULTISIG)
     })
 
     it('rejects manager attempting to set emergency operator', async function () {
       const [, , newEmergency] = await ethers.getSigners()
       await expect(stonks.connect(manager).setEmergencyOperator(await newEmergency.getAddress()))
-        .to.be.revertedWithCustomError(stonks, 'NotAgent')
+        .to.be.revertedWithCustomError(stonks, 'NotAdmin')
         .withArgs(await manager.getAddress())
     })
 
     it('rejects stranger attempting to set emergency operator', async function () {
       const [, , newEmergency] = await ethers.getSigners()
       await expect(stonks.connect(stranger).setEmergencyOperator(await newEmergency.getAddress()))
-        .to.be.revertedWithCustomError(stonks, 'NotAgent')
+        .to.be.revertedWithCustomError(stonks, 'NotAdmin')
         .withArgs(await stranger.getAddress())
     })
   })
@@ -190,10 +192,10 @@ describe('Stonks - Emergency Controls', function () {
     it('allows manager to pause and unpause creation and signatures', async function () {
       // ensure clean state
       if (await stonks.isCreationPaused()) {
-        await stonks.connect(agent).unpauseCreation()
+        await stonks.connect(admin).unpauseCreation()
       }
       if (await stonks.areSignaturesPaused()) {
-        await stonks.connect(agent).unpauseSignatures()
+        await stonks.connect(admin).unpauseSignatures()
       }
 
       await stonks.connect(manager).pauseCreation()
@@ -209,35 +211,35 @@ describe('Stonks - Emergency Controls', function () {
       expect(await stonks.areSignaturesPaused()).to.equal(false)
     })
 
-    it('allows agent to pause and unpause creation and signatures', async function () {
+    it('allows admin to pause and unpause creation and signatures', async function () {
       // ensure clean state
       if (await stonks.isCreationPaused()) {
-        await stonks.connect(agent).unpauseCreation()
+        await stonks.connect(admin).unpauseCreation()
       }
       if (await stonks.areSignaturesPaused()) {
-        await stonks.connect(agent).unpauseSignatures()
+        await stonks.connect(admin).unpauseSignatures()
       }
 
-      await stonks.connect(agent).pauseCreation()
+      await stonks.connect(admin).pauseCreation()
       expect(await stonks.isCreationPaused()).to.equal(true)
 
-      await stonks.connect(agent).unpauseCreation()
+      await stonks.connect(admin).unpauseCreation()
       expect(await stonks.isCreationPaused()).to.equal(false)
 
-      await stonks.connect(agent).pauseSignatures()
+      await stonks.connect(admin).pauseSignatures()
       expect(await stonks.areSignaturesPaused()).to.equal(true)
 
-      await stonks.connect(agent).unpauseSignatures()
+      await stonks.connect(admin).unpauseSignatures()
       expect(await stonks.areSignaturesPaused()).to.equal(false)
     })
 
     it('allows emergency operator multisig to pause and unpause creation and signatures', async function () {
       // ensure clean state
       if (await stonks.isCreationPaused()) {
-        await stonks.connect(agent).unpauseCreation()
+        await stonks.connect(admin).unpauseCreation()
       }
       if (await stonks.areSignaturesPaused()) {
-        await stonks.connect(agent).unpauseSignatures()
+        await stonks.connect(admin).unpauseSignatures()
       }
 
       await stonks.connect(emergencyOperator).pauseCreation()

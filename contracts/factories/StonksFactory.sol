@@ -16,6 +16,8 @@ contract StonksFactory {
 
     /// @notice Address of the Order contract implementation used as a template for cloning.
     address public immutable ORDER_SAMPLE;
+    /// @notice Address of the admin.
+    address public immutable ADMIN;
     /// @notice Address of the Lido DAO agent.
     address public immutable AGENT;
     /// @notice Address of the OracleRouter contract.
@@ -23,6 +25,7 @@ contract StonksFactory {
 
     // ==================== Events ====================
 
+    event AdminSet(address admin);
     event AgentSet(address agent);
     event OrderSampleDeployed(address order);
     event StonksDeployed(
@@ -43,6 +46,7 @@ contract StonksFactory {
 
     // ==================== Errors ====================
 
+    error InvalidAdminAddress(address admin);
     error InvalidAgentAddress(address agent);
     error InvalidSettlementAddress(address settlement);
     error InvalidRelayerAddress(address relayer);
@@ -51,12 +55,22 @@ contract StonksFactory {
     // ==================== Constructor ====================
 
     /**
+     * @param admin_ Address of the admin
      * @param agent_ Address of the Lido DAO agent
      * @param settlement_ Address of the Cow Protocol settlement contract
      * @param relayer_ Address of the Cow Protocol relayer contract
      * @param oracleRouter_ Address of the oracle router contract
      */
-    constructor(address agent_, address settlement_, address relayer_, address oracleRouter_) {
+    constructor(
+        address admin_,
+        address agent_,
+        address settlement_,
+        address relayer_,
+        address oracleRouter_
+    ) {
+        if (admin_ == address(0)) {
+            revert InvalidAdminAddress(admin_);
+        }
         if (agent_ == address(0)) {
             revert InvalidAgentAddress(agent_);
         }
@@ -73,12 +87,19 @@ contract StonksFactory {
             revert InvalidOracleRouterAddress(oracleRouter_);
         }
 
+        ADMIN = admin_;
         AGENT = agent_;
         ORACLE_ROUTER = oracleRouter_;
         ORDER_SAMPLE = address(
-            new Order(agent_, relayer_, ICoWSwapSettlement(settlement_).domainSeparator())
+            new Order(
+                admin_,
+                agent_,
+                relayer_,
+                ICoWSwapSettlement(settlement_).domainSeparator()
+            )
         );
 
+        emit AdminSet(admin_);
         emit AgentSet(agent_);
         emit OrderSampleDeployed(ORDER_SAMPLE);
     }
@@ -112,6 +133,7 @@ contract StonksFactory {
         stonks = address(
             new Stonks(
                 Stonks.InitParams(
+                    ADMIN,
                     AGENT,
                     manager_,
                     tokenFrom_,

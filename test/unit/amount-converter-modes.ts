@@ -70,13 +70,14 @@ describe('AmountConverter - ETH/USD Modes', () => {
     router = await getTestOracleRouter({
       tokens: getAllTestTokens(),
       useRealPrices: true,
-      agent: contracts.AGENT, // Use the same agent address
+      admin: contracts.ADMIN,
     })
 
     await refreshTestFeedData(getAllTestTokens())
 
     // Use agent signer for setTokenFeed
-    const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+    const admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
+    await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
     await (
       await ethers.getSigners()
     )[0].sendTransaction({
@@ -84,10 +85,8 @@ describe('AmountConverter - ETH/USD Modes', () => {
       value: parseEther('1'),
     })
 
-    await router
-      .connect(agent)
-      .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
-    await router.connect(agent).setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
+    await router.connect(admin).setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
+    await router.connect(admin).setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
     factory = await ethers.getContractFactory('AmountConverter')
   })
@@ -221,7 +220,8 @@ describe('AmountConverter - ETH/USD Modes', () => {
         await mixedConverter.waitForDeployment()
 
         // Configure DAI as USD-quoted for bridging test
-        const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+        const admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
+        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
         await (
           await ethers.getSigners()
         )[0].sendTransaction({
@@ -258,10 +258,8 @@ describe('AmountConverter - ETH/USD Modes', () => {
         }
 
         // Now set the bridge (feed should exist now)
-        await router.connect(agent).setEthUsdBridge(86400)
-        await router
-          .connect(agent)
-          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
+        await router.connect(admin).setEthUsdBridge(86400)
+        await router.connect(admin).setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
 
         const amount = parseEther('1')
         const result = await mixedConverter.getExpectedOut(contracts.STETH, contracts.DAI, amount)
@@ -323,7 +321,8 @@ describe('AmountConverter - ETH/USD Modes', () => {
 
     describe('Mixed denominations with USD mode (bridging)', () => {
       beforeEach(async () => {
-        const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+        const admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
+        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
         await (
           await ethers.getSigners()
         )[0].sendTransaction({
@@ -360,7 +359,7 @@ describe('AmountConverter - ETH/USD Modes', () => {
         }
 
         // Now set the bridge (feed should exist now)
-        await router.connect(agent).setEthUsdBridge(86400)
+        await router.connect(admin).setEthUsdBridge(86400)
       })
 
       it('should bridge ETH-quoted token to USD when selling in USD mode converter', async () => {
@@ -416,10 +415,9 @@ describe('AmountConverter - ETH/USD Modes', () => {
       })
 
       it('should work with both tokens having different denominations', async () => {
-        const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
-        await router
-          .connect(agent)
-          .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
+        const admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
+        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
+        await router.connect(admin).setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
         const mixedConverter = await factory.deploy(
           await router.getAddress(),
@@ -530,7 +528,8 @@ describe('AmountConverter - ETH/USD Modes', () => {
     it('should handle 18 to 18 decimal conversion (ETH mode)', async () => {
       await refreshTestFeedData([contracts.STETH, contracts.LDO])
 
-      const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+      const admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
+      await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
       await (
         await ethers.getSigners()
       )[0].sendTransaction({
@@ -538,12 +537,8 @@ describe('AmountConverter - ETH/USD Modes', () => {
         value: parseEther('1'),
       })
 
-      await router
-        .connect(agent)
-        .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
-      await router
-        .connect(agent)
-        .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
+      await router.connect(admin).setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
+      await router.connect(admin).setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
       const ethConverter = await factory.deploy(
         await router.getAddress(),

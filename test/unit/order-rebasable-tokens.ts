@@ -64,6 +64,7 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
     // Deploy Stonks with partial fills enabled
     const { stonks: stonksPartialFillLocal } = await deployStonks({
       factoryParams: {
+        admin: contracts.ADMIN,
         agent: contracts.AGENT,
         relayer: contracts.VAULT_RELAYER,
         settlement: contracts.SETTLEMENT,
@@ -92,6 +93,7 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
     // Deploy Stonks with partial fills disabled
     const { stonks: stonksNoPartialFillLocal } = await deployStonks({
       factoryParams: {
+        admin: contracts.ADMIN,
         agent: contracts.AGENT,
         relayer: contracts.VAULT_RELAYER,
         settlement: contracts.SETTLEMENT,

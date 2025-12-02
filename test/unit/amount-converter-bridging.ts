@@ -57,13 +57,14 @@ describe('AmountConverter - Bridging Tests', () => {
     router = await getTestOracleRouter({
       tokens: getAllTestTokens(),
       useRealPrices: true,
-      agent: contracts.AGENT, // Use the same agent address
+      admin: contracts.ADMIN,
     })
 
     await refreshTestFeedData(getAllTestTokens())
 
     // Configure tokens with mixed denominations
-    const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+    const admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
+    await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
     await (
       await ethers.getSigners()
     )[0].sendTransaction({
@@ -115,13 +116,11 @@ describe('AmountConverter - Bridging Tests', () => {
     }
 
     // Now set the bridge (feed should exist now)
-    await router.connect(agent).setEthUsdBridge(86400)
-    await router.connect(agent).setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
-    await router.connect(agent).setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, true)
-    await router
-      .connect(agent)
-      .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
-    await router.connect(agent).setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
+    await router.connect(admin).setEthUsdBridge(86400)
+    await router.connect(admin).setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
+    await router.connect(admin).setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, true)
+    await router.connect(admin).setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
+    await router.connect(admin).setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
     factory = await ethers.getContractFactory('AmountConverter')
   })
@@ -346,13 +345,14 @@ describe('AmountConverter - Bridging Tests', () => {
       const oracleRouterFactory = await ethers.getContractFactory('OracleRouter')
       const unitDecimals = Number(await router.PRICE_DECIMALS())
       const freshRouter = await oracleRouterFactory.deploy(
-        contracts.AGENT,
+        contracts.ADMIN,
         unitDecimals,
         await feedRegistry.getAddress()
       )
       await freshRouter.waitForDeployment()
 
-      const agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+      const admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
+      await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
       await (
         await ethers.getSigners()
       )[0].sendTransaction({
@@ -362,10 +362,10 @@ describe('AmountConverter - Bridging Tests', () => {
 
       // Configure tokens but don't set ETH/USD bridge
       await freshRouter
-        .connect(agent)
+        .connect(admin)
         .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
       await freshRouter
-        .connect(agent)
+        .connect(admin)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
 
       const converter = await factory.deploy(

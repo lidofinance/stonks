@@ -100,13 +100,19 @@ contract Order is IERC1271, AssetRecoverer {
     // ==================== Constructor ====================
 
     /**
-     * @param agent_ The agent's address with control over the contract.
+     * @param admin_ The admin address.
+     * @param agent_ The address of the Lido DAO agent.
      * @param relayer_ The address of the relayer handling orders.
      * @param domainSeparator_ The EIP-712 domain separator to use.
      * @dev This constructor sets up necessary parameters and state variables to enable the contract's interaction with the CoW Protocol.
      * @dev It also marks the contract as initialized to prevent unauthorized re-initialization.
      */
-    constructor(address agent_, address relayer_, bytes32 domainSeparator_) AssetRecoverer(agent_) {
+    constructor(
+        address admin_,
+        address agent_,
+        address relayer_,
+        bytes32 domainSeparator_
+    ) AssetRecoverer(admin_, agent_) {
         // Immutable parameters are captured at deployment time. When used with minimal proxies,
         // these retain values baked into the original implementation.
         RELAYER = relayer_;
@@ -399,7 +405,7 @@ contract Order is IERC1271, AssetRecoverer {
      * @param amount_ The amount of the token to recover.
      * @dev Can only be called by the agent or manager of the contract. This is a safety feature to prevent accidental token loss.
      */
-    function recoverERC20(address token_, uint256 amount_) public override onlyAgentOrManager {
+    function recoverERC20(address token_, uint256 amount_) public override onlyAdminOrManager {
         address tokenFromLocal = tokenFrom;
 
         if (tokenFromLocal == address(0)) {

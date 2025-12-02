@@ -35,6 +35,7 @@ describe('Order - Fuzz Tests', () => {
 
     const { stonks: stonksInstance } = await deployStonks({
       factoryParams: {
+        admin: contracts.ADMIN,
         agent: contracts.AGENT,
         relayer: contracts.VAULT_RELAYER,
         settlement: contracts.SETTLEMENT,

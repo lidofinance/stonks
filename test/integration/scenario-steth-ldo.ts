@@ -833,7 +833,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const [, , unauthorized] = await ethers.getSigners()
 
       await expect(stonks.connect(unauthorized).placeOrder(parseEther('1')))
-        .to.be.revertedWithCustomError(stonks, 'NotAgentOrManager')
+        .to.be.revertedWithCustomError(stonks, 'NotAdminOrManager')
         .withArgs(await unauthorized.getAddress())
     })
 
@@ -846,11 +846,11 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       await expect(order.connect(anyone).recoverTokenFrom()).to.not.be.reverted
     })
 
-    it('should revert when non-agent/manager tries to recover ERC20 from order', async () => {
+    it('should revert when non-admin/manager tries to recover ERC20 from order', async () => {
       const [, , unauthorized] = await ethers.getSigners()
 
       await expect(order.connect(unauthorized).recoverERC20(contracts.STETH, 1n))
-        .to.be.revertedWithCustomError(order, 'NotAgentOrManager')
+        .to.be.revertedWithCustomError(order, 'NotAdminOrManager')
         .withArgs(await unauthorized.getAddress())
     })
   })
@@ -1131,7 +1131,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       await snapshot.restore()
     })
 
-    it('should allow agent to recover dust stETH from Stonks contract', async () => {
+    it('should allow admin to recover dust stETH from Stonks contract', async () => {
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       await impersonateAccount(contracts.AGENT)
 
@@ -1146,7 +1146,9 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const agentBalanceBefore = await tokenFrom.balanceOf(contracts.AGENT)
 
       // Recover actual balance to account for stETH shares-based rounding
-      await stonks.connect(treasurySigner).recoverERC20(await tokenFrom.getAddress(), stonksBalance)
+      const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+      await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
+      await stonks.connect(adminSigner).recoverERC20(await tokenFrom.getAddress(), stonksBalance)
 
       const agentBalanceAfter = await tokenFrom.balanceOf(contracts.AGENT)
       const stonksBalanceAfter = await tokenFrom.balanceOf(stonks)
@@ -1203,7 +1205,9 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const agentBalanceBefore = await tokenFrom.balanceOf(contracts.AGENT)
 
       // Recover all remaining balance including dust
-      await stonks.connect(treasurySigner).recoverERC20(await tokenFrom.getAddress(), stonksBalance)
+      const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+      await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
+      await stonks.connect(adminSigner).recoverERC20(await tokenFrom.getAddress(), stonksBalance)
 
       const agentBalanceAfter = await tokenFrom.balanceOf(contracts.AGENT)
       expect(agentBalanceAfter).to.be.gt(agentBalanceBefore)
@@ -1215,7 +1219,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
 
       await expect(
         stonks.connect(unauthorized).recoverERC20(await tokenFrom.getAddress(), 100n)
-      ).to.be.revertedWithCustomError(stonks, 'NotAgentOrManager')
+      ).to.be.revertedWithCustomError(stonks, 'NotAdminOrManager')
     })
 
     it('should recover dust LDO tokens accidentally sent to Stonks', async () => {
@@ -1232,9 +1236,9 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const agentBalanceBefore = await tokenTo.balanceOf(contracts.AGENT)
 
       // Recover accidental LDO
-      await stonks
-        .connect(treasurySigner)
-        .recoverERC20(await tokenTo.getAddress(), accidentalAmount)
+      const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+      await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
+      await stonks.connect(adminSigner).recoverERC20(await tokenTo.getAddress(), accidentalAmount)
 
       const agentBalanceAfter = await tokenTo.balanceOf(contracts.AGENT)
       expect(agentBalanceAfter - agentBalanceBefore).to.be.closeTo(accidentalAmount, 2n)

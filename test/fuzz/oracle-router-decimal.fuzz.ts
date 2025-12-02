@@ -18,7 +18,7 @@ const contracts = getContracts()
 describe('OracleRouter Decimal Fuzzing', function () {
   let oracleRouterFactory: OracleRouter__factory
   let snapshot: SnapshotRestorer
-  let agentAddress: string
+  let adminAddress: string
   let feedRegistryAddress: string
 
   const feedConfig = {
@@ -31,10 +31,10 @@ describe('OracleRouter Decimal Fuzzing', function () {
     return BigInt(block!.timestamp)
   }
 
-  const getAgentSigner = async () => {
-    const agentSigner = await ethers.getImpersonatedSigner(agentAddress)
-    await ethers.provider.send('hardhat_setBalance', [agentAddress, '0x1000000000000000000'])
-    return agentSigner
+  const getAdminSigner = async () => {
+    const adminSigner = await ethers.getImpersonatedSigner(adminAddress)
+    await ethers.provider.send('hardhat_setBalance', [adminAddress, '0x1000000000000000000'])
+    return adminSigner
   }
 
   const calculateExpectedPrice = (
@@ -51,7 +51,7 @@ describe('OracleRouter Decimal Fuzzing', function () {
   before(async function () {
     snapshot = await takeSnapshot()
     oracleRouterFactory = await ethers.getContractFactory('OracleRouter')
-    agentAddress = contracts.AGENT
+    adminAddress = contracts.ADMIN
     const stub = await getTestFeedRegistryStub(feedConfig)
     feedRegistryAddress = await stub.getAddress()
   })
@@ -80,16 +80,16 @@ describe('OracleRouter Decimal Fuzzing', function () {
             const { routerDecimals, feedDecimals, tokenDecimals, priceValue } = config
 
             const testSnapshot = await takeSnapshot()
-            const agentSigner = await getAgentSigner()
+            const adminSigner = await getAdminSigner()
             const router = await oracleRouterFactory.deploy(
-              agentAddress,
+              adminAddress,
               routerDecimals,
               feedRegistryAddress
             )
             await router.waitForDeployment()
-            await router.connect(agentSigner).setEthUsdBridge(86_400)
+            await router.connect(adminSigner).setEthUsdBridge(86_400)
             await router
-              .connect(agentSigner)
+              .connect(adminSigner)
               .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
             const nowTs = await getCurrentTimestamp()

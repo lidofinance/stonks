@@ -13,12 +13,12 @@ const addresses = getContracts()
 describe('AmountConverter - Fuzz Tests', () => {
   let snapshot: SnapshotRestorer
   let router: OracleRouter
-  let agentAddress: string
+  let adminAddress: string
 
-  const getAgentSigner = async () => {
-    const agentSigner = await ethers.getImpersonatedSigner(agentAddress)
-    await ethers.provider.send('hardhat_setBalance', [agentAddress, '0x1000000000000000000'])
-    return agentSigner
+  const getAdminSigner = async () => {
+    const adminSigner = await ethers.getImpersonatedSigner(adminAddress)
+    await ethers.provider.send('hardhat_setBalance', [adminAddress, '0x1000000000000000000'])
+    return adminSigner
   }
 
   before(async () => {
@@ -29,15 +29,15 @@ describe('AmountConverter - Fuzz Tests', () => {
       useRealPrices: true,
     })
 
-    agentAddress = await router.AGENT()
+    adminAddress = await router.ADMIN()
 
     await refreshTestFeedData([addresses.STETH, addresses.LDO, addresses.DAI, addresses.USDC])
 
-    const agent = await getAgentSigner()
+    const admin = await getAdminSigner()
     await router
-      .connect(agent)
+      .connect(admin)
       .setTokenFeed(addresses.STETH, QuoteDenomination.ETH, 86400, true)
-    await router.connect(agent).setTokenFeed(addresses.LDO, QuoteDenomination.ETH, 86400, true)
+    await router.connect(admin).setTokenFeed(addresses.LDO, QuoteDenomination.ETH, 86400, true)
   })
 
   beforeEach(async () => {

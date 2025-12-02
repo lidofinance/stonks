@@ -210,14 +210,18 @@ describe('Scenario test multi-pair', function () {
         before(async () => {
           await snapshotOrderPlaced.restore()
         })
-        it('agent should change a manager', async () => {
-          const agent = await ethers.getSigner(contracts.AGENT)
-          await stonks.connect(agent).setManager(ethers.ZeroAddress)
+        it('admin should change a manager', async () => {
+          const admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
+          await ethers.provider.send('hardhat_setBalance', [
+            contracts.ADMIN,
+            '0x1000000000000000000',
+          ])
+          await stonks.connect(admin).setManager(ethers.ZeroAddress)
           expect(await stonks.manager()).to.be.equal(ethers.ZeroAddress)
         })
         it('manager should not be allowed to interact', async () => {
           await expect(stonks.placeOrder(1))
-            .to.be.revertedWithCustomError(stonks, 'NotAgentOrManager')
+            .to.be.revertedWithCustomError(stonks, 'NotAdminOrManager')
             .withArgs(await manager.getAddress())
         })
       })
@@ -231,10 +235,11 @@ describe('Scenario test multi-pair', function () {
           await stubToken.waitForDeployment()
         })
         it('should fill up stonks with unexpected token', async () => {
-          const agent = await ethers.getSigner(contracts.AGENT)
           const value = parseEther('1')
           await stubToken.transfer(contracts.AGENT, value)
-          await stubToken.connect(agent).transfer(stonks, value)
+          // Use a regular signer to transfer tokens to stonks (not agent, as agent is only fund recipient)
+          const [deployer] = await ethers.getSigners()
+          await stubToken.connect(deployer).transfer(stonks, value)
 
           expect(await stubToken.balanceOf(stonks)).to.equal(value)
         })
@@ -247,9 +252,10 @@ describe('Scenario test multi-pair', function () {
         })
         it('should fill up order contract with unexpected token', async () => {
           const value = parseEther('1')
-          const agent = await ethers.getSigner(contracts.AGENT)
           await stubToken.transfer(contracts.AGENT, value)
-          await stubToken.connect(agent).transfer(order, value)
+          // Use a regular signer to transfer tokens to order (not agent, as agent is only fund recipient)
+          const [deployer] = await ethers.getSigners()
+          await stubToken.connect(deployer).transfer(order, value)
 
           expect(await stubToken.balanceOf(order)).to.be.closeTo(value, 1n)
         })
@@ -286,6 +292,7 @@ describe('Scenario test multi-pair', function () {
           const oracleRouter = await stonks.ORACLE_ROUTER()
 
           stonksWithCap = await stonksFactory.deploy({
+            admin: contracts.ADMIN,
             agent: contracts.AGENT,
             manager: await manager.getAddress(),
             tokenFrom: await stonks.TOKEN_FROM(),
@@ -338,6 +345,7 @@ describe('Scenario test multi-pair', function () {
           const oracleRouter = await stonks.ORACLE_ROUTER()
 
           stonksStrict = await stonksFactory.deploy({
+            admin: contracts.ADMIN,
             agent: contracts.AGENT,
             manager: await manager.getAddress(),
             tokenFrom: await stonks.TOKEN_FROM(),
@@ -390,6 +398,7 @@ describe('Scenario test multi-pair', function () {
           const oracleRouter = await stonks.ORACLE_ROUTER()
 
           stonksWithCap = await stonksFactory.deploy({
+            admin: contracts.ADMIN,
             agent: contracts.AGENT,
             manager: await manager.getAddress(),
             tokenFrom: await stonks.TOKEN_FROM(),

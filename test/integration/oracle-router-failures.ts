@@ -44,7 +44,7 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
     router = await getTestOracleRouter({
       tokens: getAllTestTokens(),
       useRealPrices: true,
-      agent: contracts.AGENT,
+      admin: contracts.ADMIN,
     })
 
     const feedRegistry = await getTestFeedRegistryStub(feedConfig)
@@ -68,14 +68,14 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
       it('should revert with OracleBadAnswer when router receives zero price from feed', async function () {
         const converter = await deployConverter([contracts.DAI], [contracts.USDC], false)
 
-        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
-        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+        const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
 
         await router
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
         await router
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
 
         const currentTimestamp = await getCurrentTimestamp()
@@ -103,14 +103,14 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
       it('should revert with OracleBadAnswer when router receives zero price for buy token from feed', async function () {
         const converter = await deployConverter([contracts.DAI], [contracts.USDC], false)
 
-        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
-        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+        const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
 
         await router
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
         await router
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
 
         const currentTimestamp = await getCurrentTimestamp()
@@ -138,15 +138,15 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
       it('should revert with OracleBadAnswer when router receives zero price for sell token in ETH mode', async function () {
         const converter = await deployConverter([contracts.STETH], [contracts.LDO], true)
 
-        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
-        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+        const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
 
-        await router.connect(agentSigner).setEthUsdBridge(86_400)
+        await router.connect(adminSigner).setEthUsdBridge(86_400)
         await router
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
         await router
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86_400, true)
 
         const currentTimestamp = await getCurrentTimestamp()
@@ -174,15 +174,15 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
       it('should revert with OracleBadAnswer when router receives zero price for buy token in ETH mode', async function () {
         const converter = await deployConverter([contracts.STETH], [contracts.LDO], true)
 
-        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
-        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+        const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
 
-        await router.connect(agentSigner).setEthUsdBridge(86_400)
+        await router.connect(adminSigner).setEthUsdBridge(86_400)
         await router
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86_400, true)
         await router
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86_400, true)
 
         const currentTimestamp = await getCurrentTimestamp()
@@ -211,7 +211,7 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
         const unitDecimals = 6
         const freshRouterFactory = await ethers.getContractFactory('OracleRouter')
         const freshRouter = await freshRouterFactory.deploy(
-          contracts.AGENT,
+          contracts.ADMIN,
           unitDecimals,
           feedRegistryAddress
         )
@@ -228,14 +228,14 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
           false
         )
 
-        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
-        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+        const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
 
         await freshRouter
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
         await freshRouter
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
 
         const currentTimestamp = await getCurrentTimestamp()
@@ -273,7 +273,7 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
       it('should revert with EthUsdBridgeMissing when bridge not configured and bridging needed', async function () {
         const freshRouterFactory = await ethers.getContractFactory('OracleRouter')
         const freshRouter = await freshRouterFactory.deploy(
-          contracts.AGENT,
+          contracts.ADMIN,
           18,
           feedRegistryAddress
         )
@@ -290,14 +290,14 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
           true
         )
 
-        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
-        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+        const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
 
         await freshRouter
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
         await freshRouter
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
 
         const currentTimestamp = await getCurrentTimestamp()
@@ -323,14 +323,14 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
       it('should revert with OracleStale when feed becomes stale between converter calls', async function () {
         const converter = await deployConverter([contracts.DAI], [contracts.USDC], false)
 
-        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
-        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+        const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
 
         await router
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 5, true)
         await router
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
 
         // deterministically ensure both feeds are positive and fresh
@@ -379,7 +379,7 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
         ).to.be.revertedWithCustomError(router, 'OracleStale')
 
         await router
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
       })
     })
@@ -388,12 +388,12 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
   describe('Stonks Integration Failures', function () {
     describe('Unquotable token handling', function () {
       it('should revert with TokenNotConfigured when assertQuotable called with unconfigured base token', async function () {
-        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
-        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+        const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
 
         const freshRouterFactory = await ethers.getContractFactory('OracleRouter')
         const freshRouter = await freshRouterFactory.deploy(
-          contracts.AGENT,
+          contracts.ADMIN,
           18,
           feedRegistryAddress
         )
@@ -405,6 +405,7 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
 
         const stonksFactory = await ethers.getContractFactory('StonksFactory')
         const factory = await stonksFactory.deploy(
+          contracts.ADMIN,
           contracts.AGENT,
           contracts.SETTLEMENT,
           contracts.VAULT_RELAYER,
@@ -455,12 +456,12 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
       })
 
       it('should revert with TokenNotConfigured when assertQuotable called with unconfigured quote token', async function () {
-        const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
-        await ethers.provider.send('hardhat_setBalance', [contracts.AGENT, '0x1000000000000000000'])
+        const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
 
         const freshRouterFactory = await ethers.getContractFactory('OracleRouter')
         const freshRouter = await freshRouterFactory.deploy(
-          contracts.AGENT,
+          contracts.ADMIN,
           18,
           feedRegistryAddress
         )
@@ -471,11 +472,12 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
         expect(usdcConfigFresh.tokenDecimals).to.equal(0)
 
         await freshRouter
-          .connect(agentSigner)
+          .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
 
         const stonksFactory = await ethers.getContractFactory('StonksFactory')
         const factory = await stonksFactory.deploy(
+          contracts.ADMIN,
           contracts.AGENT,
           contracts.SETTLEMENT,
           contracts.VAULT_RELAYER,

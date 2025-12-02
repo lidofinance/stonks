@@ -58,6 +58,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
     const { stonks: stonksInstance } = await deployStonks({
       factoryParams: {
+        admin: contracts.ADMIN,
         agent: contracts.AGENT,
         relayer: contracts.VAULT_RELAYER,
         settlement: contracts.SETTLEMENT,
@@ -130,6 +131,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
     const { stonks: stonksInstance } = await deployStonks({
       factoryParams: {
+        admin: contracts.ADMIN,
         agent: contracts.AGENT,
         relayer: contracts.VAULT_RELAYER,
         settlement: contracts.SETTLEMENT,
@@ -272,6 +274,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
       // Deploy Order sample
       const orderSample = await orderFactory.deploy(
+        contracts.ADMIN,
         contracts.AGENT,
         contracts.VAULT_RELAYER,
         contracts.DOMAIN_SEPARATOR
@@ -281,6 +284,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       // Deploy Stonks directly with MaxUint256
       const stonksFactory = await ethers.getContractFactory('Stonks')
       const stonksNoCap = await stonksFactory.deploy({
+        admin: contracts.ADMIN,
         agent: contracts.AGENT,
         manager: await manager.getAddress(),
         tokenFrom: contracts.STETH,
@@ -339,6 +343,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
       const { stonks: stonksStrict } = await deployStonks({
         factoryParams: {
+          admin: contracts.ADMIN,
           agent: contracts.AGENT,
           relayer: contracts.VAULT_RELAYER,
           settlement: contracts.SETTLEMENT,
@@ -453,6 +458,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
       const { stonks: stonksZeroTolerance } = await deployStonks({
         factoryParams: {
+          admin: contracts.ADMIN,
           agent: contracts.AGENT,
           relayer: contracts.VAULT_RELAYER,
           settlement: contracts.SETTLEMENT,

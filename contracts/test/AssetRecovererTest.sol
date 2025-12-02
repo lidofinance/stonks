@@ -12,10 +12,11 @@ contract AssetRecovererTest is AssetRecoverer {
 
     /**
      * @notice Initializes the test contract.
-     * @param agent_ Agent address.
+     * @param admin_ Admin address.
+     * @param agent_ Address of the Lido DAO agent.
      * @param manager_ Manager address.
      */
-    constructor(address agent_, address manager_) AssetRecoverer(agent_) {
+    constructor(address admin_, address agent_, address manager_) AssetRecoverer(admin_, agent_) {
         manager = manager_;
     }
 }

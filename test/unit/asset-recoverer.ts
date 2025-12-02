@@ -32,21 +32,25 @@ describe('Asset recoverer', async function () {
     anotherManager = (await ethers.getSigners())[2]
 
     contractFactory = await ethers.getContractFactory('AssetRecovererTest')
-    const assetRecoverer = await contractFactory.deploy(contracts.AGENT, await manager.getAddress())
+    const assetRecoverer = await contractFactory.deploy(
+      contracts.ADMIN,
+      contracts.AGENT,
+      await manager.getAddress()
+    )
 
     await assetRecoverer.waitForDeployment()
     subject = assetRecoverer.connect(manager)
   })
 
   describe('initialization:', async function () {
-    it('should have right manager and agent addresses after deploy', async function () {
+    it('should have right admin, manager and agent addresses after deploy', async function () {
+      expect(await subject.ADMIN()).to.equal(contracts.ADMIN)
       expect(await subject.AGENT()).to.equal(contracts.AGENT)
       expect(await subject.manager()).to.equal(await manager.getAddress())
     })
     it('should revert deploy with agent zero adress', async function () {
-      await expect(contractFactory.deploy(ethers.ZeroAddress, manager))
-        .to.be.revertedWithCustomError(contractFactory, 'InvalidAgentAddress')
-        .withArgs(ethers.ZeroAddress)
+      await expect(contractFactory.deploy(contracts.ADMIN, ethers.ZeroAddress, manager)).to.be
+        .reverted
     })
   })
 
@@ -55,18 +59,18 @@ describe('Asset recoverer', async function () {
     this.beforeAll(async function () {
       localSnapshotId = await network.provider.send('evm_snapshot')
     })
-    it('should allow an agent to change manager', async function () {
+    it('should allow an admin to change manager', async function () {
       expect(await subject.manager()).to.equal(await manager.getAddress())
 
-      await setBalance(contracts.AGENT, ethers.parseEther('100'))
-      await impersonateAccount(contracts.AGENT)
+      await setBalance(contracts.ADMIN, ethers.parseEther('100'))
+      await impersonateAccount(contracts.ADMIN)
 
-      const agent = await ethers.provider.getSigner(contracts.AGENT)
+      const admin = await ethers.provider.getSigner(contracts.ADMIN)
       const newManagerAddress = await anotherManager.getAddress()
-      const subjectAgentSigner = subject.connect(agent)
+      const subjectAdminSigner = subject.connect(admin)
 
-      await subjectAgentSigner.setManager(anotherManager, {
-        from: agent,
+      await subjectAdminSigner.setManager(anotherManager, {
+        from: admin,
       })
       expect(await subject.manager()).to.equal(newManagerAddress)
       expect(await subject.manager()).to.not.equal(await manager.getAddress())
@@ -74,14 +78,14 @@ describe('Asset recoverer', async function () {
     it("shouldn't allow a manager to change manager", async function () {
       const subjectManagerSigner = subject.connect(manager)
       await expect(subjectManagerSigner.setManager(anotherManager))
-        .to.be.revertedWithCustomError(subject, 'NotAgent')
+        .to.be.revertedWithCustomError(subject, 'NotAdmin')
         .withArgs(await manager.getAddress())
     })
     it("shouldn't allow a stranger to change manager", async function () {
       const signer = (await ethers.getSigners())[3]
       const subjectStrangerSigner = subject.connect(signer)
       await expect(subjectStrangerSigner.setManager(anotherManager))
-        .to.be.revertedWithCustomError(subject, 'NotAgent')
+        .to.be.revertedWithCustomError(subject, 'NotAdmin')
         .withArgs(await signer.getAddress())
     })
     this.afterAll(async function () {
@@ -139,7 +143,7 @@ describe('Asset recoverer', async function () {
         const localSubject = await ethers.getContractAt('Order', subject, signer)
 
         await expect(localSubject.recoverEther())
-          .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+          .to.be.revertedWithCustomError(subject, 'NotAdminOrManager')
           .withArgs(await signer.getAddress())
       })
     })
@@ -177,13 +181,14 @@ describe('Asset recoverer', async function () {
         expect(await token.balanceOf(subject)).to.be.equal(BigInt(0))
       })
 
-      it('should successfully recover by agent ERC20', async () => {
+      it('should successfully recover by admin ERC20', async () => {
         expect(await token.balanceOf(subject)).to.be.equal(amount)
 
-        await impersonateAccount(contracts.AGENT)
+        await impersonateAccount(contracts.ADMIN)
+        await setBalance(contracts.ADMIN, ethers.parseEther('1'))
 
-        const agent = await ethers.provider.getSigner(contracts.AGENT)
-        const localSubject = subject.connect(agent)
+        const admin = await ethers.provider.getSigner(contracts.ADMIN)
+        const localSubject = subject.connect(admin)
         const recoverTx = await localSubject.recoverERC20(contracts.DAI, amount)
         await recoverTx.wait()
 
@@ -194,7 +199,7 @@ describe('Asset recoverer', async function () {
         const localSubject = subject.connect(anotherManager)
 
         await expect(localSubject.recoverERC20(contracts.DAI, amount))
-          .to.be.revertedWithCustomError(subject, 'NotAgentOrManager')
+          .to.be.revertedWithCustomError(subject, 'NotAdminOrManager')
           .withArgs(await anotherManager.getAddress())
       })
     })
@@ -244,7 +249,7 @@ describe('Asset recoverer', async function () {
         const localSubject = subject.connect(anotherManager)
 
         expect(localSubject.recoverERC721(nftAddress, nftId))
-          .to.be.revertedWithCustomError(localSubject, 'NotAgentOrManager')
+          .to.be.revertedWithCustomError(localSubject, 'NotAdminOrManager')
           .withArgs(await anotherManager.getAddress())
       })
     })

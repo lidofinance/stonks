@@ -83,6 +83,7 @@ describe('CoWSwapVaultRelayerStub', async () => {
     await amountConverter.waitForDeployment()
 
     const orderSample = await new Order__factory(deployer).deploy(
+      contracts.ADMIN,
       contracts.AGENT,
       await relayer.getAddress(),
       contracts.DOMAIN_SEPARATOR
@@ -90,6 +91,7 @@ describe('CoWSwapVaultRelayerStub', async () => {
     await orderSample.waitForDeployment()
 
     stonks = await new Stonks__factory(deployer).deploy({
+      admin: contracts.ADMIN,
       agent: contracts.AGENT,
       manager: manager.address,
       tokenFrom: contracts.STETH,

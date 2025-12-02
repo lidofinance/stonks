@@ -25,6 +25,7 @@ describe('Stonks - Fuzz Tests', () => {
     const { stonks: stonksInstance, amountConverter: converter } = await deployStonksWithTestOracle(
       {
         factoryParams: {
+          admin: contracts.ADMIN,
           agent: contracts.AGENT,
           relayer: contracts.VAULT_RELAYER,
           settlement: contracts.SETTLEMENT,

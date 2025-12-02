@@ -35,16 +35,15 @@ describe('OracleRouter - Fuzz Tests', () => {
     await refreshFeedData(feedConfig)
 
     const factory = await ethers.getContractFactory('OracleRouter')
-    oracleRouter = await factory.deploy(contracts.AGENT, 18, await stub.getAddress())
+    oracleRouter = await factory.deploy(contracts.ADMIN, 18, await stub.getAddress())
     await oracleRouter.waitForDeployment()
 
-    const signer = await ethers.getImpersonatedSigner(contracts.AGENT)
-    await (
-      await ethers.getSigners()
-    )[0].sendTransaction({
-      to: contracts.AGENT,
-      value: ethers.parseEther('1'),
-    })
+    await ethers.provider.send('hardhat_setBalance', [
+      contracts.ADMIN,
+      '0x56BC75E2D63100000', // 100 ETH
+    ])
+    await ethers.provider.send('hardhat_impersonateAccount', [contracts.ADMIN])
+    const signer = await ethers.getSigner(contracts.ADMIN)
 
     await oracleRouter
       .connect(signer)
@@ -204,7 +203,7 @@ describe('OracleRouter - Fuzz Tests', () => {
     it('uses ETH/USD bridge and respects staleness cap', async () => {
       const local = await takeSnapshot()
       const stub = await getTestFeedRegistryStub(feedConfig)
-      const signer = await ethers.getImpersonatedSigner(contracts.AGENT)
+      const signer = await ethers.getImpersonatedSigner(contracts.ADMIN)
 
       // Configure bridge and set ETH-quoted feeds where available
       await oracleRouter.connect(signer).setEthUsdBridge(86_400)
@@ -252,7 +251,7 @@ describe('OracleRouter - Fuzz Tests', () => {
 
     it('per-token ETH/USD staleness override applies (smaller cap)', async () => {
       const local = await takeSnapshot()
-      const signer = await ethers.getImpersonatedSigner(contracts.AGENT)
+      const signer = await ethers.getImpersonatedSigner(contracts.ADMIN)
       await oracleRouter.connect(signer).setEthUsdBridge(86_400)
       await oracleRouter
         .connect(signer)
@@ -289,7 +288,7 @@ describe('OracleRouter - Fuzz Tests', () => {
           fc.integer({ min: 30, max: 86_400 }),
           async (ageSec, capSec) => {
             const local = await takeSnapshot()
-            const signer = await ethers.getImpersonatedSigner(contracts.AGENT)
+            const signer = await ethers.getImpersonatedSigner(contracts.ADMIN)
             await oracleRouter
               .connect(signer)
               .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86_400, true)

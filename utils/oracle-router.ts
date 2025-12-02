@@ -8,7 +8,7 @@ export const QuoteDenomination = {
 } as const
 
 type DeployOptions = {
-  agent?: string
+  admin?: string
   unitDecimals?: number
   feedRegistry: string
   tokensUsd: string[]
@@ -20,7 +20,7 @@ export async function deployAndConfigureOracleRouter(
   options: DeployOptions
 ): Promise<OracleRouter> {
   const {
-    agent,
+    admin,
     unitDecimals = 18,
     feedRegistry,
     tokensUsd,
@@ -29,10 +29,10 @@ export async function deployAndConfigureOracleRouter(
   } = options
 
   const [deployer] = await ethers.getSigners()
-  const agentAddress = agent ?? (await deployer.getAddress())
+  const adminAddress = admin ?? (await deployer.getAddress())
 
   const router = await new OracleRouter__factory(deployer).deploy(
-    agentAddress,
+    adminAddress,
     unitDecimals,
     feedRegistry as any
   )

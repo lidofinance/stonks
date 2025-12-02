@@ -28,7 +28,7 @@ describe('Order - Emergency Controls & Signature Pause', function () {
   let oracleRouter: OracleRouter
   let amountConverterTest: AmountConverterTest
   let snapshot: SnapshotRestorer
-  let agent: Signer
+  let admin: Signer
   let emergencyOperator: Signer
 
   this.beforeAll(async function () {
@@ -55,6 +55,7 @@ describe('Order - Emergency Controls & Signature Pause', function () {
 
     const { stonks: stonksInstance } = await deployStonks({
       factoryParams: {
+        admin: contracts.ADMIN,
         agent: contracts.AGENT,
         relayer: contracts.VAULT_RELAYER,
         settlement: contracts.SETTLEMENT,
@@ -79,7 +80,8 @@ describe('Order - Emergency Controls & Signature Pause', function () {
       },
     })
     stonks = stonksInstance
-    agent = await ethers.getImpersonatedSigner(contracts.AGENT)
+    admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
+    await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
     await fillUpERC20FromTreasury({
       token: contracts.STETH,
       amount: ethers.parseEther('1'),
@@ -99,7 +101,7 @@ describe('Order - Emergency Controls & Signature Pause', function () {
       contracts.EMERGENCY_MULTISIG,
       '0x1000000000000000000',
     ])
-    await order.connect(agent).setEmergencyOperator(contracts.EMERGENCY_MULTISIG)
+    await order.connect(admin).setEmergencyOperator(contracts.EMERGENCY_MULTISIG)
     emergencyOperator = await ethers.getImpersonatedSigner(contracts.EMERGENCY_MULTISIG)
   })
 
@@ -166,14 +168,14 @@ describe('Order - Emergency Controls & Signature Pause', function () {
     expect(balAfter).to.be.closeTo(0n, 2n)
   })
 
-  it('allows agent to call emergency controls on Order', async function () {
+  it('allows admin to call emergency controls on Order', async function () {
     const tokenFrom = await stonks.TOKEN_FROM()
     const token = await ethers.getContractAt('IERC20', tokenFrom)
     const balBefore = await token.balanceOf(order)
     expect(balBefore).to.be.gt(0n)
 
-    await order.connect(agent).emergencyRevokeRelayer()
-    await order.connect(agent).emergencyCancelAndReturn()
+    await order.connect(admin).emergencyRevokeRelayer()
+    await order.connect(admin).emergencyCancelAndReturn()
 
     const balAfter = await token.balanceOf(order)
     expect(balAfter).to.be.closeTo(0n, 2n)

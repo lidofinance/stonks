@@ -14,7 +14,7 @@ let globalFeedRegistryStub: ChainlinkFeedRegistryStub | null = null
 
 export type TestOracleRouterConfig = {
   tokens: string[]
-  agent?: string
+  admin?: string
   unitDecimals?: number
   useRealPrices?: boolean
 }
@@ -24,27 +24,27 @@ async function initializeGlobalOracleRouter(config: TestOracleRouterConfig): Pro
     return
   }
 
-  const { tokens, agent, unitDecimals = 18, useRealPrices = true } = config
+  const { tokens, admin, unitDecimals = 18, useRealPrices = true } = config
   const [deployer] = await ethers.getSigners()
-  const agentAddress = agent || (await deployer.getAddress())
+  const adminAddress = admin || (await deployer.getAddress())
 
   const stub = await getSharedFeedRegistryStub({ tokens, useRealPrices })
   globalFeedRegistryStub = stub
 
   const oracleRouterFactory = await ethers.getContractFactory('OracleRouter')
   const oracleRouter = await oracleRouterFactory.deploy(
-    agentAddress,
+    adminAddress,
     unitDecimals,
     await stub.getAddress()
   )
   await oracleRouter.waitForDeployment()
   globalOracleRouter = oracleRouter
 
-  const agentSigner = await ethers.getImpersonatedSigner(agentAddress)
-  await ethers.provider.send('hardhat_setBalance', [agentAddress, '0x1000000000000000000'])
+  const adminSigner = await ethers.getImpersonatedSigner(adminAddress)
+  await ethers.provider.send('hardhat_setBalance', [adminAddress, '0x1000000000000000000'])
 
   try {
-    await oracleRouter.connect(agentSigner).setEthUsdBridge(86_400)
+    await oracleRouter.connect(adminSigner).setEthUsdBridge(86_400)
   } catch {
     // Ignore if already configured
   }
@@ -54,11 +54,11 @@ async function initializeGlobalOracleRouter(config: TestOracleRouterConfig): Pro
       const usdFeed = await stub.getFeed(token, contracts.CHAINLINK_USD_QUOTE)
 
       if (usdFeed !== ethers.ZeroAddress) {
-        await oracleRouter.connect(agentSigner).setTokenFeed(token, 0, 86_400, true)
+        await oracleRouter.connect(adminSigner).setTokenFeed(token, 0, 86_400, true)
       } else {
         const ethFeed = await stub.getFeed(token, contracts.CHAINLINK_ETH_QUOTE)
         if (ethFeed !== ethers.ZeroAddress) {
-          await oracleRouter.connect(agentSigner).setTokenFeed(token, 1, 86_400, true)
+          await oracleRouter.connect(adminSigner).setTokenFeed(token, 1, 86_400, true)
         } else {
           console.warn(`No feeds available for token ${token}, skipping configuration`)
         }
@@ -93,7 +93,7 @@ export async function deployStonksWithTestOracle(params: any) {
   const tokens = [params.stonksParams.tokenFrom, params.stonksParams.tokenTo]
   const oracleRouter = await getTestOracleRouter({
     tokens: tokens,
-    agent: params.factoryParams.agent,
+    admin: params.factoryParams.admin ?? params.factoryParams.agent,
   })
   const updatedParams = {
     ...params,

@@ -83,7 +83,7 @@ describe('OracleRouter - Bridging Tests', function () {
   let oracleRouter: OracleRouter
   let oracleRouterFactory: OracleRouter__factory
   let snapshot: SnapshotRestorer
-  let agentAddress: string
+  let adminAddress: string
   let feedRegistryAddress: string
   let feedRegistry: ChainlinkFeedRegistryStub
 
@@ -98,43 +98,43 @@ describe('OracleRouter - Bridging Tests', function () {
     return BigInt(block!.timestamp)
   }
 
-  const getAgentSigner = async () => {
-    const agentSigner = await ethers.getImpersonatedSigner(agentAddress)
-    await ethers.provider.send('hardhat_setBalance', [agentAddress, '0x1000000000000000000'])
-    return agentSigner
+  const getAdminSigner = async () => {
+    const adminSigner = await ethers.getImpersonatedSigner(adminAddress)
+    await ethers.provider.send('hardhat_setBalance', [adminAddress, '0x1000000000000000000'])
+    return adminSigner
   }
 
   before(async function () {
     snapshot = await takeSnapshot()
     oracleRouterFactory = await ethers.getContractFactory('OracleRouter')
-    agentAddress = contracts.AGENT
+    adminAddress = contracts.ADMIN
     feedRegistry = await getTestFeedRegistryStub(feedConfig)
     feedRegistryAddress = await feedRegistry.getAddress()
   })
 
   beforeEach(async function () {
     await refreshFeedData(feedConfig)
-    oracleRouter = await oracleRouterFactory.deploy(agentAddress, 18, feedRegistryAddress)
+    oracleRouter = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
     await oracleRouter.waitForDeployment()
 
-    const agent = await getAgentSigner()
+    const admin = await getAdminSigner()
     const currentTimestamp = await getCurrentTimestamp()
 
     // Always configure ETH/USD bridge
-    await oracleRouter.connect(agent).setEthUsdBridge(86400)
+    await oracleRouter.connect(admin).setEthUsdBridge(86400)
 
     // Configure tokens with mixed denominations
     await oracleRouter
-      .connect(agent)
+      .connect(admin)
       .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
     await oracleRouter
-      .connect(agent)
+      .connect(admin)
       .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, true)
     await oracleRouter
-      .connect(agent)
+      .connect(admin)
       .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
     await oracleRouter
-      .connect(agent)
+      .connect(admin)
       .setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)
 
     // Update all feeds to be fresh
@@ -527,15 +527,15 @@ describe('OracleRouter - Bridging Tests', function () {
 
   describe('Edge Cases', function () {
     it('should revert if ETH/USD bridge is missing when bridging is needed', async function () {
-      const freshRouter = await oracleRouterFactory.deploy(agentAddress, 18, feedRegistryAddress)
+      const freshRouter = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
       await freshRouter.waitForDeployment()
 
-      const agent = await getAgentSigner()
+      const admin = await getAdminSigner()
       await freshRouter
-        .connect(agent)
+        .connect(admin)
         .setTokenFeed(contracts.STETH, QuoteDenomination.ETH, 86400, true)
       await freshRouter
-        .connect(agent)
+        .connect(admin)
         .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
 
       // Should revert when trying to bridge without ETH/USD bridge configured
@@ -545,11 +545,11 @@ describe('OracleRouter - Bridging Tests', function () {
     })
 
     it('should handle staleness override for ETH/USD bridge during bridging', async function () {
-      const agent = await getAgentSigner()
+      const admin = await getAdminSigner()
       const currentTimestamp = await getCurrentTimestamp()
 
       // Set a custom staleness override for DAI
-      await oracleRouter.connect(agent).setTokenEthUsdStalenessOverride(contracts.DAI, 3600)
+      await oracleRouter.connect(admin).setTokenEthUsdStalenessOverride(contracts.DAI, 3600)
 
       // Make ETH/USD feed stale beyond override but within global limit
       await updateTokenFeed(

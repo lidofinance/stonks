@@ -7,11 +7,13 @@ import { StonksFactory__factory } from '../typechain-types'
 import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
 import { OrderSampleDeployedEvent } from '../typechain-types/contracts/factories/StonksFactory'
 
+const ADMIN = ''
 const AGENT = ''
 const COWSWAP_SETTLEMENT = ''
 const COWSWAP_VAULT_RELAYER = ''
 const ORACLE_ROUTER = ''
 
+assert(ethers.isAddress(ADMIN), 'ADMIN is not a valid address')
 assert(ethers.isAddress(AGENT), 'AGENT is not a valid address')
 assert(ethers.isAddress(COWSWAP_SETTLEMENT), 'COWSWAP_SETTLEMENT is not a valid address')
 assert(ethers.isAddress(COWSWAP_VAULT_RELAYER), 'COWSWAP_VAULT_RELAYER is not a valid address')
@@ -26,6 +28,7 @@ async function main() {
   const deployer = await getDeployer()
 
   console.log(`Deployment parameters:`)
+  console.log(`  * ${fmt.name('Admin')} address: ${fmt.value(ADMIN)}`)
   console.log(`  * ${fmt.name('Agent')} address: ${fmt.value(AGENT)}`)
   console.log(`  * ${fmt.name('CoWSwapSettlement')} address: ${fmt.value(COWSWAP_SETTLEMENT)}`)
   console.log(`  * ${fmt.name('CoWSwapVaultRelayer')} address: ${fmt.value(COWSWAP_VAULT_RELAYER)}`)
@@ -34,6 +37,7 @@ async function main() {
   await confirmOrAbort('Proceed?')
 
   const stonksFactory = await new StonksFactory__factory(deployer).deploy(
+    ADMIN,
     AGENT,
     COWSWAP_SETTLEMENT,
     COWSWAP_VAULT_RELAYER,
@@ -69,7 +73,7 @@ async function main() {
   if (!['localhost', 'hardhat'].includes(network.name)) {
     await verify(
       stonksFactoryAddress,
-      [AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER, ORACLE_ROUTER],
+      [ADMIN, AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER, ORACLE_ROUTER],
       receipt
     )
   } else {

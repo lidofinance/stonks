@@ -12,15 +12,17 @@ import {Ownable} from "./Ownable.sol";
 
 /**
  * @title AssetRecoverer
- * @dev Abstract contract providing mechanisms for recovering various asset types (ETH, ERC20, ERC721, ERC1155) from a contract.
- * This contract is designed to allow asset recovery by an authorized agent or a manager.
- * @notice Assets can be sent only to the agent address.
+ * @dev Abstract contract providing mechanisms for recovering various asset types (ETH, ERC20, ERC721, ERC1155) from a contract by admin or manager..
+ * @notice Assets are always sent to the AGENT address (treasury)
  */
 abstract contract AssetRecoverer is Ownable {
     using Address for address payable;
     using SafeERC20 for IERC20;
 
-    // ==================== Events ====================
+    // ==================== Immutables & Events ====================
+
+    /// @notice Address of the Lido DAO agent.
+    address public immutable AGENT;
 
     event EtherRecovered(address indexed recipient, uint256 amount);
     event ERC20Recovered(address indexed token, address indexed recipient, uint256 amount);
@@ -32,22 +34,32 @@ abstract contract AssetRecoverer is Ownable {
         uint256 amount
     );
 
+    // ==================== Errors ====================
+
+    error InvalidAgentAddress(address agent);
+
     // ==================== Constructor ====================
 
     /**
-     * @dev Sets the initial agent address.
-     * @param agent_ The address of the Lido DAO treasury.
+     * @dev Sets the initial admin and agent addresses.
+     * @param admin_ The admin address.
+     * @param agent_ The address of the Lido DAO agent.
      */
-    constructor(address agent_) Ownable(agent_) {}
+    constructor(address admin_, address agent_) Ownable(admin_) {
+        if (agent_ == address(0)) {
+            revert InvalidAgentAddress(agent_);
+        }
+        AGENT = agent_;
+    }
 
     // ==================== External Functions ====================
 
     /**
-     * @dev Allows the agent or manager to recover Ether held by the contract.
+     * @dev Allows the admin or manager to recover Ether held by the contract.
      * @notice Implements CEI pattern: Checks (authorization) -> Effects (events) -> Interactions (transfer)
      * Emits an EtherRecovered event upon success.
      */
-    function recoverEther() external onlyAgentOrManager {
+    function recoverEther() external onlyAdminOrManager {
         uint256 amount = address(this).balance;
 
         emit EtherRecovered(AGENT, amount);
@@ -56,24 +68,24 @@ abstract contract AssetRecoverer is Ownable {
     }
 
     /**
-     * @dev Allows the agent or manager to recover ERC721 tokens held by the contract.
+     * @dev Allows the admin or manager to recover ERC721 tokens held by the contract.
      * @param token_ The address of the ERC721 token to recover.
      * @param tokenId_ The token ID of the ERC721 token to recover.
      * Emits an ERC721Recovered event upon success.
      */
-    function recoverERC721(address token_, uint256 tokenId_) external onlyAgentOrManager {
+    function recoverERC721(address token_, uint256 tokenId_) external onlyAdminOrManager {
         emit ERC721Recovered(token_, tokenId_, AGENT);
 
         IERC721(token_).safeTransferFrom(address(this), AGENT, tokenId_);
     }
 
     /**
-     * @dev Allows the agent or manager to recover ERC1155 tokens held by the contract.
+     * @dev Allows the admin or manager to recover ERC1155 tokens held by the contract.
      * @param token_ The address of the ERC1155 token to recover.
      * @param tokenId_ The token ID of the ERC1155 token to recover.
      * Emits an ERC1155Recovered event upon success.
      */
-    function recoverERC1155(address token_, uint256 tokenId_) external onlyAgentOrManager {
+    function recoverERC1155(address token_, uint256 tokenId_) external onlyAdminOrManager {
         uint256 amount = IERC1155(token_).balanceOf(address(this), tokenId_);
 
         emit ERC1155Recovered(token_, tokenId_, AGENT, amount);
@@ -84,12 +96,12 @@ abstract contract AssetRecoverer is Ownable {
     // ==================== Public Functions ====================
 
     /**
-     * @dev Allows the agent or manager to recover ERC20 tokens held by the contract.
+     * @dev Allows the admin or manager to recover ERC20 tokens held by the contract.
      * @param token_ The address of the ERC20 token to recover.
      * @param amount_ The amount of the ERC20 token to recover.
      * Emits an ERC20Recovered event upon success.
      */
-    function recoverERC20(address token_, uint256 amount_) public virtual onlyAgentOrManager {
+    function recoverERC20(address token_, uint256 amount_) public virtual onlyAdminOrManager {
         emit ERC20Recovered(token_, AGENT, amount_);
 
         IERC20(token_).safeTransfer(AGENT, amount_);

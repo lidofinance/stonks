@@ -5,14 +5,14 @@ pragma solidity 0.8.23;
 /**
  * @title Ownable
  *
- * @dev Provides basic access control mechanism where two accounts (agent and manager) can be granted access to specific functions.
- * The agent is set during contract deployment and cannot be changed. The manager can be set by the agent.
+ * @dev Provides basic access control mechanism where two accounts (admin and manager) can be granted access to specific functions.
+ * The admin is set during contract deployment and cannot be changed. The manager can be set by the admin.
  */
 contract Ownable {
     // ==================== Immutables ====================
 
-    /// @notice Address of the agent with full administrative control.
-    address public immutable AGENT;
+    /// @notice Address of the admin.
+    address public immutable ADMIN;
 
     // ==================== Storage Variables ====================
 
@@ -23,39 +23,39 @@ contract Ownable {
 
     event ManagerSet(address manager);
     event EmergencyOperatorSet(address emergencyOperator);
-    event AgentSet(address agent);
+    event AdminSet(address admin);
 
-    error InvalidAgentAddress(address agent);
-    error NotAgentOrManager(address sender);
-    error NotAgent(address sender);
+    error InvalidAdminAddress(address admin);
+    error NotAdminOrManager(address sender);
+    error NotAdmin(address sender);
     error NotEmergencyOperator(address sender);
 
     /**
-     * @dev Modifier to restrict function access from the agent.
+     * @dev Modifier to restrict function access from the admin.
      */
-    modifier onlyAgent() {
-        if (msg.sender != AGENT) {
-            revert NotAgent(msg.sender);
+    modifier onlyAdmin() {
+        if (msg.sender != ADMIN) {
+            revert NotAdmin(msg.sender);
         }
         _;
     }
 
     /**
-     * @dev Modifier to restrict function access from either the agent or the manager.
+     * @dev Modifier to restrict function access from either the admin or the manager.
      */
-    modifier onlyAgentOrManager() {
-        if (msg.sender != AGENT && msg.sender != manager) {
-            revert NotAgentOrManager(msg.sender);
+    modifier onlyAdminOrManager() {
+        if (msg.sender != ADMIN && msg.sender != manager) {
+            revert NotAdminOrManager(msg.sender);
         }
         _;
     }
 
     /**
      * @dev Modifier to restrict function access for critical emergency controls (pause/kill).
-     *      Allows the agent, the manager, or the dedicated emergency operator.
+     *      Allows the admin, the manager, or the dedicated emergency operator.
      */
     modifier onlyEmergencyOperator() {
-        if (msg.sender != AGENT && msg.sender != manager && msg.sender != emergencyOperator) {
+        if (msg.sender != ADMIN && msg.sender != manager && msg.sender != emergencyOperator) {
             revert NotEmergencyOperator(msg.sender);
         }
         _;
@@ -64,17 +64,17 @@ contract Ownable {
     // ==================== Constructor ====================
 
     /**
-     * @dev Initializes the contract setting the agent.
-     * @param agent_ The address of the agent.
+     * @dev Initializes the contract setting the admin.
+     * @param admin_ The address of the admin.
      */
-    constructor(address agent_) {
-        if (agent_ == address(0)) {
-            revert InvalidAgentAddress(agent_);
+    constructor(address admin_) {
+        if (admin_ == address(0)) {
+            revert InvalidAdminAddress(admin_);
         }
 
-        AGENT = agent_;
+        ADMIN = admin_;
 
-        emit AgentSet(agent_);
+        emit AdminSet(admin_);
     }
 
     // ==================== External Functions ====================
@@ -83,7 +83,7 @@ contract Ownable {
      * @dev Sets the manager address.
      * @param manager_ The address of the new manager.
      */
-    function setManager(address manager_) external onlyAgent {
+    function setManager(address manager_) external onlyAdmin {
         manager = manager_;
 
         emit ManagerSet(manager_);
@@ -93,7 +93,7 @@ contract Ownable {
      * @dev Sets the emergency operator address.
      * @param emergencyOperator_ The address of the emergency operator.
      */
-    function setEmergencyOperator(address emergencyOperator_) external onlyAgent {
+    function setEmergencyOperator(address emergencyOperator_) external onlyAdmin {
         emergencyOperator = emergencyOperator_;
 
         emit EmergencyOperatorSet(emergencyOperator_);

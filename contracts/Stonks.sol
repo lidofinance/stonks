@@ -33,9 +33,11 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
 
     /// @notice Struct containing all initialization parameters for the Stonks contract.
     struct InitParams {
+        /// @notice Address of the admin.
+        address admin;
         /// @notice Address of the Lido DAO agent.
         address agent;
-        /// @notice Address of the manager authorized to place orders.
+        /// @notice Address of the manager.
         address manager;
         /// @notice Address of the token being sold in trades.
         address tokenFrom;
@@ -149,7 +151,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
      * @param initParams_ Struct containing all initialization parameters.
      * @dev Stores essential parameters for trade execution in immutable variables, ensuring consistency and security of trades.
      */
-    constructor(InitParams memory initParams_) AssetRecoverer(initParams_.agent) {
+    constructor(InitParams memory initParams_) AssetRecoverer(initParams_.admin, initParams_.agent) {
         _validateAddresses(
             initParams_.manager,
             initParams_.tokenFrom,
@@ -204,7 +206,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
      */
     function placeOrder(
         uint256 minBuyAmount_
-    ) external nonReentrant onlyAgentOrManager notKilled whenNotPaused returns (address) {
+    ) external nonReentrant onlyAdminOrManager notKilled whenNotPaused returns (address) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
 
         return _placeOrder(balance, minBuyAmount_, balance);
@@ -219,7 +221,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     function placeOrderWithAmount(
         uint256 sellAmount_,
         uint256 minBuyAmount_
-    ) external nonReentrant onlyAgentOrManager notKilled whenNotPaused returns (address) {
+    ) external nonReentrant onlyAdminOrManager notKilled whenNotPaused returns (address) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
 
         return _placeOrder(sellAmount_, minBuyAmount_, balance);

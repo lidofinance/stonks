@@ -116,11 +116,11 @@ contract OracleRouter is IOracleRouter, Ownable {
 
     /**
      * @notice Constructor
-     * @param agent_ Address of the owner agent.
+     * @param admin_ Address of the admin.
      * @param unitDecimals_ Number of decimals for price normalization.
      * @param feedRegistry_ Address of the Chainlink Feed Registry.
      */
-    constructor(address agent_, uint8 unitDecimals_, address feedRegistry_) Ownable(agent_) {
+    constructor(address admin_, uint8 unitDecimals_, address feedRegistry_) Ownable(admin_) {
         if (unitDecimals_ == 0 || unitDecimals_ > MAX_DECIMALS) {
             revert InvalidUnitDecimals();
         }
@@ -143,7 +143,7 @@ contract OracleRouter is IOracleRouter, Ownable {
      * @notice Sets the ETH/USD bridge configuration for token price routing.
      * @param maxStalenessSeconds_ Maximum allowed staleness for ETH/USD price feed.
      */
-    function setEthUsdBridge(uint32 maxStalenessSeconds_) external onlyAgentOrManager {
+    function setEthUsdBridge(uint32 maxStalenessSeconds_) external onlyAdminOrManager {
         if (maxStalenessSeconds_ == 0) {
             revert InvalidStaleness();
         }
@@ -155,7 +155,7 @@ contract OracleRouter is IOracleRouter, Ownable {
      * @notice Synchronizes the ETH/USD bridge configuration with current feed registry state.
      * @dev Preserves the existing staleness threshold while updating feed metadata.
      */
-    function syncEthUsdBridge() external onlyAgentOrManager {
+    function syncEthUsdBridge() external onlyAdminOrManager {
         _updateEthUsdBridge(ethUsdBridge.maxStalenessSeconds);
     }
 
@@ -171,7 +171,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         IOracleRouter.QuoteDenomination primaryQuote_,
         uint32 maxStalenessSeconds_,
         bool isActive_
-    ) external onlyAgentOrManager {
+    ) external onlyAdminOrManager {
         _setTokenFeed(token_, primaryQuote_, maxStalenessSeconds_, isActive_);
     }
 
@@ -183,7 +183,7 @@ contract OracleRouter is IOracleRouter, Ownable {
     function setTokenEthUsdStalenessOverride(
         address token_,
         uint32 overrideSeconds_
-    ) external onlyAgentOrManager {
+    ) external onlyAdminOrManager {
         if (token_ == address(0)) {
             revert InvalidTokenAddress(token_);
         }
@@ -198,7 +198,7 @@ contract OracleRouter is IOracleRouter, Ownable {
      * @param token_ Address of the token to configure.
      * @param isActive_ Whether the token should be active for price queries.
      */
-    function setTokenActive(address token_, bool isActive_) external onlyAgentOrManager {
+    function setTokenActive(address token_, bool isActive_) external onlyAdminOrManager {
         if (token_ == address(0)) {
             revert InvalidTokenAddress(token_);
         }
@@ -223,7 +223,7 @@ contract OracleRouter is IOracleRouter, Ownable {
      * @notice Synchronizes a token's feed configuration with current feed registry state.
      * @param token_ Address of the token to synchronize.
      */
-    function syncTokenFeed(address token_) external onlyAgentOrManager {
+    function syncTokenFeed(address token_) external onlyAdminOrManager {
         TokenConfig storage config = tokenConfig[token_];
 
         if (config.tokenDecimals == 0) {
