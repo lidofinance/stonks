@@ -50,11 +50,7 @@ describe('AmountConverter', () => {
     const adminSigner = await ethers.getImpersonatedSigner(adminAddress)
     await ethers.provider.send('hardhat_setBalance', [adminAddress, '0x1000000000000000000'])
 
-    try {
-      await router8.connect(adminSigner).setEthUsdBridge(86_400)
-    } catch {
-      // Ignore if already configured
-    }
+    await router8.connect(adminSigner).setEthUsdBridge(86_400)
 
     const erc20Iface = new ethers.Interface(['function decimals() view returns (uint8)'])
     const erc20 = (addr: string) => new ethers.Contract(addr, erc20Iface, deployer)
@@ -64,20 +60,16 @@ describe('AmountConverter', () => {
     )
 
     for (const token of [addresses.DAI, addresses.USDC, addresses.USDT]) {
-      try {
-        const decimals = await erc20(token).getFunction('decimals').staticCall()
-        const usdFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_USD_QUOTE)
+      const decimals = await erc20(token).getFunction('decimals').staticCall()
+      const usdFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_USD_QUOTE)
 
-        if (usdFeed !== ethers.ZeroAddress) {
-          await router8.connect(adminSigner).setTokenFeed(token, 0, 86_400, true)
-        } else {
-          const ethFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_ETH_QUOTE)
-          if (ethFeed !== ethers.ZeroAddress) {
-            await router8.connect(adminSigner).setTokenFeed(token, 1, 86_400, true)
-          }
+      if (usdFeed !== ethers.ZeroAddress) {
+        await router8.connect(adminSigner).setTokenFeed(token, 0, 86_400, true)
+      } else {
+        const ethFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_ETH_QUOTE)
+        if (ethFeed !== ethers.ZeroAddress) {
+          await router8.connect(adminSigner).setTokenFeed(token, 1, 86_400, true)
         }
-      } catch (e) {
-        console.warn(`Failed to configure token ${token} in router8:`, e)
       }
     }
 

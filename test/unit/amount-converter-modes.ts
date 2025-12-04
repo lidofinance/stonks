@@ -210,7 +210,7 @@ describe('AmountConverter - ETH/USD Modes', () => {
           .withArgs(contracts.DAI)
       })
 
-      it('should work with mixed denominations via bridging', async () => {
+      it('should convert between USD and ETH denominations using bridge', async () => {
         const mixedConverter = await factory.deploy(
           await router.getAddress(),
           [contracts.STETH],
@@ -414,7 +414,7 @@ describe('AmountConverter - ETH/USD Modes', () => {
         expect(result).to.equal(expected)
       })
 
-      it('should work with both tokens having different denominations', async () => {
+      it('should handle tokens with different quote denominations', async () => {
         const admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
         await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
         await router.connect(admin).setTokenFeed(contracts.LDO, QuoteDenomination.ETH, 86400, true)

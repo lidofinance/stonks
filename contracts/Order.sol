@@ -149,9 +149,6 @@ contract Order is IERC1271, AssetRecoverer {
             uint256 orderDurationInSeconds
         ) = stonksContract.getOrderParameters();
 
-        // Fail-fast if either side lacks a valid oracle route (prevents stranded approvals/funds).
-        stonksContract.assertQuotable();
-
         tokenFrom = tokenFromLocal;
         tokenTo = tokenToLocal;
 

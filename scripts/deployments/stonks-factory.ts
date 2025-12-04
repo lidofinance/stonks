@@ -7,17 +7,10 @@ export async function deployStonksFactory(
   admin: string,
   agent: string,
   settlement: string,
-  relayer: string,
-  oracleRouter: string
+  relayer: string
 ): Promise<ReturnType> {
   const ContractFactory = await ethers.getContractFactory('StonksFactory')
-  const stonksFactory = await ContractFactory.deploy(
-    admin,
-    agent,
-    settlement,
-    relayer,
-    oracleRouter
-  )
+  const stonksFactory = await ContractFactory.deploy(admin, agent, settlement, relayer)
 
   await stonksFactory.waitForDeployment()
   return { stonksFactory }

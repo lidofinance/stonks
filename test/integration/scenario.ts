@@ -289,7 +289,6 @@ describe('Scenario test multi-pair', function () {
             await stonks.AMOUNT_CONVERTER()
           )
           const orderSample = await stonks.ORDER_SAMPLE()
-          const oracleRouter = await stonks.ORACLE_ROUTER()
 
           stonksWithCap = await stonksFactory.deploy({
             admin: contracts.ADMIN,
@@ -299,7 +298,6 @@ describe('Scenario test multi-pair', function () {
             tokenTo: await stonks.TOKEN_TO(),
             amountConverter: await amountConverter.getAddress(),
             orderSample: orderSample,
-            oracleRouter: oracleRouter,
             orderDurationInSeconds: await stonks.ORDER_DURATION_IN_SECONDS(),
             marginInBasisPoints: await stonks.MARGIN_IN_BASIS_POINTS(),
             priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
@@ -342,7 +340,6 @@ describe('Scenario test multi-pair', function () {
             await stonks.AMOUNT_CONVERTER()
           )
           const orderSample = await stonks.ORDER_SAMPLE()
-          const oracleRouter = await stonks.ORACLE_ROUTER()
 
           stonksStrict = await stonksFactory.deploy({
             admin: contracts.ADMIN,
@@ -352,7 +349,6 @@ describe('Scenario test multi-pair', function () {
             tokenTo: await stonks.TOKEN_TO(),
             amountConverter: await amountConverter.getAddress(),
             orderSample: orderSample,
-            oracleRouter: oracleRouter,
             orderDurationInSeconds: await stonks.ORDER_DURATION_IN_SECONDS(),
             marginInBasisPoints: await stonks.MARGIN_IN_BASIS_POINTS(),
             priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
@@ -395,7 +391,6 @@ describe('Scenario test multi-pair', function () {
             await stonks.AMOUNT_CONVERTER()
           )
           const orderSample = await stonks.ORDER_SAMPLE()
-          const oracleRouter = await stonks.ORACLE_ROUTER()
 
           stonksWithCap = await stonksFactory.deploy({
             admin: contracts.ADMIN,
@@ -405,7 +400,6 @@ describe('Scenario test multi-pair', function () {
             tokenTo: await stonks.TOKEN_TO(),
             amountConverter: await amountConverter.getAddress(),
             orderSample: orderSample,
-            oracleRouter: oracleRouter,
             orderDurationInSeconds: await stonks.ORDER_DURATION_IN_SECONDS(),
             marginInBasisPoints: await stonks.MARGIN_IN_BASIS_POINTS(),
             priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),

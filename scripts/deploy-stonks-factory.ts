@@ -11,13 +11,10 @@ const ADMIN = ''
 const AGENT = ''
 const COWSWAP_SETTLEMENT = ''
 const COWSWAP_VAULT_RELAYER = ''
-const ORACLE_ROUTER = ''
-
 assert(ethers.isAddress(ADMIN), 'ADMIN is not a valid address')
 assert(ethers.isAddress(AGENT), 'AGENT is not a valid address')
 assert(ethers.isAddress(COWSWAP_SETTLEMENT), 'COWSWAP_SETTLEMENT is not a valid address')
 assert(ethers.isAddress(COWSWAP_VAULT_RELAYER), 'COWSWAP_VAULT_RELAYER is not a valid address')
-assert(ethers.isAddress(ORACLE_ROUTER), 'ORACLE_ROUTER is not a valid address')
 
 async function main() {
   // prettier-ignore
@@ -32,7 +29,7 @@ async function main() {
   console.log(`  * ${fmt.name('Agent')} address: ${fmt.value(AGENT)}`)
   console.log(`  * ${fmt.name('CoWSwapSettlement')} address: ${fmt.value(COWSWAP_SETTLEMENT)}`)
   console.log(`  * ${fmt.name('CoWSwapVaultRelayer')} address: ${fmt.value(COWSWAP_VAULT_RELAYER)}`)
-  console.log(`  * ${fmt.name('OracleRouter')} address: ${fmt.value(ORACLE_ROUTER)}\n`)
+  console.log()
 
   await confirmOrAbort('Proceed?')
 
@@ -40,8 +37,7 @@ async function main() {
     ADMIN,
     AGENT,
     COWSWAP_SETTLEMENT,
-    COWSWAP_VAULT_RELAYER,
-    ORACLE_ROUTER
+    COWSWAP_VAULT_RELAYER
   )
 
   const receipt = await waitForDeployment(stonksFactory.deploymentTransaction()!)
@@ -73,7 +69,7 @@ async function main() {
   if (!['localhost', 'hardhat'].includes(network.name)) {
     await verify(
       stonksFactoryAddress,
-      [ADMIN, AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER, ORACLE_ROUTER],
+      [ADMIN, AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER],
       receipt
     )
   } else {

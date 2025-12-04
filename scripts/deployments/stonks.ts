@@ -54,13 +54,7 @@ export async function deployStonks({
   amountConverterParams,
   skipRouterConfiguration = false,
 }: DeployStonksParams): Promise<ReturnType> {
-  const { stonksFactory } = await deployStonksFactory(
-    admin,
-    agent,
-    settlement,
-    relayer,
-    oracleRouterAddress
-  )
+  const { stonksFactory } = await deployStonksFactory(admin, agent, settlement, relayer)
 
   let amountConverter: AmountConverter | undefined
   let oracleRouter: OracleRouter | undefined

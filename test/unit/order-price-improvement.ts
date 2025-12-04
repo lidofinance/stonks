@@ -80,7 +80,6 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         amountConverterAddress: await amountConverterTestLocal.getAddress(),
       },
       amountConverterParams: {
-        oracleRouter: await oracleRouterLocal.getAddress(),
         allowedTokensToSell: [contracts.STETH],
         allowedStableTokensToBuy: [contracts.DAI],
       },
@@ -291,7 +290,6 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         tokenTo: contracts.DAI,
         amountConverter: await amountConverterTestLocal.getAddress(),
         orderSample: await orderSample.getAddress(),
-        oracleRouter: await oracleRouterLocal.getAddress(),
         orderDurationInSeconds: 3600,
         marginInBasisPoints: MARGIN_IN_BPS,
         priceToleranceInBasisPoints: PRICE_TOLERANCE_IN_BP,
@@ -362,7 +360,6 @@ describe('Order - Price Improvement & Partial Fills', async function () {
           amountConverterAddress: await amountConverterTestLocal.getAddress(),
         },
         amountConverterParams: {
-          oracleRouter: await oracleRouterLocal.getAddress(),
           allowedTokensToSell: [contracts.STETH],
           allowedStableTokensToBuy: [contracts.DAI],
         },

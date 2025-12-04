@@ -29,7 +29,7 @@ describe('ChainlinkFeedRegistryStub', () => {
 
   afterEach(async () => snapshot.restore())
 
-  it('setOwner()', async () => {
+  it('should transfer ownership and emit event', async () => {
     assert.equal(await registry.owner(), owner.address)
     await expect(registry.connect(stranger).setOwner(stranger))
       .to.revertedWithCustomError(registry, 'NotOwner')
@@ -42,7 +42,7 @@ describe('ChainlinkFeedRegistryStub', () => {
     assert.equal(await registry.owner(), stranger.address)
   })
 
-  it('setManager()', async () => {
+  it('should update manager and allow feed configuration', async () => {
     assert.equal(await registry.owner(), owner.address)
     await expect(registry.connect(stranger).setManager(stranger))
       .to.revertedWithCustomError(registry, 'NotOwner')
@@ -77,7 +77,7 @@ describe('ChainlinkFeedRegistryStub', () => {
     }
   })
 
-  it('getFeed()', async () => {
+  it('should return aggregator address for token pair', async () => {
     // Initially, no feed is set, so aggregator should be zero address
     assert.equal(await registry.getFeed(baseToken, quoteToken), ethers.ZeroAddress)
 
@@ -95,7 +95,7 @@ describe('ChainlinkFeedRegistryStub', () => {
     assert.equal(await registry.getFeed(baseToken, quoteToken), await registry.getAddress())
   })
 
-  it('setFeed(), decimals(), latestRoundData()', async () => {
+  it('should set feed and query decimals and round data', async () => {
     const feedStub = {
       aggregator: ethers.ZeroAddress,
       roundId: 1n,

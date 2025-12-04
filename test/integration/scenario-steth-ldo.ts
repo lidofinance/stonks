@@ -699,7 +699,6 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
 
       // Skip test if stETH rounding didn't leave us below MIN_POSSIBLE_BALANCE
       if (balanceAfter >= 10n) {
-        console.log(`    [skipped: stETH rounding left ${balanceAfter} wei, need < 10 wei]`)
         this.skip()
       }
 

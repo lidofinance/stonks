@@ -98,7 +98,6 @@ describe('CoWSwapVaultRelayerStub', async () => {
       tokenTo: contracts.DAI,
       amountConverter: await amountConverter.getAddress(),
       orderSample: await orderSample.getAddress(),
-      oracleRouter: await oracleRouter.getAddress(),
       orderDurationInSeconds: 3600,
       marginInBasisPoints: 1_00,
       priceToleranceInBasisPoints: 50,
@@ -112,7 +111,7 @@ describe('CoWSwapVaultRelayerStub', async () => {
 
   afterEach(async () => snapshot.restore())
 
-  it('setOwner()', async () => {
+  it('should transfer ownership and emit event', async () => {
     assert.equal(await relayer.owner(), owner.address)
     await expect(relayer.connect(stranger).setOwner(stranger))
       .to.revertedWithCustomError(relayer, 'NotOwner')
@@ -125,7 +124,7 @@ describe('CoWSwapVaultRelayerStub', async () => {
     assert.equal(await relayer.owner(), stranger.address)
   })
 
-  it('fill()', async () => {
+  it('should fill order and transfer tokens', async () => {
     await impersonateAccount(contracts.AGENT)
     await setBalance(contracts.AGENT, 100n * 10n ** 18n)
 

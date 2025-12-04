@@ -20,8 +20,6 @@ contract StonksFactory {
     address public immutable ADMIN;
     /// @notice Address of the Lido DAO agent.
     address public immutable AGENT;
-    /// @notice Address of the OracleRouter contract.
-    address public immutable ORACLE_ROUTER;
 
     // ==================== Events ====================
 
@@ -31,12 +29,12 @@ contract StonksFactory {
     event StonksDeployed(
         address indexed stonksAddress,
         address agent,
+        address admin,
         address manager,
         address tokenFrom,
         address tokenTo,
         address amountConverter,
         address order,
-        address oracleRouter,
         uint256 orderDurationInSeconds,
         uint256 marginInBasisPoints,
         uint256 priceToleranceInBasisPoints,
@@ -50,7 +48,6 @@ contract StonksFactory {
     error InvalidAgentAddress(address agent);
     error InvalidSettlementAddress(address settlement);
     error InvalidRelayerAddress(address relayer);
-    error InvalidOracleRouterAddress(address oracleRouter);
 
     // ==================== Constructor ====================
 
@@ -59,15 +56,8 @@ contract StonksFactory {
      * @param agent_ Address of the Lido DAO agent
      * @param settlement_ Address of the Cow Protocol settlement contract
      * @param relayer_ Address of the Cow Protocol relayer contract
-     * @param oracleRouter_ Address of the oracle router contract
      */
-    constructor(
-        address admin_,
-        address agent_,
-        address settlement_,
-        address relayer_,
-        address oracleRouter_
-    ) {
+    constructor(address admin_, address agent_, address settlement_, address relayer_) {
         if (admin_ == address(0)) {
             revert InvalidAdminAddress(admin_);
         }
@@ -83,13 +73,9 @@ contract StonksFactory {
             revert InvalidSettlementAddress(settlement_);
         }
 
-        if (oracleRouter_ == address(0)) {
-            revert InvalidOracleRouterAddress(oracleRouter_);
-        }
 
         ADMIN = admin_;
         AGENT = agent_;
-        ORACLE_ROUTER = oracleRouter_;
         ORDER_SAMPLE = address(
             new Order(
                 admin_,
@@ -140,7 +126,6 @@ contract StonksFactory {
                     tokenTo_,
                     amountConverter_,
                     ORDER_SAMPLE,
-                    ORACLE_ROUTER,
                     orderDurationInSeconds_,
                     marginInBasisPoints_,
                     priceToleranceInBasisPoints_,
@@ -153,12 +138,12 @@ contract StonksFactory {
         emit StonksDeployed(
             stonks,
             AGENT,
+            ADMIN,
             manager_,
             tokenFrom_,
             tokenTo_,
             amountConverter_,
             ORDER_SAMPLE,
-            ORACLE_ROUTER,
             orderDurationInSeconds_,
             marginInBasisPoints_,
             priceToleranceInBasisPoints_,

@@ -35,8 +35,7 @@ describe('StonksFactory', function () {
       contracts.ADMIN,
       contracts.AGENT,
       contracts.SETTLEMENT,
-      contracts.VAULT_RELAYER,
-      await oracleRouter.getAddress()
+      contracts.VAULT_RELAYER
     )
     await subject.waitForDeployment()
   })
@@ -57,8 +56,7 @@ describe('StonksFactory', function () {
           ethers.ZeroAddress,
           contracts.AGENT,
           contracts.SETTLEMENT,
-          contracts.VAULT_RELAYER,
-          await oracleRouter.getAddress()
+          contracts.VAULT_RELAYER
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'InvalidAdminAddress')
@@ -70,8 +68,7 @@ describe('StonksFactory', function () {
           contracts.ADMIN,
           ethers.ZeroAddress,
           contracts.SETTLEMENT,
-          contracts.VAULT_RELAYER,
-          await oracleRouter.getAddress()
+          contracts.VAULT_RELAYER
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'InvalidAgentAddress')
@@ -83,8 +80,7 @@ describe('StonksFactory', function () {
           contracts.ADMIN,
           contracts.AGENT,
           ethers.ZeroAddress,
-          contracts.VAULT_RELAYER,
-          contracts.ORACLE_ROUTER
+          contracts.VAULT_RELAYER
         )
       )
         .to.be.revertedWithCustomError(ContractFactory, 'InvalidSettlementAddress')
@@ -96,24 +92,10 @@ describe('StonksFactory', function () {
           contracts.ADMIN,
           contracts.AGENT,
           contracts.SETTLEMENT,
-          ethers.ZeroAddress,
-          contracts.ORACLE_ROUTER
-        )
-      )
-        .to.be.revertedWithCustomError(ContractFactory, 'InvalidRelayerAddress')
-        .withArgs(ethers.ZeroAddress)
-    })
-    it('should not initialize with oracle router zero address', async function () {
-      await expect(
-        ContractFactory.deploy(
-          contracts.ADMIN,
-          contracts.AGENT,
-          contracts.SETTLEMENT,
-          contracts.VAULT_RELAYER,
           ethers.ZeroAddress
         )
       )
-        .to.be.revertedWithCustomError(ContractFactory, 'InvalidOracleRouterAddress')
+        .to.be.revertedWithCustomError(ContractFactory, 'InvalidRelayerAddress')
         .withArgs(ethers.ZeroAddress)
     })
     it('should emit events on deployment', async function () {
@@ -152,12 +134,12 @@ describe('StonksFactory', function () {
         .withArgs(
           anyValue,
           contracts.AGENT,
+          contracts.ADMIN,
           manager,
           tokenFrom,
           tokenTo,
           amountConverter,
           orderSample,
-          await oracleRouter.getAddress(),
           orderDuration,
           marginInBP,
           toleranceInBP,

@@ -138,7 +138,9 @@ describe('Stonks - Fuzz Tests', () => {
     })
 
     it('should handle large amounts without overflow', async () => {
-      const routerAddress = await stonks.ORACLE_ROUTER()
+      const converterAddress = await stonks.AMOUNT_CONVERTER()
+      const converter = await ethers.getContractAt('AmountConverter', converterAddress)
+      const routerAddress = await converter.ORACLE_ROUTER()
       const router = await ethers.getContractAt('OracleRouter', routerAddress)
       const tokenFrom = await stonks.TOKEN_FROM()
       const tokenTo = await stonks.TOKEN_TO()

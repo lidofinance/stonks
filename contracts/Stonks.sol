@@ -12,7 +12,6 @@ import {Order} from "./Order.sol";
 import {AssetRecoverer} from "./AssetRecoverer.sol";
 import {IStonks} from "./interfaces/IStonks.sol";
 import {IAmountConverter} from "./interfaces/IAmountConverter.sol";
-import {IOracleRouter} from "./interfaces/IOracleRouter.sol";
 
 /**
  * @title Stonks Trading Management Contract
@@ -47,8 +46,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         address amountConverter;
         /// @notice Address of the Order contract implementation used as a template for cloning.
         address orderSample;
-        /// @notice Address of the OracleRouter contract.
-        address oracleRouter;
         /// @notice Duration in seconds for which orders remain valid.
         uint256 orderDurationInSeconds;
         /// @notice Margin in basis points subtracted from expected output to account for fees and volatility.
@@ -84,9 +81,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
     bool public immutable ALLOW_PARTIAL_FILL;
 
-    /// @notice Oracle router contract used for quotability checks.
-    IOracleRouter public immutable ORACLE_ROUTER;
-
     // ==================== Constants ====================
 
     /// @notice Maximum basis points value (100%).
@@ -110,7 +104,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     event MarginInBasisPointsSet(uint256 marginInBasisPoints);
     event PriceToleranceInBasisPointsSet(uint256 priceToleranceInBasisPoints);
     event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
-    event OracleRouterSet(address oracleRouter);
     event SignaturesPaused(address indexed by);
     event SignaturesUnpaused(address indexed by);
     event KillEngaged(address indexed by);
@@ -122,7 +115,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     error InvalidTokenToAddress(address tokenTo);
     error InvalidAmountConverterAddress(address amountConverter);
     error InvalidOrderSampleAddress(address orderSample);
-    error InvalidOracleRouterAddress(address oracleRouter);
     error TokensCannotBeSame();
     error InvalidOrderDuration(uint256 min, uint256 max, uint256 received);
     error MarginOverflowsAllowedLimit(uint256 limit, uint256 received);
@@ -157,8 +149,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
             initParams_.tokenFrom,
             initParams_.tokenTo,
             initParams_.amountConverter,
-            initParams_.orderSample,
-            initParams_.oracleRouter
+            initParams_.orderSample
         );
         _validateDurations(initParams_.orderDurationInSeconds);
         _validateBps(
@@ -182,7 +173,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         PRICE_TOLERANCE_IN_BASIS_POINTS = initParams_.priceToleranceInBasisPoints;
         MAX_IMPROVEMENT_IN_BASIS_POINTS = initParams_.maxImprovementInBasisPoints;
         ALLOW_PARTIAL_FILL = initParams_.allowPartialFill;
-        ORACLE_ROUTER = IOracleRouter(initParams_.oracleRouter);
 
         emit ManagerSet(initParams_.manager);
         emit AmountConverterSet(initParams_.amountConverter);
@@ -192,7 +182,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         emit OrderDurationInSecondsSet(initParams_.orderDurationInSeconds);
         emit MarginInBasisPointsSet(initParams_.marginInBasisPoints);
         emit PriceToleranceInBasisPointsSet(initParams_.priceToleranceInBasisPoints);
-        emit OracleRouterSet(initParams_.oracleRouter);
     }
 
     // ==================== External Functions ====================
@@ -267,13 +256,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         return MAX_IMPROVEMENT_IN_BASIS_POINTS;
     }
 
-    /**
-     * @notice Asserts that a price path exists for the pair; used by Order to fail fast.
-     * @dev Reads via OracleRouter which reverts if a token is not configured or the bridge is missing.
-     */
-    function assertQuotable() external view {
-        ORACLE_ROUTER.getUsdPrices(TOKEN_FROM, TOKEN_TO); // reverts internally if unquotable
-    }
 
     // ==================== Emergency Control Views ====================
 
@@ -427,8 +409,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         address tokenFrom_,
         address tokenTo_,
         address amountConverter_,
-        address orderSample_,
-        address oracleRouter_
+        address orderSample_
     ) private pure {
         if (manager_ == address(0)) {
             revert InvalidManagerAddress(manager_);
@@ -452,10 +433,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
 
         if (orderSample_ == address(0)) {
             revert InvalidOrderSampleAddress(orderSample_);
-        }
-
-        if (oracleRouter_ == address(0)) {
-            revert InvalidOracleRouterAddress(oracleRouter_);
         }
     }
 

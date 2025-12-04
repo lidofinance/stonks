@@ -103,21 +103,17 @@ describe('Order', async function () {
     const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
 
     const seed = async (base: string, quote: string) => {
-      try {
-        const cur = await stub.feeds(base, quote)
-        await stub.setFeed(base, quote, {
-          aggregator:
-            cur.aggregator !== ethers.ZeroAddress ? cur.aggregator : await stub.getAddress(),
-          answer: cur.answer !== 0n ? cur.answer : 1n,
-          updatedAt: nowTs,
-          startedAt: nowTs,
-          answeredInRound: 1n,
-          roundId: 1n,
-          decimals: cur.decimals !== 0n ? cur.decimals : 8n,
-        })
-      } catch (err) {
-        console.warn(`Failed to seed feed ${base}/${quote}:`, err)
-      }
+      const cur = await stub.feeds(base, quote)
+      await stub.setFeed(base, quote, {
+        aggregator:
+          cur.aggregator !== ethers.ZeroAddress ? cur.aggregator : await stub.getAddress(),
+        answer: cur.answer !== 0n ? cur.answer : 1n,
+        updatedAt: nowTs,
+        startedAt: nowTs,
+        answeredInRound: 1n,
+        roundId: 1n,
+        decimals: cur.decimals !== 0n ? cur.decimals : 8n,
+      })
     }
     await seed(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE)
     await seed(contracts.STETH, contracts.CHAINLINK_USD_QUOTE)

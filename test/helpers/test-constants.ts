@@ -1,0 +1,26 @@
+export const TIME_CONSTANTS = {
+  ONE_HOUR_SECONDS: 3600,
+  ONE_DAY_SECONDS: 86400,
+  ONE_WEEK_SECONDS: 604800,
+} as const
+
+export const BASIS_POINTS = {
+  ONE_PERCENT: 100,
+  TEN_PERCENT: 1000,
+  FIFTY_PERCENT: 5000,
+  DIVISOR: 10000,
+} as const
+
+export const DECIMAL_CONSTANTS = {
+  USDC_DECIMALS: 6,
+  CHAINLINK_DECIMALS: 8,
+  STANDARD_DECIMALS: 18,
+  MAX_DECIMALS: 38,
+} as const
+
+export const UINT_LIMITS = {
+  UINT32_MAX: 2 ** 32 - 1,
+  UINT128_MAX: 2n ** 128n - 1n,
+  UINT256_MAX: 2n ** 256n - 1n,
+} as const
+

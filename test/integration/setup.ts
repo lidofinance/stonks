@@ -11,7 +11,8 @@ export type TokenPair = {
   tokenTo: string
   name?: string
   priceFeedHeartbeatTimeout: number
-  useEthBridge?: boolean // If true, use ETH/USD bridge instead of direct USD feed
+  useEthBridge?: boolean
+  allowPartialFill?: boolean
 }
 export type Setup = {
   manager: Signer
@@ -25,6 +26,7 @@ export type SetupParams = {
 }
 
 const contracts = getContracts()
+let oracleRouterAddress = contracts.ORACLE_ROUTER || ethers.ZeroAddress
 
 export const setupOverDeployedContracts = async (deployedContract: string): Promise<Setup> => {
   const stonks = await ethers.getContractAt('Stonks', deployedContract)
@@ -61,7 +63,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
     contracts.CHAINLINK_PRICE_FEED_REGISTRY
   )
   await oracleRouter.waitForDeployment()
-
+  oracleRouterAddress = await oracleRouter.getAddress()
   const erc20Interface = new ethers.Interface(['function decimals() view returns (uint8)'])
   const getErc20Contract = (addr: string) => new ethers.Contract(addr, erc20Interface, manager)
 
@@ -104,10 +106,6 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
   }
 
   const configureToken = async (tokenAddr: string, useEthBridge: boolean = false) => {
-    const tokenDecimals: number = await getErc20Contract(tokenAddr)
-      .getFunction('decimals')
-      .staticCall()
-
     if (useEthBridge) {
       // Use ETH as bridge when direct USD feed isn't available or stale
       const [ethInfo, bridgeInfo] = await Promise.all([
@@ -185,6 +183,8 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
       marginInBps: 100,
       orderDuration: 300,
       priceToleranceInBps: 100,
+      maxImprovementInBps: 100,
+      allowPartialFill: pair.allowPartialFill ?? false,
     },
     amountConverterParams: {
       oracleRouter: await oracleRouter.getAddress(),
@@ -218,7 +218,6 @@ export const setupPriceSpikeStub = async (
     contracts.CHAINLINK_PRICE_FEED_REGISTRY
   )
 
-  const oracleRouterAddress = await stonks.ORACLE_ROUTER()
   const oracleRouter = await ethers.getContractAt('OracleRouter', oracleRouterAddress)
 
   const tokenFrom = await stonks.TOKEN_FROM()
@@ -334,7 +333,6 @@ export const setupPriceImprovementStub = async (
     contracts.CHAINLINK_PRICE_FEED_REGISTRY
   )
 
-  const oracleRouterAddress = await stonks.ORACLE_ROUTER()
   const oracleRouter = await ethers.getContractAt('OracleRouter', oracleRouterAddress)
 
   const tokenFrom = await stonks.TOKEN_FROM()

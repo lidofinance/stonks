@@ -17,17 +17,17 @@ interface StonksConfig {
   allowPartialFill: boolean
 }
 
+const ADMIN = ''
 const AGENT = ''
 const STONKS_FACTORY = ''
 const AMOUNT_CONVERTER = ''
 const MANAGER_ADDRESS = ''
-const ORACLE_ROUTER = ''
 const STONKS_CONFIGS: Record<string, StonksConfig> = {}
 
+assert(ethers.isAddress(ADMIN), 'ADMIN is not a valid address')
 assert(ethers.isAddress(AGENT), 'AGENT is not a valid address')
 assert(ethers.isAddress(STONKS_FACTORY), 'STONKS_FACTORY is not a valid address')
 assert(ethers.isAddress(AMOUNT_CONVERTER), 'AMOUNT_CONVERTER is not a valid address')
-assert(ethers.isAddress(ORACLE_ROUTER), 'ORACLE_ROUTER is not a valid address')
 assert(ethers.isAddress(MANAGER_ADDRESS), 'MANAGER_ADDRESS is not a valid address')
 assert(Object.values(STONKS_CONFIGS).length > 0, 'STONKS_CONFIGS is empty')
 
@@ -86,12 +86,12 @@ async function main() {
     const {
       stonksAddress,
       agent,
+      admin,
       manager,
       tokenFrom,
       tokenTo,
       amountConverter,
       order,
-      oracleRouter,
       orderDurationInSeconds,
       marginInBasisPoints,
       priceToleranceInBasisPoints,
@@ -109,16 +109,20 @@ async function main() {
       await verify(
         stonksAddress,
         [
-          agent,
-          manager,
-          tokenFrom,
-          tokenTo,
-          amountConverter,
-          orderSample,
-          ORACLE_ROUTER,
-          orderDurationInSeconds,
-          marginInBasisPoints,
-          priceToleranceInBasisPoints,
+          {
+            admin,
+            agent,
+            manager,
+            tokenFrom,
+            tokenTo,
+            amountConverter,
+            orderSample,
+            orderDurationInSeconds,
+            marginInBasisPoints,
+            priceToleranceInBasisPoints,
+            maxImprovementInBasisPoints,
+            allowPartialFill,
+          },
         ],
         receipt
       )
@@ -127,11 +131,11 @@ async function main() {
     }
 
     assert.equal(agent.toLowerCase(), AGENT.toLowerCase())
+    assert.equal(admin.toLowerCase(), ADMIN.toLowerCase())
     assert.equal(manager.toLowerCase(), MANAGER_ADDRESS.toLowerCase())
     assert.equal(tokenFrom.toLowerCase(), config.tokenFrom.toLowerCase())
     assert.equal(tokenTo.toLowerCase(), config.tokenTo.toLowerCase())
     assert.equal(amountConverter.toLowerCase(), AMOUNT_CONVERTER.toLowerCase())
-    assert.equal(oracleRouter.toLowerCase(), ORACLE_ROUTER.toLowerCase())
     assert.equal(order.toLowerCase(), orderSample.toLowerCase())
     assert.equal(orderDurationInSeconds.toString(), config.orderDurationInSeconds.toString())
     assert.equal(marginInBasisPoints.toString(), config.marginBasisPoints.toString())

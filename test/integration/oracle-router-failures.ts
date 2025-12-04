@@ -1,12 +1,7 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { takeSnapshot, SnapshotRestorer, time } from '@nomicfoundation/hardhat-network-helpers'
-import type {
-  AmountConverter,
-  AmountConverterFactory,
-  OracleRouter,
-  Stonks,
-} from '../../typechain-types'
+import type { AmountConverter, AmountConverterFactory, OracleRouter } from '../../typechain-types'
 import { getContracts } from '../../utils/contracts'
 import {
   getTestFeedRegistryStub,
@@ -17,7 +12,6 @@ import {
 } from '../../utils/test-feed-registry'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
 import { QuoteDenomination } from '../../utils/oracle-router'
-import { deployStonks } from '../../scripts/deployments/stonks'
 import { getRouterPriceDecimals } from '../utils/oracle-router-helpers'
 
 const contracts = getContracts()
@@ -381,150 +375,6 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
         await router
           .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
-      })
-    })
-  })
-
-  describe('Stonks Integration Failures', function () {
-    describe('Unquotable token handling', function () {
-      it('should revert with TokenNotConfigured when assertQuotable called with unconfigured base token', async function () {
-        const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
-        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
-
-        const freshRouterFactory = await ethers.getContractFactory('OracleRouter')
-        const freshRouter = await freshRouterFactory.deploy(
-          contracts.ADMIN,
-          18,
-          feedRegistryAddress
-        )
-        await freshRouter.waitForDeployment()
-
-        const daiConfigFresh = await freshRouter.tokenConfig(contracts.DAI)
-        expect(daiConfigFresh.isActive).to.equal(false)
-        expect(daiConfigFresh.tokenDecimals).to.equal(0)
-
-        const stonksFactory = await ethers.getContractFactory('StonksFactory')
-        const factory = await stonksFactory.deploy(
-          contracts.ADMIN,
-          contracts.AGENT,
-          contracts.SETTLEMENT,
-          contracts.VAULT_RELAYER,
-          await freshRouter.getAddress()
-        )
-        await factory.waitForDeployment()
-
-        const amountConverterFactory = await ethers.getContractFactory('AmountConverterFactory')
-        const acFactory = await amountConverterFactory.deploy(await freshRouter.getAddress())
-        await acFactory.waitForDeployment()
-
-        const acTx = await acFactory.deployAmountConverter([contracts.DAI], [contracts.USDC], false)
-        const acReceipt = await acTx.wait()
-        const acEvent = acReceipt?.logs.find((log: any) => {
-          try {
-            return acFactory.interface.parseLog(log)?.name === 'AmountConverterDeployed'
-          } catch {
-            return false
-          }
-        })
-        const acAddress = acFactory.interface.parseLog(acEvent as any)?.args[0]
-
-        const deployTx = await factory.deployStonks(
-          (await ethers.getSigners())[0].address,
-          contracts.DAI,
-          contracts.USDC,
-          acAddress,
-          300,
-          100,
-          100,
-          0,
-          false
-        )
-        const receipt = await deployTx.wait()
-        const stonksEvent = receipt?.logs.find((log: any) => {
-          try {
-            return factory.interface.parseLog(log)?.name === 'StonksDeployed'
-          } catch {
-            return false
-          }
-        })
-        const stonksAddress = factory.interface.parseLog(stonksEvent as any)?.args[0]
-        const stonks = await ethers.getContractAt('Stonks', stonksAddress)
-
-        await expect(stonks.assertQuotable())
-          .to.be.revertedWithCustomError(freshRouter, 'TokenNotConfigured')
-          .withArgs(contracts.DAI)
-      })
-
-      it('should revert with TokenNotConfigured when assertQuotable called with unconfigured quote token', async function () {
-        const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
-        await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
-
-        const freshRouterFactory = await ethers.getContractFactory('OracleRouter')
-        const freshRouter = await freshRouterFactory.deploy(
-          contracts.ADMIN,
-          18,
-          feedRegistryAddress
-        )
-        await freshRouter.waitForDeployment()
-
-        const usdcConfigFresh = await freshRouter.tokenConfig(contracts.USDC)
-        expect(usdcConfigFresh.isActive).to.equal(false)
-        expect(usdcConfigFresh.tokenDecimals).to.equal(0)
-
-        await freshRouter
-          .connect(adminSigner)
-          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
-
-        const stonksFactory = await ethers.getContractFactory('StonksFactory')
-        const factory = await stonksFactory.deploy(
-          contracts.ADMIN,
-          contracts.AGENT,
-          contracts.SETTLEMENT,
-          contracts.VAULT_RELAYER,
-          await freshRouter.getAddress()
-        )
-        await factory.waitForDeployment()
-
-        const amountConverterFactory = await ethers.getContractFactory('AmountConverterFactory')
-        const acFactory = await amountConverterFactory.deploy(await freshRouter.getAddress())
-        await acFactory.waitForDeployment()
-
-        const acTx = await acFactory.deployAmountConverter([contracts.DAI], [contracts.USDC], false)
-        const acReceipt = await acTx.wait()
-        const acEvent = acReceipt?.logs.find((log: any) => {
-          try {
-            return acFactory.interface.parseLog(log)?.name === 'AmountConverterDeployed'
-          } catch {
-            return false
-          }
-        })
-        const acAddress = acFactory.interface.parseLog(acEvent as any)?.args[0]
-
-        const deployTx = await factory.deployStonks(
-          (await ethers.getSigners())[0].address,
-          contracts.DAI,
-          contracts.USDC,
-          acAddress,
-          300,
-          100,
-          100,
-          0,
-          false
-        )
-        const receipt = await deployTx.wait()
-        const stonksEvent = receipt?.logs.find((log: any) => {
-          try {
-            return factory.interface.parseLog(log)?.name === 'StonksDeployed'
-          } catch {
-            return false
-          }
-        })
-        const stonksAddress = factory.interface.parseLog(stonksEvent as any)?.args[0]
-        const stonks = await ethers.getContractAt('Stonks', stonksAddress)
-
-        await expect(stonks.assertQuotable())
-          .to.be.revertedWithCustomError(freshRouter, 'TokenNotConfigured')
-          .withArgs(contracts.USDC)
       })
     })
   })

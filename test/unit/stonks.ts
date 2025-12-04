@@ -87,7 +87,6 @@ describe('Stonks', function () {
       tokenTo: string
       amountConverter: string
       orderSample: string
-      oracleRouter: string
       orderDurationInSeconds: number
       marginInBasisPoints: number
       priceToleranceInBasisPoints: number
@@ -115,7 +114,6 @@ describe('Stonks', function () {
         tokenTo: contracts.DAI,
         amountConverter: await (subjectTokenConverter as AmountConverter).getAddress(),
         orderSample: notZeroAddress,
-        oracleRouter,
         orderDurationInSeconds: 60,
         marginInBasisPoints: 1000,
         priceToleranceInBasisPoints: 999,
@@ -293,16 +291,6 @@ describe('Stonks', function () {
       await stonks.waitForDeployment()
       expect(await stonks.getMaxImprovementBps()).to.equal(ethers.MaxUint256)
     })
-    it('should not initialize with oracleRouter zero address', async function () {
-      await expect(
-        ContractFactory.deploy({
-          ...validParams,
-          oracleRouter: ethers.ZeroAddress,
-        })
-      )
-        .to.be.revertedWithCustomError(ContractFactory, 'InvalidOracleRouterAddress')
-        .withArgs(ethers.ZeroAddress)
-    })
   })
 
   describe('estimateTradeOutput:', function () {
@@ -354,36 +342,6 @@ describe('Stonks', function () {
         subject,
         'MinimumPossibleBalanceNotMet'
       )
-    })
-
-    it('should revert when tokens are not quotable', async function () {
-      const localSnapshot = await takeSnapshot()
-
-      // Fund stonks with tokens first (before deactivating)
-      await fillUpERC20FromTreasury({
-        token: contracts.STETH,
-        amount: ethers.parseEther('1'),
-        address: await subject.getAddress(),
-      })
-
-      // Get expected buy amount before deactivating tokens
-      const expectedBuyAmount = await subject.estimateTradeOutputFromCurrentBalance()
-
-      // Deactivate tokens in router to make them unquotable
-      const oracleRouter = await ethers.getContractAt('OracleRouter', await subject.ORACLE_ROUTER())
-      const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
-      await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
-
-      const [tokenFrom, tokenTo] = await subject.getOrderParameters()
-      await oracleRouter.connect(adminSigner).setTokenActive(tokenFrom, false)
-      await oracleRouter.connect(adminSigner).setTokenActive(tokenTo, false)
-
-      // Should revert when trying to place order because assertQuotable fails
-      // The revert happens during Order.initialize when it calls assertQuotable
-      // which calls router.getUsdPrices, which reverts with TokenNotConfigured
-      await expect(subject.placeOrder(expectedBuyAmount)).to.be.reverted
-
-      await localSnapshot.restore()
     })
 
     it('should place order', async function () {
@@ -493,6 +451,91 @@ describe('Stonks', function () {
       const tx = await subject.placeOrderWithAmount(sellAmount, veryHighMinBuy)
       const rc = await tx.wait()
       expect(rc?.status).to.equal(1)
+
+      await localSnapshot.restore()
+    })
+  })
+
+  describe('unconfigured tokens in oracle router:', function () {
+    it('should revert placeOrder when tokenFrom is not configured in OracleRouter', async function () {
+      const localSnapshot = await takeSnapshot()
+
+      // Get the existing oracle router from the subject
+      const amountConverterAddress = await subject.AMOUNT_CONVERTER()
+      const amountConverter = await ethers.getContractAt('AmountConverter', amountConverterAddress)
+      const oracleRouterAddress = await amountConverter.ORACLE_ROUTER()
+      const oracleRouter = await ethers.getContractAt('OracleRouter', oracleRouterAddress)
+
+      // Deactivate STETH in the existing router
+      const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+      await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
+      await oracleRouter.connect(adminSigner).setTokenActive(contracts.STETH, false)
+
+      await fillUpERC20FromTreasury({
+        token: contracts.STETH,
+        amount: ethers.parseEther('1'),
+        address: await subject.getAddress(),
+      })
+
+      await expect(subject.placeOrder(100)).to.be.revertedWithCustomError(
+        oracleRouter,
+        'TokenNotConfigured'
+      )
+
+      await localSnapshot.restore()
+    })
+
+    it('should revert placeOrder when tokenTo is not configured in OracleRouter', async function () {
+      const localSnapshot = await takeSnapshot()
+
+      // Get the existing oracle router from the subject
+      const amountConverterAddress = await subject.AMOUNT_CONVERTER()
+      const amountConverter = await ethers.getContractAt('AmountConverter', amountConverterAddress)
+      const oracleRouterAddress = await amountConverter.ORACLE_ROUTER()
+      const oracleRouter = await ethers.getContractAt('OracleRouter', oracleRouterAddress)
+
+      // Deactivate DAI in the existing router
+      const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+      await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
+      await oracleRouter.connect(adminSigner).setTokenActive(contracts.DAI, false)
+
+      await fillUpERC20FromTreasury({
+        token: contracts.STETH,
+        amount: ethers.parseEther('1'),
+        address: await subject.getAddress(),
+      })
+
+      await expect(subject.placeOrder(100)).to.be.revertedWithCustomError(
+        oracleRouter,
+        'TokenNotConfigured'
+      )
+
+      await localSnapshot.restore()
+    })
+
+    it('should revert placeOrderWithAmount when tokenFrom is not configured in OracleRouter', async function () {
+      const localSnapshot = await takeSnapshot()
+
+      // Get the existing oracle router from the subject
+      const amountConverterAddress = await subject.AMOUNT_CONVERTER()
+      const amountConverter = await ethers.getContractAt('AmountConverter', amountConverterAddress)
+      const oracleRouterAddress = await amountConverter.ORACLE_ROUTER()
+      const oracleRouter = await ethers.getContractAt('OracleRouter', oracleRouterAddress)
+
+      // Deactivate STETH in the existing router
+      const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+      await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
+      await oracleRouter.connect(adminSigner).setTokenActive(contracts.STETH, false)
+
+      await fillUpERC20FromTreasury({
+        token: contracts.STETH,
+        amount: ethers.parseEther('1'),
+        address: await subject.getAddress(),
+      })
+
+      await expect(
+        subject.placeOrderWithAmount(ethers.parseEther('0.5'), 100)
+      ).to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
 
       await localSnapshot.restore()
     })
