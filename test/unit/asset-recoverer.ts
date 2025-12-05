@@ -26,7 +26,7 @@ describe('Asset recoverer', async function () {
   let anotherManager: Signer
   let contractFactory: AssetRecovererTest__factory
 
-  this.beforeAll(async function () {
+  before(async function () {
     snapshot = await takeSnapshot()
     manager = (await ethers.getSigners())[1]
     anotherManager = (await ethers.getSigners())[2]
@@ -56,7 +56,7 @@ describe('Asset recoverer', async function () {
 
   describe('manager changing:', async function () {
     let localSnapshotId: string
-    this.beforeAll(async function () {
+    before(async function () {
       localSnapshotId = await network.provider.send('evm_snapshot')
     })
     it('should allow an admin to change manager', async function () {
@@ -88,7 +88,7 @@ describe('Asset recoverer', async function () {
         .to.be.revertedWithCustomError(subject, 'NotAdmin')
         .withArgs(await signer.getAddress())
     })
-    this.afterAll(async function () {
+    after(async function () {
       await network.provider.send('evm_revert', [localSnapshotId])
     })
   })
@@ -102,7 +102,7 @@ describe('Asset recoverer', async function () {
     let nft721: IERC721
     let nft1155: IERC1155
 
-    this.beforeAll(async function () {
+    before(async function () {
       token = await ethers.getContractAt('IERC20', contracts.DAI)
       subjectAddress = await subject.getAddress()
 
@@ -113,16 +113,16 @@ describe('Asset recoverer', async function () {
 
     describe('recovering Ether:', async function () {
       let snapshotId: string
-      this.beforeEach(async function () {
+      beforeEach(async function () {
         snapshotId = await network.provider.send('evm_snapshot')
         await setBalance(subjectAddress, amount)
       })
 
-      this.afterEach(async function () {
+      afterEach(async function () {
         await network.provider.send('evm_revert', [snapshotId])
       })
 
-      it('should successfully recover Ether', async () => {
+      it('should successfully recover Ether', async function () {
         const subjectBalanceBefore = await ethers.provider.getBalance(subject)
         const treasuryBalanceBefore = await ethers.provider.getBalance(contracts.AGENT)
 
@@ -138,7 +138,7 @@ describe('Asset recoverer', async function () {
         expect(treasuryBalanceAfter).to.be.equal(treasuryBalanceBefore + amount)
       })
 
-      it('should revert if it is called by stranger Ether', async () => {
+      it('should revert if it is called by stranger Ether', async function () {
         const signer = (await ethers.getSigners())[2]
         const localSubject = await ethers.getContractAt('Order', subject, signer)
 
@@ -150,7 +150,7 @@ describe('Asset recoverer', async function () {
 
     describe('recovering ERC20:', async function () {
       let snapshotId: string
-      this.beforeEach(async function () {
+      beforeEach(async function () {
         snapshotId = await network.provider.send('evm_snapshot')
         await fillUpERC20FromTreasury({
           amount,
@@ -159,11 +159,11 @@ describe('Asset recoverer', async function () {
         })
       })
 
-      this.afterEach(async function () {
+      afterEach(async function () {
         await network.provider.send('evm_revert', [snapshotId])
       })
 
-      it('should successfully recover ERC20', async () => {
+      it('should successfully recover ERC20', async function () {
         expect(await token.balanceOf(subject)).to.be.equal(amount)
 
         const recoverTx = await subject.recoverERC20(contracts.DAI, amount)
@@ -171,7 +171,7 @@ describe('Asset recoverer', async function () {
 
         expect(await token.balanceOf(subject)).to.be.equal(BigInt(0))
       })
-      it('should successfully recover by manager ERC20', async () => {
+      it('should successfully recover by manager ERC20', async function () {
         expect(await token.balanceOf(subject)).to.be.equal(amount)
         const localSubject = subject.connect(manager)
 
@@ -181,7 +181,7 @@ describe('Asset recoverer', async function () {
         expect(await token.balanceOf(subject)).to.be.equal(BigInt(0))
       })
 
-      it('should successfully recover by admin ERC20', async () => {
+      it('should successfully recover by admin ERC20', async function () {
         expect(await token.balanceOf(subject)).to.be.equal(amount)
 
         await impersonateAccount(contracts.ADMIN)
@@ -195,7 +195,7 @@ describe('Asset recoverer', async function () {
         expect(await token.balanceOf(subject)).to.be.equal(BigInt(0))
       })
 
-      it('should revert if it is called by stranger ERC20', async () => {
+      it('should revert if it is called by stranger ERC20', async function () {
         const localSubject = subject.connect(anotherManager)
 
         await expect(localSubject.recoverERC20(contracts.DAI, amount))
@@ -206,18 +206,18 @@ describe('Asset recoverer', async function () {
 
     describe('recovering ERC721:', async function () {
       let snapshotId: string
-      this.beforeEach(async function () {
+      beforeEach(async function () {
         snapshotId = await network.provider.send('evm_snapshot')
 
         const nftReceiver = (await ethers.getSigners())[0].address
         await nft721.transferFrom(nftReceiver, subjectAddress, nftId)
       })
 
-      this.afterEach(async function () {
+      afterEach(async function () {
         await network.provider.send('evm_revert', [snapshotId])
       })
 
-      it('should successfully recover ERC721', async () => {
+      it('should successfully recover ERC721', async function () {
         const nftAddress = await nft721.getAddress()
 
         expect(await nft721.ownerOf(nftId)).to.equal(subjectAddress)
@@ -228,7 +228,7 @@ describe('Asset recoverer', async function () {
         expect(await nft721.ownerOf(nftId)).to.equal(contracts.AGENT)
       })
 
-      it('should successfully recover by agent ERC721', async () => {
+      it('should successfully recover by agent ERC721', async function () {
         const nftAddress = await nft721.getAddress()
 
         expect(await nft721.ownerOf(nftId)).to.equal(subjectAddress)
@@ -241,7 +241,7 @@ describe('Asset recoverer', async function () {
         expect(await nft721.ownerOf(nftId)).to.equal(contracts.AGENT)
       })
 
-      it('should revert if it is called by stranger ERC721', async () => {
+      it('should revert if it is called by stranger ERC721', async function () {
         const nftAddress = await nft721.getAddress()
 
         expect(await nft721.ownerOf(nftId)).to.equal(subjectAddress)
@@ -258,7 +258,7 @@ describe('Asset recoverer', async function () {
       let nft1155Receiver: string
       let nft1155ReceiverSigner: Signer
 
-      this.beforeAll(async function () {
+      before(async function () {
         nft1155Receiver = ethers.getCreateAddress({
           from: '0x0000000000000000000000000000000000000001',
           nonce: 0,
@@ -274,7 +274,7 @@ describe('Asset recoverer', async function () {
         await nft1155.waitForDeployment()
       })
 
-      it('should successfully recover recover ERC1155', async () => {
+      it('should successfully recover recover ERC1155', async function () {
         expect(await nft1155.balanceOf(nft1155Receiver, nftId)).to.equal(10)
         expect(await nft1155.balanceOf(subjectAddress, nftId)).to.equal(0)
         expect(await nft1155.balanceOf(contracts.AGENT, nftId)).to.equal(0)
@@ -288,7 +288,7 @@ describe('Asset recoverer', async function () {
     })
   })
 
-  this.afterAll(async function () {
+  after(async function () {
     await snapshot.restore()
   })
 })

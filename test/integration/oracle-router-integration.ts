@@ -162,14 +162,16 @@ describe('OracleRouter integration', function () {
         false
       )
       const receipt = await tx.wait()
-      const event = receipt?.logs.find((log: any) => {
-        try {
-          return factory.interface.parseLog(log)?.name === 'AmountConverterDeployed'
-        } catch {
-          return false
-        }
-      })
-      const converterAddress = factory.interface.parseLog(event as any)?.args[0]
+      const factoryAddress = (await factory.getAddress()).toLowerCase()
+      const eventLog = receipt?.logs.find(
+        (log: any) => log.address?.toLowerCase() === factoryAddress
+      )
+      if (!eventLog) {
+        throw new Error('AmountConverterDeployed event not found')
+      }
+      // Fix: ensure compatibility with ethers v6 types by copying topics and data to mutable object
+      const { topics, data } = eventLog
+      const converterAddress = factory.interface.parseLog({ topics: [...topics], data })?.args[0]
       converter = await ethers.getContractAt('AmountConverter', converterAddress)
     })
 

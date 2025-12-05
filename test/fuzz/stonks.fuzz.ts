@@ -111,17 +111,28 @@ describe('Stonks - Fuzz Tests', () => {
             const result1 = await stonks.estimateTradeOutput(amount)
             const result2 = await stonks.estimateTradeOutput(amount * 2n)
 
-            // Calculate expected result2 using the same contract logic
+            const rawOutput1 = await amountConverter.getExpectedOut(
+              contracts.STETH,
+              contracts.DAI,
+              amount
+            )
             const rawOutput2 = await amountConverter.getExpectedOut(
               contracts.STETH,
               contracts.DAI,
               amount * 2n
             )
             const marginBps = await stonks.MARGIN_IN_BASIS_POINTS()
-            const expectedResult2 = (rawOutput2 * (MAX_BASIS_POINTS - marginBps)) / MAX_BASIS_POINTS
+            const marginDiff = MAX_BASIS_POINTS - marginBps
+            const expectedResult1 = (rawOutput1 * marginDiff) / MAX_BASIS_POINTS
+            const expectedResult2 = (rawOutput2 * marginDiff) / MAX_BASIS_POINTS
 
-            // The result2 should exactly match the expected calculation
+            // Each output must match the contract's margin-adjusted calculation.
+            expect(result1).to.equal(expectedResult1)
             expect(result2).to.equal(expectedResult2)
+
+            // Doubling the input should double the output up to small rounding noise (< 5 wei).
+            const proportionalResult = result1 * 2n
+            expect(result2).to.be.closeTo(proportionalResult, 5n)
           }
         ),
         { numRuns: 50 }

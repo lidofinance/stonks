@@ -43,7 +43,7 @@ describe('Scenario test multi-pair', function () {
       let orderReceipt: TransactionReceipt
       let order: Order
 
-      this.beforeAll(async () => {
+      before(async function () {
         snapshot = await takeSnapshot()
 
         let result: Setup
@@ -64,11 +64,11 @@ describe('Scenario test multi-pair', function () {
         await setBalance(contracts.AGENT, parseEther('100'))
       })
 
-      this.afterAll(async () => {
+      after(async function () {
         await snapshot.restore()
       })
 
-      context('Setup', () => {
+      context('Setup', function () {
         it('agent should fill up a stonks with tokenFrom (EasyTrack imitation)', async function () {
           const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
           const token = tokenFrom.connect(treasurySigner)
@@ -88,7 +88,7 @@ describe('Scenario test multi-pair', function () {
           expect(balance).to.be.closeTo(value, 2n)
         })
 
-        it('manager should successfully place an order', async () => {
+        it('manager should successfully place an order', async function () {
           expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
           const orderTx = await stonks.placeOrder(expectedBuyAmount)
 
@@ -109,8 +109,8 @@ describe('Scenario test multi-pair', function () {
         })
       })
 
-      context('Successful trade', () => {
-        it('settlement should successfully check hash (isValidSignature)', async () => {
+      context('Successful trade', function () {
+        it('settlement should successfully check hash (isValidSignature)', async function () {
           const [currentHash] = await order.getOrderDetails()
           expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
           await expect(order.isValidSignature(ethers.ZeroHash, '0x'))
@@ -118,7 +118,7 @@ describe('Scenario test multi-pair', function () {
             .withArgs(currentHash, ethers.ZeroHash)
         })
 
-        it('settlement should pull off assets from order contract (swap imitation)', async () => {
+        it('settlement should pull off assets from order contract (swap imitation)', async function () {
           await setCode(contracts.VAULT_RELAYER, ethers.ZeroHash)
           await setBalance(contracts.VAULT_RELAYER, ethers.parseEther('100'))
           await impersonateAccount(contracts.VAULT_RELAYER)
@@ -136,17 +136,17 @@ describe('Scenario test multi-pair', function () {
         })
       })
 
-      context('Order expired', () => {
-        before(async () => {
+      context('Order expired', function () {
+        before(async function () {
           await snapshotOrderPlaced.restore()
         })
-        it('should not be possible to cancel order due to expiration time', async () => {
+        it('should not be possible to cancel order due to expiration time', async function () {
           const orderDetails = await order.getOrderDetails()
           await expect(order.recoverTokenFrom())
             .to.be.revertedWithCustomError(order, 'OrderNotExpired')
             .withArgs(orderDetails[5], anyValue)
         })
-        it('should be possible to recover tokenFrom after expiration time', async () => {
+        it('should be possible to recover tokenFrom after expiration time', async function () {
           await network.provider.send('evm_increaseTime', [
             Number(await stonks.ORDER_DURATION_IN_SECONDS()) + 1,
           ])
@@ -154,7 +154,7 @@ describe('Scenario test multi-pair', function () {
 
           expect(await tokenFrom.balanceOf(order)).to.be.closeTo(BigInt(0), 1n)
         })
-        it('should be invalid after order expiration', async () => {
+        it('should be invalid after order expiration', async function () {
           const [currentHash, , , , , validTo] = await order.getOrderDetails()
           await expect(order.isValidSignature(currentHash, '0x'))
             .to.be.revertedWithCustomError(order, 'OrderExpired')
@@ -162,18 +162,18 @@ describe('Scenario test multi-pair', function () {
         })
       })
 
-      context('Market price spike', () => {
-        before(async () => {
+      context('Market price spike', function () {
+        before(async function () {
           await snapshotOrderPlaced.restore()
         })
-        it('settlement should successfully check hash', async () => {
+        it('settlement should successfully check hash', async function () {
           const [currentHash] = await order.getOrderDetails()
           expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
           await expect(order.isValidSignature(ethers.ZeroHash, '0x'))
             .to.be.revertedWithCustomError(order, 'InvalidOrderHash')
             .withArgs(currentHash, ethers.ZeroHash)
         })
-        it('should change stonks amount converter address', async () => {
+        it('should change stonks amount converter address', async function () {
           await setupPriceSpikeStub(stonks, manager)
 
           const [currentHash] = await order.getOrderDetails()
@@ -182,13 +182,13 @@ describe('Scenario test multi-pair', function () {
             'PriceShortfallExceedsTolerance'
           )
         })
-        it('should be possible to recover tokenFrom after price spike', async () => {
+        it('should be possible to recover tokenFrom after price spike', async function () {
           await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
           await order.recoverTokenFrom()
 
           expect(await tokenFrom.balanceOf(order)).to.be.closeTo(BigInt(0), 1n)
         })
-        it('should create a new order for new market conditions', async () => {
+        it('should create a new order for new market conditions', async function () {
           const expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
           const orderTx = await stonks.placeOrder(expectedBuyAmount)
 
@@ -206,11 +206,11 @@ describe('Scenario test multi-pair', function () {
           expect(await newOrder.getAddress()).to.not.be.equal(await order.getAddress())
         })
       })
-      context('Manager change', () => {
-        before(async () => {
+      context('Manager change', function () {
+        before(async function () {
           await snapshotOrderPlaced.restore()
         })
-        it('admin should change a manager', async () => {
+        it('admin should change a manager', async function () {
           const admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
           await ethers.provider.send('hardhat_setBalance', [
             contracts.ADMIN,
@@ -219,22 +219,22 @@ describe('Scenario test multi-pair', function () {
           await stonks.connect(admin).setManager(ethers.ZeroAddress)
           expect(await stonks.manager()).to.be.equal(ethers.ZeroAddress)
         })
-        it('manager should not be allowed to interact', async () => {
+        it('manager should not be allowed to interact', async function () {
           await expect(stonks.placeOrder(1))
             .to.be.revertedWithCustomError(stonks, 'NotAdminOrManager')
             .withArgs(await manager.getAddress())
         })
       })
-      context('Unexpected tokens', () => {
+      context('Unexpected tokens', function () {
         let stubToken: any
-        before(async () => {
+        before(async function () {
           await snapshotOrderPlaced.restore()
 
           const stubTokenFactory = await ethers.getContractFactory('ERC_20')
           stubToken = await stubTokenFactory.deploy()
           await stubToken.waitForDeployment()
         })
-        it('should fill up stonks with unexpected token', async () => {
+        it('should fill up stonks with unexpected token', async function () {
           const value = parseEther('1')
           await stubToken.transfer(contracts.AGENT, value)
           // Use a regular signer to transfer tokens to stonks (not agent, as agent is only fund recipient)
@@ -243,14 +243,14 @@ describe('Scenario test multi-pair', function () {
 
           expect(await stubToken.balanceOf(stonks)).to.equal(value)
         })
-        it('manager should recover unexpected token', async () => {
+        it('manager should recover unexpected token', async function () {
           const agentBalanceBefore = await stubToken.balanceOf(contracts.AGENT)
           const value = await stubToken.balanceOf(stonks)
           await stonks.connect(manager).recoverERC20(stubToken, value)
           expect(await stubToken.balanceOf(stonks)).to.equal(0)
           expect(await stubToken.balanceOf(contracts.AGENT)).to.equal(agentBalanceBefore + value)
         })
-        it('should fill up order contract with unexpected token', async () => {
+        it('should fill up order contract with unexpected token', async function () {
           const value = parseEther('1')
           await stubToken.transfer(contracts.AGENT, value)
           // Use a regular signer to transfer tokens to order (not agent, as agent is only fund recipient)
@@ -259,7 +259,7 @@ describe('Scenario test multi-pair', function () {
 
           expect(await stubToken.balanceOf(order)).to.be.closeTo(value, 1n)
         })
-        it('manager should recover unexpected token from order contract', async () => {
+        it('manager should recover unexpected token from order contract', async function () {
           const agentBalanceBefore = await stubToken.balanceOf(contracts.AGENT)
           const value = await stubToken.balanceOf(order)
           await order.connect(manager).recoverERC20(stubToken, value)
@@ -268,14 +268,14 @@ describe('Scenario test multi-pair', function () {
         })
       })
 
-      context('Price improvement scenarios', () => {
+      context('Price improvement scenarios', function () {
         let snapshotBeforeOrder: SnapshotRestorer
         let stonksWithCap: Stonks
         let stonksStrict: Stonks
         let orderWithCap: Order
         let orderStrict: Order
 
-        before(async () => {
+        before(async function () {
           await snapshotOrderPlaced.restore()
         })
 
@@ -431,7 +431,7 @@ describe('Scenario test multi-pair', function () {
         })
       })
 
-      this.afterAll(async () => {
+      after(async function () {
         await snapshot.restore()
       })
     })

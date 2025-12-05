@@ -31,7 +31,7 @@ describe('State invariants', function () {
     allowPartialFill: true,
   }
 
-  this.beforeAll(async () => {
+  before(async function () {
     snapshot = await takeSnapshot()
 
     const result = await setup(pair)
@@ -45,16 +45,16 @@ describe('State invariants', function () {
     await setBalance(contracts.AGENT, parseEther('100'))
   })
 
-  this.afterAll(async () => {
+  after(async function () {
     await snapshot.restore()
   })
 
-  async function placeOrder(fundAmount: bigint): Promise<Order> {
+  const placeOrder = async (fundAmount: bigint): Promise<Order> => {
     return placeOrderFromAgent(stonks, manager, tokenFrom, fundAmount)
   }
 
   describe('Immutable state invariants', function () {
-    it('should maintain AGENT as immutable recipient across operations', async () => {
+    it('should maintain AGENT as immutable recipient across operations', async function () {
       const order = await placeOrder(parseEther('1000'))
 
       const agentFromOrder = await order.AGENT()
@@ -69,7 +69,7 @@ describe('State invariants', function () {
       expect(await order.AGENT()).to.equal(contracts.AGENT)
     })
 
-    it('should maintain ADMIN immutability', async () => {
+    it('should maintain ADMIN immutability', async function () {
       const adminFromStonks = await stonks.ADMIN()
       expect(adminFromStonks).to.equal(contracts.ADMIN)
 
@@ -83,7 +83,7 @@ describe('State invariants', function () {
       expect(await stonks.ADMIN()).to.equal(contracts.ADMIN)
     })
 
-    it('should maintain TOKEN_FROM and TOKEN_TO immutability', async () => {
+    it('should maintain TOKEN_FROM and TOKEN_TO immutability', async function () {
       const tokenFromAddress = await stonks.TOKEN_FROM()
       const tokenToAddress = await stonks.TOKEN_TO()
 
@@ -101,7 +101,7 @@ describe('State invariants', function () {
       expect(orderTokenTo).to.equal(tokenToAddress)
     })
 
-    it('should maintain ALLOW_PARTIAL_FILL immutability', async () => {
+    it('should maintain ALLOW_PARTIAL_FILL immutability', async function () {
       expect(await stonks.ALLOW_PARTIAL_FILL()).to.equal(true)
 
       const order = await placeOrder(parseEther('1000'))
@@ -111,7 +111,7 @@ describe('State invariants', function () {
       expect(await stonks.ALLOW_PARTIAL_FILL()).to.equal(true)
     })
 
-    it('should maintain order parameters immutability', async () => {
+    it('should maintain order parameters immutability', async function () {
       const order = await placeOrder(parseEther('1000'))
 
       const [, , , initialSellAmount, initialBuyAmount, initialValidTo] =
@@ -136,10 +136,10 @@ describe('State invariants', function () {
   })
 
   describe('Price tolerance invariants', function () {
-    it('should never allow order when buyAmount < minAcceptable', async () => {
+    it('should never allow order when buyAmount < minAcceptable', async function () {
       const order = await placeOrder(parseEther('1000'))
 
-      const [, , , sellAmount, buyAmount] = await order.getOrderDetails()
+      const [, , , , buyAmount] = await order.getOrderDetails()
 
       const priceToleranceBps = await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS()
       const minAcceptableBuyAmount = buyAmount - (buyAmount * priceToleranceBps) / 10000n
@@ -156,7 +156,7 @@ describe('State invariants', function () {
       expect(estimatedBuy).to.be.greaterThanOrEqual(minAcceptableBuyAmount)
     })
 
-    it('should maintain price tolerance across partial fills', async () => {
+    it('should maintain price tolerance across partial fills', async function () {
       const order = await placeOrder(parseEther('1000'))
 
       for (let i = 0; i < 5; i++) {
@@ -167,7 +167,7 @@ describe('State invariants', function () {
       }
     })
 
-    it('should maintain price tolerance across rebases', async () => {
+    it('should maintain price tolerance across rebases', async function () {
       const order = await placeOrder(parseEther('1000'))
 
       for (let i = 0; i < 10; i++) {
@@ -183,15 +183,15 @@ describe('State invariants', function () {
   describe('Partial fill invariants', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should never revert on partial fill when ALLOW_PARTIAL_FILL = true', async () => {
+    it('should never revert on partial fill when ALLOW_PARTIAL_FILL = true', async function () {
       expect(await stonks.ALLOW_PARTIAL_FILL()).to.equal(true)
 
       const order = await placeOrder(parseEther('1000'))
@@ -210,10 +210,8 @@ describe('State invariants', function () {
       }
     })
 
-    it('should always allow recovery when balance > 0', async () => {
+    it('should always allow recovery when balance > 0', async function () {
       const order = await placeOrder(parseEther('1000'))
-
-      const orderBalanceBeforeFill = await tokenFrom.balanceOf(await order.getAddress())
 
       await simulatePartialFill(tokenFrom, await order.getAddress(), 95)
 
@@ -241,15 +239,15 @@ describe('State invariants', function () {
   describe('Access control invariants', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should never allow non-admin/manager to call admin functions', async () => {
+    it('should never allow non-admin/manager to call admin functions', async function () {
       const [, , stranger] = await ethers.getSigners()
 
       await expect(
@@ -266,7 +264,7 @@ describe('State invariants', function () {
       )
     })
 
-    it('should never allow AGENT to call operational functions', async () => {
+    it('should never allow AGENT to call operational functions', async function () {
       const agentSigner = await ethers.getImpersonatedSigner(contracts.AGENT)
       await setBalance(contracts.AGENT, parseEther('1'))
 
@@ -280,7 +278,7 @@ describe('State invariants', function () {
       )
     })
 
-    it('should maintain emergency operator permissions', async () => {
+    it('should maintain emergency operator permissions', async function () {
       const order = await placeOrder(parseEther('1000'))
 
       const emergencyOperatorAddress = await stonks.emergencyOperator()
@@ -304,15 +302,15 @@ describe('State invariants', function () {
   describe('Fund flow invariants', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should always send recovered funds to AGENT', async () => {
+    it('should always send recovered funds to AGENT', async function () {
       const order = await placeOrder(parseEther('1000'))
 
       const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
@@ -333,7 +331,7 @@ describe('State invariants', function () {
       )
     })
 
-    it('should never lose tokens during partial fills + rebases', async () => {
+    it('should never lose tokens during partial fills + rebases', async function () {
       const order = await placeOrder(parseEther('1000'))
       const orderAddress = await order.getAddress()
 
@@ -358,8 +356,7 @@ describe('State invariants', function () {
       expect(finalBalance).to.be.closeTo(totalAccountedTokens, parseEther('1'))
     })
 
-    it('should maintain token conservation across operations', async () => {
-      const treasuryBalanceBefore = await tokenFrom.balanceOf(contracts.AGENT)
+    it('should maintain token conservation across operations', async function () {
       const fundAmount = parseEther('1000')
 
       const order = await placeOrder(fundAmount)
@@ -384,15 +381,15 @@ describe('State invariants', function () {
   describe('Order state invariants', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should never allow reuse of cancelled order', async () => {
+    it('should never allow reuse of cancelled order', async function () {
       const order = await placeOrder(parseEther('1000'))
 
       const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
@@ -410,7 +407,7 @@ describe('State invariants', function () {
       await order.connect(adminSigner).emergencyCancelAndReturn()
     })
 
-    it('should never allow signature validation when globally paused', async () => {
+    it('should never allow signature validation when globally paused', async function () {
       const order = await placeOrder(parseEther('1000'))
 
       const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
@@ -439,7 +436,7 @@ describe('State invariants', function () {
       )
     })
 
-    it('should maintain order hash immutability', async () => {
+    it('should maintain order hash immutability', async function () {
       const order = await placeOrder(parseEther('1000'))
 
       const [initialHash] = await order.getOrderDetails()

@@ -23,12 +23,6 @@ describe('AmountConverter', () => {
 
   const USD_QUOTE = addresses.CHAINLINK_USD_QUOTE
 
-  const readTokenDecimals = async (token: string) => {
-    const tokenInterface = new ethers.Interface(['function decimals() view returns (uint8)'])
-    const erc20 = new ethers.Contract(token, tokenInterface, (await ethers.getSigners())[0])
-    return erc20.getFunction('decimals').staticCall()
-  }
-
   before(async () => {
     snapshot = await takeSnapshot()
     factory = await ethers.getContractFactory('AmountConverter')
@@ -52,15 +46,12 @@ describe('AmountConverter', () => {
 
     await router8.connect(adminSigner).setEthUsdBridge(86_400)
 
-    const erc20Iface = new ethers.Interface(['function decimals() view returns (uint8)'])
-    const erc20 = (addr: string) => new ethers.Contract(addr, erc20Iface, deployer)
     const feedRegistryStub = await ethers.getContractAt(
       'ChainlinkFeedRegistryStub',
       feedRegistryAddress
     )
 
     for (const token of [addresses.DAI, addresses.USDC, addresses.USDT]) {
-      const decimals = await erc20(token).getFunction('decimals').staticCall()
       const usdFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_USD_QUOTE)
 
       if (usdFeed !== ethers.ZeroAddress) {
@@ -216,7 +207,6 @@ describe('AmountConverter', () => {
       const registryAddr = await router.FEED_REGISTRY()
       const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
 
-      const decimals = await readTokenDecimals(addresses.DAI)
       await router.setTokenFeed(addresses.DAI, QuoteDenomination.USD, 1, true)
 
       const latest = await ethers.provider.getBlock('latest')

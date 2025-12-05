@@ -37,7 +37,7 @@ describe('Extreme rebase scenarios', function () {
     allowPartialFill: true,
   }
 
-  this.beforeAll(async () => {
+  before(async function () {
     snapshot = await takeSnapshot()
 
     const result = await setup(pair)
@@ -52,11 +52,11 @@ describe('Extreme rebase scenarios', function () {
     expect(await stonks.ALLOW_PARTIAL_FILL()).to.equal(true)
   })
 
-  this.afterAll(async () => {
+  after(async function () {
     await snapshot.restore()
   })
 
-  async function placeOrder(fundAmount: bigint) {
+  const placeOrder = async (fundAmount: bigint) => {
     const createdOrder = await placeOrderFromAgent(stonks, manager, tokenFrom, fundAmount)
     order = createdOrder
     orderAddress = await createdOrder.getAddress()
@@ -66,16 +66,16 @@ describe('Extreme rebase scenarios', function () {
   describe('Extreme positive rebases', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
       await placeOrder(parseEther('1000'))
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should handle 1000% positive rebase (10x increase)', async () => {
+    it('should handle 1000% positive rebase (10x increase)', async function () {
       await simulatePartialFill(tokenFrom, orderAddress, 50)
 
       const balanceBefore = await tokenFrom.balanceOf(orderAddress)
@@ -90,7 +90,7 @@ describe('Extreme rebase scenarios', function () {
       expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
 
-    it('should handle 100% positive rebase after 90% fill', async () => {
+    it('should handle 100% positive rebase after 90% fill', async function () {
       await simulatePartialFill(tokenFrom, orderAddress, 90)
 
       const balanceBefore = await tokenFrom.balanceOf(orderAddress)
@@ -105,7 +105,7 @@ describe('Extreme rebase scenarios', function () {
       expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
 
-    it('should handle series of 50% positive rebases', async () => {
+    it('should handle series of 50% positive rebases', async function () {
       let currentBalance = await tokenFrom.balanceOf(orderAddress)
 
       for (let i = 0; i < 5; i++) {
@@ -125,16 +125,16 @@ describe('Extreme rebase scenarios', function () {
   describe('Extreme negative rebases', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
       await placeOrder(parseEther('1000'))
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should handle 99% negative rebase (near-total loss)', async () => {
+    it('should handle 99% negative rebase (near-total loss)', async function () {
       await simulatePartialFill(tokenFrom, orderAddress, 50)
 
       const balanceBefore = await tokenFrom.balanceOf(orderAddress)
@@ -149,7 +149,7 @@ describe('Extreme rebase scenarios', function () {
       expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
 
-    it('should handle 95% negative rebase after 80% fill', async () => {
+    it('should handle 95% negative rebase after 80% fill', async function () {
       await simulatePartialFill(tokenFrom, orderAddress, 80)
 
       const balanceBefore = await tokenFrom.balanceOf(orderAddress)
@@ -164,7 +164,7 @@ describe('Extreme rebase scenarios', function () {
       expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
 
-    it('should handle series of 20% negative rebases', async () => {
+    it('should handle series of 20% negative rebases', async function () {
       let currentBalance = await tokenFrom.balanceOf(orderAddress)
 
       for (let i = 0; i < 5; i++) {
@@ -180,7 +180,7 @@ describe('Extreme rebase scenarios', function () {
       expect(finalBalance).to.be.closeTo(parseEther('327.68'), EXTREME_REBASE_TOLERANCE)
     })
 
-    it('should handle rebase reducing balance to near-zero', async () => {
+    it('should handle rebase reducing balance to near-zero', async function () {
       await simulatePartialFill(tokenFrom, orderAddress, 99)
 
       const balanceBefore = await tokenFrom.balanceOf(orderAddress)
@@ -199,16 +199,16 @@ describe('Extreme rebase scenarios', function () {
   describe('Alternating extreme rebases', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
       await placeOrder(parseEther('1000'))
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should handle +100%, -50%, +100%, -50% pattern', async () => {
+    it('should handle +100%, -50%, +100%, -50% pattern', async function () {
       let currentBalance = await tokenFrom.balanceOf(orderAddress)
 
       await simulateRebase(tokenFrom, orderAddress, currentBalance, true)
@@ -231,7 +231,7 @@ describe('Extreme rebase scenarios', function () {
       expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
 
-    it('should handle +500%, fill 50%, -90% sequence', async () => {
+    it('should handle +500%, fill 50%, -90% sequence', async function () {
       const initialBalance = await tokenFrom.balanceOf(orderAddress)
 
       await simulateRebase(tokenFrom, orderAddress, initialBalance * 5n, true)
@@ -255,15 +255,15 @@ describe('Extreme rebase scenarios', function () {
   describe('Rebase timing edge cases', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should handle rebase immediately after order placement', async () => {
+    it('should handle rebase immediately after order placement', async function () {
       await placeOrder(parseEther('1000'))
 
       const rebaseAmount = parseEther('100')
@@ -273,7 +273,7 @@ describe('Extreme rebase scenarios', function () {
       expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
 
-    it('should handle rebase at order expiration', async () => {
+    it('should handle rebase at order expiration', async function () {
       await placeOrder(parseEther('1000'))
 
       const orderDuration = await stonks.ORDER_DURATION_IN_SECONDS()
@@ -291,7 +291,7 @@ describe('Extreme rebase scenarios', function () {
       )
     })
 
-    it('should handle multiple rebases in rapid succession', async () => {
+    it('should handle multiple rebases in rapid succession', async function () {
       await placeOrder(parseEther('1000'))
 
       for (let i = 0; i < 10; i++) {
@@ -307,21 +307,19 @@ describe('Extreme rebase scenarios', function () {
   describe('Rebase with recovery operations', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
       await placeOrder(parseEther('1000'))
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should allow recovery after extreme positive rebase', async () => {
+    it('should allow recovery after extreme positive rebase', async function () {
       const balanceBefore = await tokenFrom.balanceOf(orderAddress)
 
       await simulateRebase(tokenFrom, orderAddress, balanceBefore * 10n, true)
-
-      const balanceAfterRebase = await tokenFrom.balanceOf(orderAddress)
 
       const orderDuration = await stonks.ORDER_DURATION_IN_SECONDS()
       await time.increase(Number(orderDuration) + 1)
@@ -340,12 +338,10 @@ describe('Extreme rebase scenarios', function () {
       )
     })
 
-    it('should allow recovery after extreme negative rebase', async () => {
+    it('should allow recovery after extreme negative rebase', async function () {
       const balanceBefore = await tokenFrom.balanceOf(orderAddress)
       const rebaseAmount = (balanceBefore * 95n) / 100n
       await simulateRebase(tokenFrom, orderAddress, rebaseAmount, false)
-
-      const balanceAfterRebase = await tokenFrom.balanceOf(orderAddress)
 
       const orderDuration = await stonks.ORDER_DURATION_IN_SECONDS()
       await time.increase(Number(orderDuration) + 1)

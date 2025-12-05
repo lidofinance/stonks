@@ -1,6 +1,6 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
-import { parseEther, parseUnits, MaxUint256 } from 'ethers'
+import { parseEther } from 'ethers'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import type {
   OracleRouter,
@@ -37,14 +37,15 @@ describe('OracleRouter edge cases', function () {
   ): Promise<AmountConverter> {
     const tx = await factory.deployAmountConverter(tokensToSell, tokensToBuy, useEthAnchor)
     const receipt = await tx.wait()
-    const event = receipt?.logs.find((log: any) => {
-      try {
-        return factory.interface.parseLog(log)?.name === 'AmountConverterDeployed'
-      } catch {
-        return false
-      }
-    })
-    const converterAddress = factory.interface.parseLog(event as any)?.args[0]
+    const factoryAddress = (await factory.getAddress()).toLowerCase()
+    const eventLog = receipt?.logs.find((log: any) => log.address?.toLowerCase() === factoryAddress)
+    if (!eventLog) {
+      throw new Error('AmountConverterDeployed event not found')
+    }
+    const converterAddress = factory.interface.parseLog({
+      topics: [...eventLog.topics],
+      data: eventLog.data,
+    })?.args[0]
     return ethers.getContractAt('AmountConverter', converterAddress)
   }
 

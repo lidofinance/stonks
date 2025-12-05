@@ -37,7 +37,7 @@ describe('Order', async function () {
   let orderData: PlaceOrderDataEvent
   let expectedBuyAmount: bigint
 
-  this.beforeAll(async function () {
+  before(async function () {
     snapshot = await takeSnapshot()
     manager = (await ethers.getSigners())[0]
 
@@ -134,7 +134,7 @@ describe('Order', async function () {
   })
 
   describe('initialization (direct):', function () {
-    it('sample deployment should emit RelayerSet and DomainSeparatorSet events', async () => {
+    it('sample deployment should emit RelayerSet and DomainSeparatorSet events', async function () {
       const contractFactory = await ethers.getContractFactory('Order')
 
       const contract = await contractFactory.deploy(
@@ -150,12 +150,12 @@ describe('Order', async function () {
         .to.emit(contract, 'DomainSeparatorSet')
         .withArgs(contracts.DOMAIN_SEPARATOR)
     })
-    it('sample instance should have correct admin and agent addresses', async () => {
+    it('sample instance should have correct admin and agent addresses', async function () {
       const orderSample = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
       expect(await orderSample.ADMIN()).to.equal(contracts.ADMIN)
       expect(await orderSample.AGENT()).to.equal(contracts.AGENT)
     })
-    it('sample instance should be initialized by default', async () => {
+    it('sample instance should be initialized by default', async function () {
       const subject = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
       await expect(
         subject.initialize(expectedBuyAmount, ethers.ZeroAddress)
@@ -164,11 +164,11 @@ describe('Order', async function () {
   })
 
   describe('initialization (from Stonks):', function () {
-    it('should have correct admin and agent addresses', async () => {
+    it('should have correct admin and agent addresses', async function () {
       expect(await subject.ADMIN()).to.equal(contracts.ADMIN)
       expect(await subject.AGENT()).to.equal(contracts.AGENT)
     })
-    it('should have correct order parameters', async () => {
+    it('should have correct order parameters', async function () {
       const [tokenFrom, tokenTo, orderDurationInSeconds] = await stonks.getOrderParameters()
       const token = await ethers.getContractAt('IERC20', tokenFrom)
 
@@ -186,7 +186,7 @@ describe('Order', async function () {
         BigInt(orderData.timestamp) + orderDurationInSeconds
       )
     })
-    it('should return correct params from getOrderDetails', async () => {
+    it('should return correct params from getOrderDetails', async function () {
       const [tokenFromParam, tokenToParam, orderDurationInSeconds] =
         await stonks.getOrderParameters()
       const [orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo] =
@@ -204,20 +204,20 @@ describe('Order', async function () {
   describe('isValidSignature:', function () {
     let localSnapshot: SnapshotRestorer
 
-    this.beforeEach(async function () {
+    beforeEach(async function () {
       localSnapshot = await takeSnapshot()
     })
 
-    it('should return magic value if order hash is valid', async () => {
+    it('should return magic value if order hash is valid', async function () {
       expect(await subject.isValidSignature(orderHash, '0x')).to.equal(MAGIC_VALUE)
     })
-    it('should revert if order hash is invalid', async () => {
+    it('should revert if order hash is invalid', async function () {
       await expect(subject.isValidSignature(ethers.ZeroHash, '0x')).to.be.revertedWithCustomError(
         subject,
         'InvalidOrderHash'
       )
     })
-    it('should revert if order is expired', async () => {
+    it('should revert if order is expired', async function () {
       await time.increase(60 * 60 + 1)
       await mine()
 
@@ -226,13 +226,13 @@ describe('Order', async function () {
         'OrderExpired'
       )
     })
-    it('should not revert if there was a price deterioration within tolerance', async () => {
+    it('should not revert if there was a price deterioration within tolerance', async function () {
       await amountConverterTest.multiplyAnswer(10000 - PRICE_TOLERANCE_IN_BP + 1)
 
       const [currentHash] = await subject.getOrderDetails()
       expect(await subject.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
-    it('should revert if there was a price spike', async () => {
+    it('should revert if there was a price spike', async function () {
       const orderDetails = await subject.getOrderDetails()
       const sellAmount = orderDetails[3]
       const buyAmount = orderDetails[4]
@@ -250,7 +250,7 @@ describe('Order', async function () {
         .withArgs(minAcceptable, currentCalculated)
     })
 
-    this.afterEach(async function () {
+    afterEach(async function () {
       await localSnapshot.restore()
     })
   })
@@ -258,10 +258,10 @@ describe('Order', async function () {
   describe('recoverTokenFrom:', function () {
     let localSnapshot: SnapshotRestorer
 
-    this.beforeEach(async function () {
+    beforeEach(async function () {
       localSnapshot = await takeSnapshot()
     })
-    it('should succesfully recover token from', async () => {
+    it('should succesfully recover token from', async function () {
       const [tokenFrom] = await stonks.getOrderParameters()
       const subjectWithStranger = subject.connect((await ethers.getSigners())[4])
 
@@ -280,7 +280,7 @@ describe('Order', async function () {
       expect(stonksBalanceAfter).to.be.closeTo(stonksBalanceBefore + orderBalanceBefore, 1n)
       expect(orderBalanceAfter).to.be.closeTo(BigInt(0), 1n)
     })
-    it('should revert if order is not expired', async () => {
+    it('should revert if order is not expired', async function () {
       const orderDetails = await subject.getOrderDetails()
       const block = await ethers.provider.getBlockNumber()
       const timestamp = (await ethers.provider.getBlock(block))?.timestamp!
@@ -289,7 +289,7 @@ describe('Order', async function () {
         .to.be.revertedWithCustomError(subject, 'OrderNotExpired')
         .withArgs(orderDetails[5], timestamp + 1)
     })
-    it('should revert if nothing to recover', async () => {
+    it('should revert if nothing to recover', async function () {
       await time.increase(60 * 60 + 1)
 
       await subject.recoverTokenFrom()
@@ -298,19 +298,19 @@ describe('Order', async function () {
         'InvalidAmountToRecover'
       )
     })
-    this.afterEach(async function () {
+    afterEach(async function () {
       await localSnapshot.restore()
     })
   })
 
   describe('recoverERC20:', async function () {
-    it('should revert if recover a token from', async () => {
+    it('should revert if recover a token from', async function () {
       const [tokenFrom] = await stonks.getOrderParameters()
       await expect(subject.recoverERC20(tokenFrom, BigInt(1)))
         .revertedWithCustomError(subject, 'CannotRecoverTokenFrom')
         .withArgs(tokenFrom)
     })
-    it('should revert if called by stranger', async () => {
+    it('should revert if called by stranger', async function () {
       const amount = ethers.parseEther('1')
       await fillUpERC20FromTreasury({
         token: contracts.DAI,
@@ -323,7 +323,7 @@ describe('Order', async function () {
         .revertedWithCustomError(subject, 'NotAdminOrManager')
         .withArgs(await signer.getAddress())
     })
-    it('should successfully recover a token', async () => {
+    it('should successfully recover a token', async function () {
       const amount = ethers.parseEther('1')
       const token = await ethers.getContractAt('IERC20', contracts.DAI)
       const subjectAddress = await subject.getAddress()
@@ -347,20 +347,20 @@ describe('Order', async function () {
   })
 
   describe('negative cases:', function () {
-    it('should revert recoverEther when called by stranger', async () => {
+    it('should revert recoverEther when called by stranger', async function () {
       const stranger = (await ethers.getSigners())[4]
       await expect(subject.connect(stranger).recoverEther())
         .to.be.revertedWithCustomError(subject, 'NotAdminOrManager')
         .withArgs(await stranger.getAddress())
     })
 
-    it('should handle isValidSignature with non-empty signature data', async () => {
+    it('should handle isValidSignature with non-empty signature data', async function () {
       const signature = '0x1234567890abcdef'
       expect(await subject.isValidSignature(orderHash, signature)).to.equal(MAGIC_VALUE)
     })
   })
 
-  this.afterAll(async function () {
+  after(async function () {
     await snapshot.restore()
     resetTestOracleRouter() // Clean up global state
     resetTestFeedRegistryStub()

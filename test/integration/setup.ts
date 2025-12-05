@@ -64,8 +64,6 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
   )
   await oracleRouter.waitForDeployment()
   oracleRouterAddress = await oracleRouter.getAddress()
-  const erc20Interface = new ethers.Interface(['function decimals() view returns (uint8)'])
-  const getErc20Contract = (addr: string) => new ethers.Contract(addr, erc20Interface, manager)
 
   const feedRegistry = await ethers.getContractAt(
     'IFeedRegistry',
@@ -82,26 +80,32 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
     answer: bigint
     isValid: boolean
   }> => {
-    try {
-      const [roundId, answer, , updatedAt, answeredInRound] = await feedRegistry.latestRoundData(
-        base,
-        quote
-      )
-      const exists = true
-      const isValid = answeredInRound >= roundId && answer > 0n
-      const latestBlock = await ethers.provider.getBlock('latest')
-      const age = isValid ? latestBlock!.timestamp - Number(updatedAt) : null
-      const aggregator = await feedRegistry.getFeed(base, quote)
+    const aggregator = await feedRegistry.getFeed(base, quote)
 
-      return { exists, age, aggregator, answer, isValid }
-    } catch {
+    if (aggregator === ethers.ZeroAddress) {
       return {
         exists: false,
         age: null,
-        aggregator: ethers.ZeroAddress,
+        aggregator,
         answer: 0n,
         isValid: false,
       }
+    }
+
+    const [roundId, answer, , updatedAt, answeredInRound] = await feedRegistry.latestRoundData(
+      base,
+      quote
+    )
+    const isValid = answeredInRound >= roundId && answer > 0n
+    const latestBlock = await ethers.provider.getBlock('latest')
+    const age = isValid ? latestBlock!.timestamp - Number(updatedAt) : null
+
+    return {
+      exists: true,
+      age,
+      aggregator,
+      answer: BigInt(answer),
+      isValid,
     }
   }
 

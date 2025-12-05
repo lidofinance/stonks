@@ -1,7 +1,7 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
-import { OracleRouter, OracleRouter__factory } from '../../typechain-types'
+import { OracleRouter__factory } from '../../typechain-types'
 import {
   getTestFeedRegistryStub,
   getAllTestTokens,
@@ -77,7 +77,7 @@ describe('OracleRouter Decimal Fuzzing', function () {
             priceValue: fc.bigInt(4000000n, 1000000000n),
           }),
           async (config) => {
-            const { routerDecimals, feedDecimals, tokenDecimals, priceValue } = config
+            const { routerDecimals, feedDecimals, priceValue } = config
 
             const testSnapshot = await takeSnapshot()
             const adminSigner = await getAdminSigner()

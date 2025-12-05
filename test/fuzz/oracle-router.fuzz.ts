@@ -202,7 +202,6 @@ describe('OracleRouter - Fuzz Tests', () => {
   describe('ETH bridge and staleness', () => {
     it('uses ETH/USD bridge and respects staleness cap', async () => {
       const local = await takeSnapshot()
-      const stub = await getTestFeedRegistryStub(feedConfig)
       const signer = await ethers.getImpersonatedSigner(contracts.ADMIN)
 
       // Configure bridge and set ETH-quoted feeds where available

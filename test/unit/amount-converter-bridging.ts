@@ -1,14 +1,13 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
-import { parseEther, parseUnits } from 'ethers'
+import { parseEther } from 'ethers'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
-import type { AmountConverter, OracleRouter } from '../../typechain-types'
+import type { OracleRouter } from '../../typechain-types'
 import { getContracts } from '../../utils/contracts'
 import {
   getAllTestTokens,
   refreshTestFeedData,
   resetTestFeedRegistryStub,
-  refreshFeedData,
   getTestFeedRegistryStub,
 } from '../../utils/test-feed-registry'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'

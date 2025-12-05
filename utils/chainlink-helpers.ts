@@ -63,7 +63,7 @@ export const getExpectedOut = async (
   }
 }
 
-export async function fetchFeedData(token: string, quote: string): Promise<FeedData> {
+export const fetchFeedData = async (token: string, quote: string): Promise<FeedData> => {
   try {
     const registry = await ethers.getContractAt(
       'IFeedRegistry',
@@ -84,8 +84,10 @@ export async function fetchFeedData(token: string, quote: string): Promise<FeedD
       }
     }
 
-    const [roundId, answer, startedAt, updatedAt, answeredInRound] =
-      await registry.latestRoundData(token, quote)
+    const [roundId, answer, startedAt, updatedAt, answeredInRound] = await registry.latestRoundData(
+      token,
+      quote
+    )
     const decimals = await registry.decimals(token, quote)
 
     return {
@@ -112,9 +114,9 @@ export async function fetchFeedData(token: string, quote: string): Promise<FeedD
   }
 }
 
-export async function fetchMultipleFeedData(
+export const fetchMultipleFeedData = async (
   pairs: Array<{ token: string; quote: string }>
-): Promise<Map<string, FeedData>> {
+): Promise<Map<string, FeedData>> => {
   const results = new Map<string, FeedData>()
 
   for (const { token, quote } of pairs) {
@@ -126,11 +128,11 @@ export async function fetchMultipleFeedData(
   return results
 }
 
-export async function createStubWithFeedData(
+export const createStubWithFeedData = async (
   tokens: string[],
   quotes: string[] = [contracts.CHAINLINK_USD_QUOTE, contracts.CHAINLINK_ETH_QUOTE],
   includeEthUsdBridge: boolean = true
-): Promise<ChainlinkFeedRegistryStub> {
+): Promise<ChainlinkFeedRegistryStub> => {
   const [deployer] = await ethers.getSigners()
 
   const stubFactory = await ethers.getContractFactory('ChainlinkFeedRegistryStub')
@@ -175,17 +177,17 @@ export async function createStubWithFeedData(
   return stub
 }
 
-export async function getCurrentTimestamp(): Promise<bigint> {
+export const getCurrentTimestamp = async (): Promise<bigint> => {
   const block = await ethers.provider.getBlock('latest')
   if (!block) throw new Error('Failed to get latest block')
   return BigInt(block.timestamp)
 }
 
-export async function isFeedFresh(
+export const isFeedFresh = async (
   token: string,
   quote: string,
   maxAgeSeconds: number = 86400
-): Promise<boolean> {
+): Promise<boolean> => {
   const feedData = await fetchFeedData(token, quote)
   if (!feedData.exists) return false
 
@@ -194,7 +196,11 @@ export async function isFeedFresh(
   return age <= BigInt(maxAgeSeconds)
 }
 
-export function formatFeedData(data: FeedData, tokenSymbol?: string, quoteSymbol?: string): string {
+export const formatFeedData = (
+  data: FeedData,
+  tokenSymbol?: string,
+  quoteSymbol?: string
+): string => {
   if (!data.exists) {
     return `Feed ${tokenSymbol || 'unknown'}/${quoteSymbol || 'unknown'}: NOT FOUND`
   }
@@ -203,5 +209,7 @@ export function formatFeedData(data: FeedData, tokenSymbol?: string, quoteSymbol
   const ageSeconds = Date.now() / 1000 - Number(data.updatedAt)
   const ageHours = (ageSeconds / 3600).toFixed(1)
 
-  return `Feed ${tokenSymbol || 'unknown'}/${quoteSymbol || 'unknown'}: $${price.toFixed(2)} (${data.decimals} decimals, ${ageHours}h old, aggregator: ${data.aggregator.slice(0, 10)}...)`
+  return `Feed ${tokenSymbol || 'unknown'}/${quoteSymbol || 'unknown'}: $${price.toFixed(2)} (${
+    data.decimals
+  } decimals, ${ageHours}h old, aggregator: ${data.aggregator.slice(0, 10)}...)`
 }

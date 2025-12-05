@@ -1,13 +1,23 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { parseEther, Signer } from 'ethers'
-import { setBalance, impersonateAccount, takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
+import {
+  setBalance,
+  impersonateAccount,
+  takeSnapshot,
+  SnapshotRestorer,
+} from '@nomicfoundation/hardhat-network-helpers'
 import { setup, TokenPair } from './setup'
 import { getContracts } from '../../utils/contracts'
 import { IERC20, Stonks, Order } from '../../typechain-types'
 import { MAGIC_VALUE } from '../../utils/gpv2-helpers'
 import { getPlaceOrderData } from '../../utils/get-events'
-import { simulateRebase, simulatePartialFill, REBASE_TOLERANCE, MULTI_REBASE_TOLERANCE } from '../helpers/rebase-helpers'
+import {
+  simulateRebase,
+  simulatePartialFill,
+  REBASE_TOLERANCE,
+  MULTI_REBASE_TOLERANCE,
+} from '../helpers/rebase-helpers'
 
 const contracts = getContracts()
 
@@ -20,27 +30,22 @@ const stethLdoPair: TokenPair = {
   allowPartialFill: true,
 }
 
-
 describe('Partial fills with rebasable tokens', function () {
   let snapshot: SnapshotRestorer
-  let value: bigint
   let stonks: Stonks
   let manager: Signer
   let tokenFrom: IERC20
-  let tokenTo: IERC20
   let order: Order
   let orderAddress: string
 
-  this.beforeAll(async () => {
+  before(async function () {
     snapshot = await takeSnapshot()
 
     const result = await setup(stethLdoPair)
     stonks = result.stonks
-    value = result.value
     manager = result.manager
 
     tokenFrom = await ethers.getContractAt('IERC20', await stonks.TOKEN_FROM())
-    tokenTo = await ethers.getContractAt('IERC20', await stonks.TOKEN_TO())
 
     await setBalance(await manager.getAddress(), parseEther('100'))
     await setBalance(contracts.AGENT, parseEther('100'))
@@ -48,16 +53,16 @@ describe('Partial fills with rebasable tokens', function () {
     expect(await stonks.ALLOW_PARTIAL_FILL()).to.equal(true)
   })
 
-  this.afterAll(async () => {
+  after(async function () {
     await snapshot.restore()
   })
 
-  context('Positive rebase after partial fill', () => {
+  context('Positive rebase after partial fill', function () {
     let testSnapshot: SnapshotRestorer
     let initialSellAmount: bigint
     let initialBuyAmount: bigint
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
 
       const fundAmount = parseEther('1000')
@@ -82,11 +87,11 @@ describe('Partial fills with rebasable tokens', function () {
       expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should enforce price tolerance after 50% fill + 5 stETH positive rebase', async () => {
+    it('should enforce price tolerance after 50% fill + 5 stETH positive rebase', async function () {
       const { soldAmount, remainingBalance: balanceAfterFill } = await simulatePartialFill(
         tokenFrom,
         orderAddress,
@@ -115,7 +120,7 @@ describe('Partial fills with rebasable tokens', function () {
       expect(buyAmount).to.equal(initialBuyAmount)
     })
 
-    it('should maintain correct minBuyAmount calculation after positive rebase', async () => {
+    it('should maintain correct minBuyAmount calculation after positive rebase', async function () {
       await simulatePartialFill(tokenFrom, orderAddress, 50)
 
       const rebaseAmount = parseEther('5')
@@ -126,16 +131,15 @@ describe('Partial fills with rebasable tokens', function () {
       expect(sellAmount).to.equal(initialSellAmount)
 
       expect(buyAmount).to.equal(initialBuyAmount)
-
     })
   })
 
-  context('Negative rebase after partial fill', () => {
+  context('Negative rebase after partial fill', function () {
     let testSnapshot: SnapshotRestorer
     let initialSellAmount: bigint
     let initialBuyAmount: bigint
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
 
       const fundAmount = parseEther('1000')
@@ -157,11 +161,11 @@ describe('Partial fills with rebasable tokens', function () {
       initialBuyAmount = buyAmount
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should enforce price tolerance after 50% fill + 5 stETH negative rebase', async () => {
+    it('should enforce price tolerance after 50% fill + 5 stETH negative rebase', async function () {
       const { remainingBalance: balanceAfterFill } = await simulatePartialFill(
         tokenFrom,
         orderAddress,
@@ -187,7 +191,7 @@ describe('Partial fills with rebasable tokens', function () {
       expect(buyAmount).to.equal(initialBuyAmount)
     })
 
-    it('should handle negative rebase gracefully with partial fills enabled', async () => {
+    it('should handle negative rebase gracefully with partial fills enabled', async function () {
       const { remainingBalance: balanceAfterFill } = await simulatePartialFill(
         tokenFrom,
         orderAddress,
@@ -210,10 +214,10 @@ describe('Partial fills with rebasable tokens', function () {
     })
   })
 
-  context('Multiple partial fills with intermittent rebases', () => {
+  context('Multiple partial fills with intermittent rebases', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
 
       const fundAmount = parseEther('1000')
@@ -231,18 +235,23 @@ describe('Partial fills with rebasable tokens', function () {
       orderAddress = orderData.address
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should handle: fill 30% → rebase +2% → fill 20% → rebase -1%', async () => {
+    it('should handle: fill 30% → rebase +2% → fill 20% → rebase -1%', async function () {
       const initialBalance = await tokenFrom.balanceOf(orderAddress)
 
       const { remainingBalance: balance1 } = await simulatePartialFill(tokenFrom, orderAddress, 30)
       expect(balance1).to.be.closeTo((initialBalance * 70n) / 100n, REBASE_TOLERANCE)
 
       const rebase1 = (balance1 * 2n) / 100n
-      const { balanceAfter: balance2 } = await simulateRebase(tokenFrom, orderAddress, rebase1, true)
+      const { balanceAfter: balance2 } = await simulateRebase(
+        tokenFrom,
+        orderAddress,
+        rebase1,
+        true
+      )
       expect(balance2).to.be.closeTo(balance1 + rebase1, REBASE_TOLERANCE)
 
       let [currentHash] = await order.getOrderDetails()
@@ -259,14 +268,11 @@ describe('Partial fills with rebasable tokens', function () {
         false
       )
       expect(balance4).to.be.closeTo(balance3 - rebase2, REBASE_TOLERANCE)
-
       ;[currentHash] = await order.getOrderDetails()
       expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
 
-      const expectedFinal =
-        (((((initialBalance * 70n) / 100n) * 102n) / 100n) * 80n * 99n) / 10000n
+      const expectedFinal = (((((initialBalance * 70n) / 100n) * 102n) / 100n) * 80n * 99n) / 10000n
       expect(balance4).to.be.closeTo(expectedFinal, MULTI_REBASE_TOLERANCE)
     })
   })
 })
-

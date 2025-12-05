@@ -7,16 +7,12 @@ import {
   time,
   mine,
 } from '@nomicfoundation/hardhat-network-helpers'
-import { Order, Stonks, AmountConverterTest, OracleRouter, IERC20 } from '../../typechain-types'
+import { Order, Stonks, AmountConverterTest, OracleRouter } from '../../typechain-types'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
-import {
-  getAllTestTokens,
-  refreshTestFeedData,
-  resetTestFeedRegistryStub,
-} from '../../utils/test-feed-registry'
+import { refreshTestFeedData, resetTestFeedRegistryStub } from '../../utils/test-feed-registry'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { getContracts } from '../../utils/contracts'
-import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
+import { MAGIC_VALUE } from '../../utils/gpv2-helpers'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
 import { QuoteDenomination } from '../../utils/oracle-router'
 import { getPlaceOrderData } from '../../utils/get-events'
@@ -35,9 +31,8 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
   let snapshot: SnapshotRestorer
   let orderPartial: Order
   let orderNoPartial: Order
-  let orderHashPartial: string
 
-  this.beforeAll(async function () {
+  before(async function () {
     snapshot = await takeSnapshot()
     manager = (await ethers.getSigners())[0]
 
@@ -143,7 +138,6 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
 
     const decodedOrderTxPartial = await getPlaceOrderData(placeOrderTxReceiptPartial)
     orderPartial = await ethers.getContractAt('Order', decodedOrderTxPartial.address, manager)
-    orderHashPartial = await formOrderHashFromTxReceipt(placeOrderTxReceiptPartial)
 
     const expectedBuyAmountNoPartial =
       await stonksNoPartialFill.estimateTradeOutputFromCurrentBalance()
@@ -156,6 +150,16 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
   })
 
   describe('Partial Fills Configuration', function () {
+    let configSnapshot: SnapshotRestorer
+
+    beforeEach(async function () {
+      configSnapshot = await takeSnapshot()
+    })
+
+    afterEach(async function () {
+      await configSnapshot.restore()
+    })
+
     it('should have correct ALLOW_PARTIAL_FILL value for partial fill enabled', async function () {
       expect(await stonksPartialFill.ALLOW_PARTIAL_FILL()).to.equal(true)
     })
@@ -166,20 +170,51 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
 
     it('should set partiallyFillable correctly in order when partial fills enabled', async function () {
       // Note: partiallyFillable is not directly accessible, but we can verify behavior
-      // by checking that orders with partial fills don't revert on insufficient balance
+      // by draining balances and observing how each order reacts.
       const [tokenFrom] = await stonksPartialFill.getOrderParameters()
-      const orderDetails = await orderPartial.getOrderDetails()
-      const sellAmount = orderDetails[3]
+      const token = await ethers.getContractAt('IERC20', tokenFrom)
+      const orderDetailsPartial = await orderPartial.getOrderDetails()
+      const orderDetailsNoPartial = await orderNoPartial.getOrderDetails()
+      const sellAmountPartial = orderDetailsPartial[3]
+      const sellAmountNoPartial = orderDetailsNoPartial[3]
+      const orderPartialAddress = await orderPartial.getAddress()
+      const orderNoPartialAddress = await orderNoPartial.getAddress()
+      const [, recipient] = await ethers.getSigners()
 
-      // Verify order can be validated initially
-      expect(await orderPartial.isValidSignature(orderHashPartial, '0x')).to.equal(MAGIC_VALUE)
+      const drainPartial = sellAmountPartial / 10n === 0n ? 1n : sellAmountPartial / 10n
+      const impersonateAndDrain = async (address: string, amount: bigint) => {
+        await ethers.provider.send('hardhat_impersonateAccount', [address])
+        await ethers.provider.send('hardhat_setBalance', [address, '0x1000000000000000000'])
+        const signer = await ethers.getSigner(address)
+        await token.connect(signer).transfer(await recipient.getAddress(), amount)
+        await ethers.provider.send('hardhat_stopImpersonatingAccount', [address])
+      }
+
+      // Drain part of the balance on the partial-fill order: it should remain valid.
+      await impersonateAndDrain(orderPartialAddress, drainPartial)
+      const reducedPartialBalance = await token.balanceOf(orderPartialAddress)
+      expect(reducedPartialBalance).to.be.closeTo(sellAmountPartial - drainPartial, 2n)
+
+      const [currentHashPartial] = await orderPartial.getOrderDetails()
+      expect(await orderPartial.isValidSignature(currentHashPartial, '0x')).to.equal(MAGIC_VALUE)
+
+      // Drain the same proportion from the non-partial order: it should now revert.
+      const drainNoPartial = sellAmountNoPartial / 10n === 0n ? 1n : sellAmountNoPartial / 10n
+      await impersonateAndDrain(orderNoPartialAddress, drainNoPartial)
+      const reducedNoPartialBalance = await token.balanceOf(orderNoPartialAddress)
+      expect(reducedNoPartialBalance).to.be.closeTo(sellAmountNoPartial - drainNoPartial, 2n)
+
+      const [currentHashNoPartial] = await orderNoPartial.getOrderDetails()
+      await expect(orderNoPartial.isValidSignature(currentHashNoPartial, '0x'))
+        .to.be.revertedWithCustomError(orderNoPartial, 'InsufficientSellBalance')
+        .withArgs(sellAmountNoPartial, reducedNoPartialBalance)
     })
   })
 
   describe('Negative Rebase Simulation', function () {
     let localSnapshot: SnapshotRestorer
 
-    this.beforeEach(async function () {
+    beforeEach(async function () {
       localSnapshot = await takeSnapshot()
     })
 
@@ -224,8 +259,8 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
       // stETH uses shares-based accounting, so transfers can introduce up to 1 wei rounding
       // Integer division (initialBalance / 10n) also truncates, contributing to small differences
       const newBalance = await token.balanceOf(orderAddress)
-      expect(newBalance).to.be.closeTo(initialBalance - rebaseAmount, 2n)
-      expect(newBalance).to.be.lessThan(sellAmount)
+      const expectedBalance = sellAmount - rebaseAmount
+      expect(newBalance).to.be.closeTo(expectedBalance, 2n)
 
       // Order should revert with InsufficientSellBalance
       const [currentHash] = await orderNoPartial.getOrderDetails()
@@ -274,7 +309,7 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
       expect(await orderPartial.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
 
-    this.afterEach(async function () {
+    afterEach(async function () {
       await localSnapshot.restore()
     })
   })
@@ -298,11 +333,11 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
       await expect(orderPartial.recoverTokenFrom()).to.not.be.reverted
 
       const balanceAfter = await token.balanceOf(orderAddress)
-      expect(balanceAfter).to.be.lessThan(initialBalance - rebaseAmount)
+      expect(balanceAfter).to.be.closeTo(0n, 2n)
     })
   })
 
-  this.afterAll(async function () {
+  after(async function () {
     await snapshot.restore()
     resetTestOracleRouter()
     resetTestFeedRegistryStub()

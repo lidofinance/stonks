@@ -13,7 +13,7 @@ describe('OracleRouter invariants', function () {
   let snapshot: SnapshotRestorer
   let adminSigner: any
 
-  this.beforeAll(async () => {
+  before(async function () {
     snapshot = await takeSnapshot()
 
     adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
@@ -42,30 +42,30 @@ describe('OracleRouter invariants', function () {
     await factory.waitForDeployment()
   })
 
-  this.afterAll(async () => {
+  after(async function () {
     await snapshot.restore()
   })
 
-  async function deployConverter(
+  const deployConverter = async (
     tokensToSell: string[],
     tokensToBuy: string[],
     useEthAnchor: boolean
-  ): Promise<AmountConverter> {
+  ): Promise<AmountConverter> => {
     const tx = await factory.deployAmountConverter(tokensToSell, tokensToBuy, useEthAnchor)
     const receipt = await tx.wait()
-    const event = receipt?.logs.find((log: any) => {
-      try {
-        return factory.interface.parseLog(log)?.name === 'AmountConverterDeployed'
-      } catch {
-        return false
-      }
-    })
-    const converterAddress = factory.interface.parseLog(event as any)?.args[0]
+    const factoryAddress = (await factory.getAddress()).toLowerCase()
+    const eventLog = receipt?.logs.find((log: any) => log.address?.toLowerCase() === factoryAddress)
+    if (!eventLog) {
+      throw new Error('AmountConverterDeployed event not found')
+    }
+    // Fix type issue caused by readonly topics[]
+    const { topics, data } = eventLog
+    const converterAddress = factory.interface.parseLog({ topics: [...topics], data })?.args[0]
     return ethers.getContractAt('AmountConverter', converterAddress)
   }
 
   describe('Price query invariants', function () {
-    it('should return same price for same token pair', async () => {
+    it('should return same price for same token pair', async function () {
       const [price1] = await router.getPricesAndDecimals(
         contracts.STETH,
         contracts.STETH,
@@ -80,7 +80,7 @@ describe('OracleRouter invariants', function () {
       expect(price1).to.equal(price2)
     })
 
-    it('should satisfy transitivity: STETH->DAI = (STETH->USD) / (DAI->USD)', async () => {
+    it('should satisfy transitivity: STETH->DAI = (STETH->USD) / (DAI->USD)', async function () {
       const [stethUsdPrice] = await router.getPricesAndDecimals(
         contracts.STETH,
         contracts.STETH,
@@ -105,13 +105,13 @@ describe('OracleRouter invariants', function () {
       expect(stethDaiCalculated).to.be.closeTo(stethDaiViaPair, 1n)
     })
 
-    it('should return consistent decimals for same token', async () => {
-      const [, , decimalsFrom1, decimalsTo1] = await router.getPricesAndDecimals(
+    it('should return consistent decimals for same token', async function () {
+      const [, , decimalsFrom1] = await router.getPricesAndDecimals(
         contracts.STETH,
         contracts.DAI,
         QuoteDenomination.USD
       )
-      const [, , decimalsFrom2, decimalsTo2] = await router.getPricesAndDecimals(
+      const [, , decimalsFrom2] = await router.getPricesAndDecimals(
         contracts.STETH,
         contracts.USDC,
         QuoteDenomination.USD
@@ -125,11 +125,11 @@ describe('OracleRouter invariants', function () {
   describe('Amount conversion invariants', function () {
     let converter: AmountConverter
 
-    this.beforeAll(async () => {
+    before(async function () {
       converter = await deployConverter([contracts.STETH], [contracts.DAI, contracts.USDC], false)
     })
 
-    it('should be proportional: convert(2x) = 2 * convert(x)', async () => {
+    it('should be proportional: convert(2x) = 2 * convert(x)', async function () {
       const amount1 = ethers.parseEther('1')
       const amount2 = ethers.parseEther('2')
 
@@ -139,7 +139,7 @@ describe('OracleRouter invariants', function () {
       expect(result2).to.be.closeTo(result1 * 2n, 1n)
     })
 
-    it('should be deterministic: multiple calls return same result', async () => {
+    it('should be deterministic: multiple calls return same result', async function () {
       const amount = ethers.parseEther('1')
 
       const result1 = await converter.getExpectedOut(contracts.STETH, contracts.DAI, amount)
@@ -150,7 +150,7 @@ describe('OracleRouter invariants', function () {
       expect(result2).to.equal(result3)
     })
 
-    it('should maintain precision: convert(tiny amount) != 0', async () => {
+    it('should maintain precision: convert(tiny amount) != 0', async function () {
       const tinyAmount = 1000n
 
       const result = await converter.getExpectedOut(contracts.STETH, contracts.DAI, tinyAmount)
@@ -158,7 +158,7 @@ describe('OracleRouter invariants', function () {
       expect(result).to.be.closeTo(0n, tinyAmount * 10000n)
     })
 
-    it('should handle decimal differences correctly: STETH (18 dec) -> USDC (6 dec)', async () => {
+    it('should handle decimal differences correctly: STETH (18 dec) -> USDC (6 dec)', async function () {
       const amount = ethers.parseEther('1')
 
       const resultDai = await converter.getExpectedOut(contracts.STETH, contracts.DAI, amount)
@@ -187,14 +187,14 @@ describe('OracleRouter invariants', function () {
   })
 
   describe('Negative cases that should always fail', function () {
-    it('should revert for unconfigured tokens', async () => {
+    it('should revert for unconfigured tokens', async function () {
       const converter = await deployConverter([contracts.STETH], [contracts.DAI], false)
 
       await expect(converter.getExpectedOut(contracts.LDO, contracts.DAI, ethers.parseEther('1')))
         .to.be.reverted
     })
 
-    it('should revert for zero amount conversion', async () => {
+    it('should revert for zero amount conversion', async function () {
       const converter = await deployConverter([contracts.STETH], [contracts.DAI], false)
 
       await expect(converter.getExpectedOut(contracts.STETH, contracts.DAI, 0n)).to.be.reverted

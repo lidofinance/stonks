@@ -31,7 +31,7 @@ describe('Order - Emergency Controls & Signature Pause', function () {
   let admin: Signer
   let emergencyOperator: Signer
 
-  this.beforeAll(async function () {
+  before(async function () {
     snapshot = await takeSnapshot()
     const signers = await ethers.getSigners()
     manager = signers[0]
@@ -121,7 +121,6 @@ describe('Order - Emergency Controls & Signature Pause', function () {
   it('per-order emergencyCancelAndReturn returns funds, zeroes allowance, and cancels validation', async function () {
     const tokenFrom = await stonks.TOKEN_FROM()
     const token = await ethers.getContractAt('IERC20', tokenFrom)
-    const balBefore = await token.balanceOf(order)
 
     // perform cancellation
     await order.emergencyCancelAndReturn()
@@ -204,7 +203,7 @@ describe('Order - Emergency Controls & Signature Pause', function () {
       .withArgs(await stranger.getAddress())
   })
 
-  this.afterAll(async function () {
+  after(async function () {
     await snapshot.restore()
 
     resetTestOracleRouter()

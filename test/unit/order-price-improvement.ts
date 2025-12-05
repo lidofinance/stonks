@@ -1,12 +1,7 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { Signer } from 'ethers'
-import {
-  takeSnapshot,
-  SnapshotRestorer,
-  time,
-  mine,
-} from '@nomicfoundation/hardhat-network-helpers'
+import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import { Order, Stonks, AmountConverterTest, OracleRouter } from '../../typechain-types'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
 import {
@@ -23,6 +18,7 @@ import { MAX_BASIS_POINTS } from '../../utils/gpv2-helpers'
 
 const PRICE_TOLERANCE_IN_BP = 1000
 const MARGIN_IN_BPS = 500
+const PRICE_SCALE = 10n ** 18n
 const contracts = getContracts()
 
 describe('Order - Price Improvement & Partial Fills', async function () {
@@ -35,10 +31,10 @@ describe('Order - Price Improvement & Partial Fills', async function () {
   let orderHash: string
   let expectedBuyAmount: bigint
 
-  async function deployStonksWithConfig(
+  const deployStonksWithConfig = async (
     maxImprovementInBps: number | bigint,
     allowPartialFill: boolean
-  ): Promise<{ stonks: Stonks; order: Order; orderHash: string }> {
+  ): Promise<{ stonks: Stonks; order: Order; orderHash: string }> => {
     const amountConverterTestFactory = await ethers.getContractFactory('AmountConverterTest')
 
     const oracleRouterLocal = await getTestOracleRouter({
@@ -107,7 +103,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
     }
   }
 
-  this.beforeAll(async function () {
+  before(async function () {
     snapshot = await takeSnapshot()
     manager = (await ethers.getSigners())[0]
 
@@ -205,7 +201,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
   describe('isValidSignature - Price Improvement Paths', function () {
     let localSnapshot: SnapshotRestorer
 
-    this.beforeEach(async function () {
+    beforeEach(async function () {
       localSnapshot = await takeSnapshot()
     })
 
@@ -267,8 +263,6 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       )
       await amountConverterTestLocal.waitForDeployment()
 
-      // Get factory contracts
-      const stonksFactoryFactory = await ethers.getContractFactory('StonksFactory')
       const orderFactory = await ethers.getContractFactory('Order')
 
       // Deploy Order sample
@@ -392,7 +386,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         .withArgs(buyAmount, currentEstimatedBuyAmount)
     })
 
-    this.afterEach(async function () {
+    afterEach(async function () {
       await localSnapshot.restore()
     })
   })
@@ -400,7 +394,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
   describe('isValidSignature - Price Shortfall Paths', function () {
     let localSnapshot: SnapshotRestorer
 
-    this.beforeEach(async function () {
+    beforeEach(async function () {
       localSnapshot = await takeSnapshot()
     })
 
@@ -498,7 +492,6 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         decodedOrderTx.address,
         manager
       )
-      const orderHashLocal = await formOrderHashFromTxReceipt(placeOrderTxReceipt)
 
       // Decrease price by even 1 bps
       await amountConverterTestLocal.multiplyAnswer(9999)
@@ -515,7 +508,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         .withArgs(buyAmount, currentEstimatedBuyAmount)
     })
 
-    this.afterEach(async function () {
+    afterEach(async function () {
       await localSnapshot.restore()
     })
   })
@@ -523,7 +516,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
   describe('isValidSignature - Insufficient Balance Check', function () {
     let localSnapshot: SnapshotRestorer
 
-    this.beforeEach(async function () {
+    beforeEach(async function () {
       localSnapshot = await takeSnapshot()
     })
 
@@ -557,9 +550,9 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       const [, recipient] = await ethers.getSigners()
       await token.connect(orderSigner).transfer(await recipient.getAddress(), amountToTransfer)
 
-      // Verify balance is now less than sellAmount
       const newBalance = await token.balanceOf(orderAddress)
-      expect(newBalance).to.be.lessThan(sellAmount)
+      const expectedRemaining = currentBalance - amountToTransfer
+      expect(newBalance).to.be.closeTo(expectedRemaining, 5n)
 
       const [currentHash] = await orderNoPartial.getOrderDetails()
 
@@ -573,7 +566,6 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
       const stonksContract = await ethers.getContractAt('Stonks', await orderPartial.stonks())
       const [tokenFrom] = await stonksContract.getOrderParameters()
-      const orderDetails = await orderPartial.getOrderDetails()
       const orderAddress = await orderPartial.getAddress()
 
       // Simulate negative rebase
@@ -632,7 +624,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       expect(await orderNoPartial.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
 
-    this.afterEach(async function () {
+    afterEach(async function () {
       await localSnapshot.restore()
     })
   })
@@ -640,7 +632,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
   describe('isValidSignature - Edge Cases', function () {
     let localSnapshot: SnapshotRestorer
 
-    this.beforeEach(async function () {
+    beforeEach(async function () {
       localSnapshot = await takeSnapshot()
     })
 
@@ -686,7 +678,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         .withArgs(minAcceptableBuyAmount, currentEstimatedBuyAmount)
     })
 
-    this.afterEach(async function () {
+    afterEach(async function () {
       await localSnapshot.restore()
     })
   })
@@ -694,7 +686,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
   describe('isValidSignature - Fast Paths & Edge Cases', function () {
     let localSnapshot: SnapshotRestorer
 
-    this.beforeEach(async function () {
+    beforeEach(async function () {
       localSnapshot = await takeSnapshot()
     })
 
@@ -727,26 +719,6 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       }
     })
 
-    it('should accept via price equality fast path when amounts differ by rounding', async function () {
-      // Craft a scenario where prices round to the same integer but amounts differ
-      const orderDetails = await subject.getOrderDetails()
-      const sellAmount = orderDetails[3]
-      const buyAmount = orderDetails[4]
-
-      // Calculate original price ratio
-      const PRICE_SCALE = 1e18
-      const originalPriceRatio = (buyAmount * BigInt(PRICE_SCALE)) / sellAmount
-
-      // Find a multiplier that gives same price ratio but different amounts
-      // We need: (newBuyAmount * PRICE_SCALE) / sellAmount == originalPriceRatio
-      // But newBuyAmount != buyAmount
-      // This can happen with small rounding differences
-      const [currentHash] = await subject.getOrderDetails()
-
-      // Test with unchanged prices - if they're equal, should work
-      expect(await subject.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
-    })
-
     it('should revert with ZeroQuotableAmount when estimateTradeOutput returns zero', async function () {
       // To trigger ZeroQuotableAmount, we need basisSellAmount > 0 but estimateTradeOutput returns 0
       // This happens after margin calculation: output * (10000 - marginBps) / 10000 rounds to 0
@@ -757,9 +729,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       // Use partial fills to test with a small available balance
       const { order: orderPartial, stonks: stonksPartial } = await deployStonksWithConfig(100, true)
 
-      const [tokenFrom] = await stonksPartial.getOrderParameters()
-      const orderDetails = await orderPartial.getOrderDetails()
-      const sellAmount = orderDetails[3]
+      const [tokenFrom, tokenTo] = await stonksPartial.getOrderParameters()
       const orderAddress = await orderPartial.getAddress()
 
       const token = await ethers.getContractAt('IERC20', tokenFrom)
@@ -813,7 +783,15 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         // If it doesn't return 0, the test documents that ZeroQuotableAmount
         // can occur in edge cases with very small amounts
         // The contract correctly guards against this case
-        expect(estimatedOutput).to.be.greaterThan(0n)
+        const rawOutput = await amountConverterTest.getExpectedOut(
+          tokenFrom,
+          tokenTo,
+          actualBalance
+        )
+        const marginBps = await stonksPartial.MARGIN_IN_BASIS_POINTS()
+        const expectedPositive = (rawOutput * (MAX_BASIS_POINTS - marginBps)) / MAX_BASIS_POINTS
+        expect(estimatedOutput).to.equal(expectedPositive)
+        expect(expectedPositive).to.not.equal(0n)
       }
     })
 
@@ -844,7 +822,8 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         })
 
         const newBalance = await token.balanceOf(orderAddress)
-        expect(newBalance).to.be.greaterThan(sellAmount)
+        const expectedBalance = currentBalance + sellAmount
+        expect(newBalance).to.be.closeTo(expectedBalance, 2n)
 
         // Should still validate correctly (using sellAmount as basis, not newBalance)
         const [currentHash] = await orderPartial.getOrderDetails()
@@ -856,7 +835,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
     it('should use pro-rated baselineBuyAmount for partial fills with availableBalance < sellAmount', async function () {
       const { order: orderPartial, stonks: stonksPartial } = await deployStonksWithConfig(100, true)
 
-      const [tokenFrom] = await stonksPartial.getOrderParameters()
+      const [tokenFrom, tokenTo] = await stonksPartial.getOrderParameters()
       const orderDetails = await orderPartial.getOrderDetails()
       const sellAmount = orderDetails[3]
       const buyAmount = orderDetails[4]
@@ -874,26 +853,51 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       await token.connect(orderSigner).transfer(await recipient.getAddress(), rebaseAmount)
 
       const newBalance = await token.balanceOf(orderAddress)
-      expect(newBalance).to.be.lessThan(sellAmount)
+      const expectedBalance = initialBalance - rebaseAmount
+      expect(newBalance).to.be.closeTo(expectedBalance, 2n)
 
       // Calculate expected pro-rated baselineBuyAmount
       const basisSellAmount = newBalance
       const expectedBaselineBuyAmount = (buyAmount * basisSellAmount) / sellAmount
+
+      const priceToleranceBps = BigInt(PRICE_TOLERANCE_IN_BP)
+      const maxToleratedShortfall =
+        (expectedBaselineBuyAmount * priceToleranceBps) / MAX_BASIS_POINTS
+      const minAcceptableBuyAmount = expectedBaselineBuyAmount - maxToleratedShortfall
+
+      // Push the quote well below tolerance so the revert arguments reveal which baseline was used.
+      const amountConverterAddress = await stonksPartial.AMOUNT_CONVERTER()
+      const amountConverterPartial = await ethers.getContractAt(
+        'AmountConverterTest',
+        amountConverterAddress
+      )
+      await amountConverterPartial.multiplyAnswer(8000)
+
       const currentEstimatedBuyAmount = await stonksPartial.estimateTradeOutput(basisSellAmount)
+      const rawOutput = await amountConverterPartial.getExpectedOut(
+        tokenFrom,
+        tokenTo,
+        basisSellAmount
+      )
+      const marginBps = await stonksPartial.MARGIN_IN_BASIS_POINTS()
+      const marginDiff = MAX_BASIS_POINTS - marginBps
+      const expectedCurrentBuyAmount = (rawOutput * marginDiff) / MAX_BASIS_POINTS
+      expect(currentEstimatedBuyAmount).to.equal(expectedCurrentBuyAmount)
 
-      // For partial fills, price validation should use pro-rated baselineBuyAmount
+      const expectedShortfall = expectedBaselineBuyAmount - expectedCurrentBuyAmount
+      const actualShortfall = expectedBaselineBuyAmount - currentEstimatedBuyAmount
+      expect(actualShortfall).to.equal(expectedShortfall)
+
       const [currentHash] = await orderPartial.getOrderDetails()
-      const result = await orderPartial.isValidSignature(currentHash, '0x')
-      expect(result).to.equal(MAGIC_VALUE)
-
-      // Verify the prices are being compared correctly (pro-rated)
-      // If improvement/shortfall calculation uses baselineBuyAmount, it should work
+      await expect(orderPartial.isValidSignature(currentHash, '0x'))
+        .to.be.revertedWithCustomError(orderPartial, 'PriceShortfallExceedsTolerance')
+        .withArgs(minAcceptableBuyAmount, currentEstimatedBuyAmount)
     })
 
     it('should revert with InsufficientSellBalance when basisSellAmount is zero (partial fills)', async function () {
       const { order: orderPartial, stonks: stonksPartial } = await deployStonksWithConfig(100, true)
 
-      const [tokenFrom] = await stonksPartial.getOrderParameters()
+      const [tokenFrom, tokenTo] = await stonksPartial.getOrderParameters()
       const orderAddress = await orderPartial.getAddress()
 
       const token = await ethers.getContractAt('IERC20', tokenFrom)
@@ -925,7 +929,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
           .withArgs(1n, 0n)
       } else {
         // If stETH rounding leaves 1-2 wei, test that very small balances are handled correctly
-        expect(finalBalance).to.be.lessThan(10n) // Should be very small due to rounding
+        expect(finalBalance).to.be.closeTo(0n, 5n) // Tiny residual balance due to rounding
         // The contract should handle this correctly - either revert with InsufficientSellBalance
         // or with ZeroQuotableAmount if estimateTradeOutput returns 0
         const estimatedOutput = await stonksPartial.estimateTradeOutput(finalBalance)
@@ -937,7 +941,16 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         } else {
           // Very small balance might still validate if estimateTradeOutput returns non-zero
           // This is acceptable behavior - the contract handles tiny amounts correctly
-          expect(estimatedOutput).to.be.greaterThan(0n)
+          const amountConverterAddress = await stonksPartial.AMOUNT_CONVERTER()
+          const amountConverter = await ethers.getContractAt(
+            'AmountConverterTest',
+            amountConverterAddress
+          )
+          const rawOutput = await amountConverter.getExpectedOut(tokenFrom, tokenTo, finalBalance)
+          const marginBps = await stonksPartial.MARGIN_IN_BASIS_POINTS()
+          const expectedPositive = (rawOutput * (MAX_BASIS_POINTS - marginBps)) / MAX_BASIS_POINTS
+          expect(estimatedOutput).to.equal(expectedPositive)
+          expect(expectedPositive).to.not.equal(0n)
         }
       }
     })
@@ -951,24 +964,23 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       const buyAmount = orderDetails[4]
 
       // Verify buyAmount > 0 (required for valid order)
-      expect(buyAmount).to.be.greaterThan(0n)
+      expect(buyAmount).to.not.equal(0n)
 
       // Calculate originalLimitPrice to verify it's > 0
-      const PRICE_SCALE = 1e18
-      const originalLimitPrice = (buyAmount * BigInt(PRICE_SCALE)) / sellAmount
-      expect(originalLimitPrice).to.be.greaterThan(0n)
+      const originalLimitPrice = (buyAmount * PRICE_SCALE) / sellAmount
+      expect(originalLimitPrice).to.not.equal(0n)
 
       // The guard in the contract should prevent division by zero
       // If originalLimitPrice were 0, it would revert with PriceShortfallExceedsTolerance
       // This is the correct behavior per the contract implementation
     })
 
-    this.afterEach(async function () {
+    afterEach(async function () {
       await localSnapshot.restore()
     })
   })
 
-  this.afterAll(async function () {
+  after(async function () {
     await snapshot.restore()
     resetTestOracleRouter()
     resetTestFeedRegistryStub()

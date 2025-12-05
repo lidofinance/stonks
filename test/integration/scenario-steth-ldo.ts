@@ -69,7 +69,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
   let orderReceipt: TransactionReceipt
   let order: Order
 
-  this.beforeAll(async () => {
+  before(async function () {
     snapshot = await takeSnapshot()
 
     const result = await setup(stethLdoPair)
@@ -84,11 +84,11 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     await setBalance(contracts.AGENT, parseEther('100'))
   })
 
-  this.afterAll(async () => {
+  after(async function () {
     await snapshot.restore()
   })
 
-  context('Setup', () => {
+  context('Setup', function () {
     it('agent should fill stonks with stETH', async function () {
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       const token = tokenFrom.connect(treasurySigner)
@@ -110,7 +110,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(balanceAfter).to.be.closeTo(value, 2n)
     })
 
-    it('manager should place order', async () => {
+    it('manager should place order', async function () {
       expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
       const orderTx = await stonks.placeOrder(expectedBuyAmount)
 
@@ -135,12 +135,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Positive Rebase During Active Order', () => {
-    beforeEach(async () => {
+  context('Positive Rebase During Active Order', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('order should remain valid after 5% positive rebase', async () => {
+    it('order should remain valid after 5% positive rebase', async function () {
       const orderAddress = await order.getAddress()
       const rebaseAmount = (value * 5n) / 100n // 5%
 
@@ -160,7 +160,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
     })
 
-    it('order should remain valid after 20% positive rebase', async () => {
+    it('order should remain valid after 20% positive rebase', async function () {
       await snapshotOrderPlaced.restore()
       const orderAddress = await order.getAddress()
       const rebaseAmount = (value * 20n) / 100n // 20%
@@ -180,12 +180,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Negative Rebase During Active Order', () => {
-    beforeEach(async () => {
+  context('Negative Rebase During Active Order', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should handle 1% negative rebase (within tolerance)', async () => {
+    it('should handle 1% negative rebase (within tolerance)', async function () {
       const orderAddress = await order.getAddress()
       const rebaseAmount = (value * 1n) / 100n // 1%
 
@@ -216,7 +216,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       }
     })
 
-    it('should handle 10% negative rebase', async () => {
+    it('should handle 10% negative rebase', async function () {
       const orderAddress = await order.getAddress()
       const rebaseAmount = (value * 10n) / 100n // 10%
 
@@ -244,7 +244,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       }
     })
 
-    it('should handle 50% negative rebase (extreme case)', async () => {
+    it('should handle 50% negative rebase (extreme case)', async function () {
       const orderAddress = await order.getAddress()
       const rebaseAmount = (value * 50n) / 100n // 50%
 
@@ -272,12 +272,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Successful Trade After Rebase', () => {
-    beforeEach(async () => {
+  context('Successful Trade After Rebase', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('settlement should validate signature after positive rebase', async () => {
+    it('settlement should validate signature after positive rebase', async function () {
       const orderAddress = await order.getAddress()
       const rebaseAmount = (value * 10n) / 100n // 10%
 
@@ -287,7 +287,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
 
-    it('settlement should pull assets (swap simulation)', async () => {
+    it('settlement should pull assets (swap simulation)', async function () {
       const orderAddress = await order.getAddress()
       await simulateRebase(tokenFrom, orderAddress, (value * 10n) / 100n, true)
 
@@ -306,12 +306,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Order Expiration After Rebase', () => {
-    beforeEach(async () => {
+  context('Order Expiration After Rebase', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should not recover before expiration even with negative rebase', async () => {
+    it('should not recover before expiration even with negative rebase', async function () {
       const orderAddress = await order.getAddress()
       const rebaseAmount = (value * 20n) / 100n // 20%
       await simulateRebase(tokenFrom, orderAddress, rebaseAmount, false)
@@ -322,7 +322,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         .withArgs(orderDetails[5], anyValue)
     })
 
-    it('should recover remaining tokens after expiration', async () => {
+    it('should recover remaining tokens after expiration', async function () {
       await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
       const balanceBeforeRecover = await tokenFrom.balanceOf(order)
 
@@ -334,7 +334,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(balanceBeforeRecover).to.be.gt(0)
     })
 
-    it('order should be invalid after expiration', async () => {
+    it('order should be invalid after expiration', async function () {
       await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
 
       const [currentHash, , , , , validTo] = await order.getOrderDetails()
@@ -344,12 +344,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Multiple Orders with Rebases', () => {
-    beforeEach(async () => {
+  context('Multiple Orders with Rebases', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should create new order after recovering from first', async () => {
+    it('should create new order after recovering from first', async function () {
       await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
       await order.recoverTokenFrom()
 
@@ -370,7 +370,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(await newOrder.getAddress()).to.not.equal(await order.getAddress())
     })
 
-    it('second order should handle negative rebase', async () => {
+    it('second order should handle negative rebase', async function () {
       // Fund stonks again
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       const token = tokenFrom.connect(treasurySigner)
@@ -398,12 +398,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Alternating Rebases', () => {
-    beforeEach(async () => {
+  context('Alternating Rebases', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should handle positive then negative rebase', async () => {
+    it('should handle positive then negative rebase', async function () {
       const orderAddress = await order.getAddress()
 
       // Positive rebase first
@@ -437,12 +437,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Small Amount Orders with Rebase', () => {
-    beforeEach(async () => {
+  context('Small Amount Orders with Rebase', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should handle small order with tiny rebase', async () => {
+    it('should handle small order with tiny rebase', async function () {
       // Fund with smaller amount
       const smallValue = parseEther('0.01')
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
@@ -476,12 +476,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Large Amount Orders with Rebase', () => {
-    beforeEach(async () => {
+  context('Large Amount Orders with Rebase', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should handle large order with significant rebase', async () => {
+    it('should handle large order with significant rebase', async function () {
       // Fund with larger amount
       const largeValue = parseEther('10')
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
@@ -493,7 +493,6 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const orderTx = await stonks.placeOrder(expectedBuy)
       const receipt = (await orderTx.wait())!
       const { address } = await getPlaceOrderData(receipt)
-      const largeOrder = await ethers.getContractAt('Order', address)
 
       // Apply large rebase (15%)
       const largeRebase = (largeValue * 15n) / 100n
@@ -508,8 +507,8 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('No Rebase Baseline', () => {
-    it('order should remain valid without any rebase', async () => {
+  context('No Rebase Baseline', function () {
+    it('order should remain valid without any rebase', async function () {
       // Create fresh order for this test to avoid snapshot issues
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       const token = tokenFrom.connect(treasurySigner)
@@ -535,12 +534,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Multiple Small Rebases', () => {
-    beforeEach(async () => {
+  context('Multiple Small Rebases', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should handle sequence of small negative rebases', async () => {
+    it('should handle sequence of small negative rebases', async function () {
       const orderAddress = await order.getAddress()
       const initialBalance = await tokenFrom.balanceOf(orderAddress)
       let currentBalance = initialBalance
@@ -564,7 +563,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       }
     })
 
-    it('should handle sequence of mixed rebases', async () => {
+    it('should handle sequence of mixed rebases', async function () {
       const orderAddress = await order.getAddress()
 
       // +5%, -3%, +2%, -1%
@@ -584,12 +583,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Rebase Near Expiration', () => {
-    beforeEach(async () => {
+  context('Rebase Near Expiration', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should handle negative rebase just before expiration', async () => {
+    it('should handle negative rebase just before expiration', async function () {
       const orderAddress = await order.getAddress()
       const orderDuration = await stonks.ORDER_DURATION_IN_SECONDS()
 
@@ -615,7 +614,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       }
     })
 
-    it('should handle positive rebase right at expiration boundary', async () => {
+    it('should handle positive rebase right at expiration boundary', async function () {
       const orderAddress = await order.getAddress()
       const orderDuration = await stonks.ORDER_DURATION_IN_SECONDS()
 
@@ -632,12 +631,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Recovery After Extreme Rebases', () => {
-    beforeEach(async () => {
+  context('Recovery After Extreme Rebases', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should recover remaining tokens after multiple negative rebases', async () => {
+    it('should recover remaining tokens after multiple negative rebases', async function () {
       const orderAddress = await order.getAddress()
 
       // Apply multiple negative rebases
@@ -662,7 +661,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(stonksBalanceAfter - stonksBalanceBefore).to.be.closeTo(balanceBeforeExpiry, 1n)
     })
 
-    it('should recover full amount after positive rebases', async () => {
+    it('should recover full amount after positive rebases', async function () {
       const orderAddress = await order.getAddress()
 
       // Apply positive rebases
@@ -716,7 +715,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         .withArgs(balanceAfter)
     })
 
-    it('should handle dust recovery edge case: near MIN_POSSIBLE_BALANCE', async () => {
+    it('should handle dust recovery edge case: near MIN_POSSIBLE_BALANCE', async function () {
       const orderAddress = await order.getAddress()
       const currentBalance = await tokenFrom.balanceOf(orderAddress)
 
@@ -745,11 +744,11 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Negative Rebase Beyond Tolerance (No Partial Fills)', () => {
+  context('Negative Rebase Beyond Tolerance (No Partial Fills)', function () {
     let stonksNoPartial: Stonks
     let orderNoPartial: Order
 
-    before(async () => {
+    before(async function () {
       // Deploy stonks WITHOUT partial fills
       const { stonks: stonksLocal } = await setup({
         tokenFrom: contracts.STETH,
@@ -773,7 +772,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       orderNoPartial = await ethers.getContractAt('Order', address)
     })
 
-    it('should revert with InsufficientSellBalance after significant negative rebase', async () => {
+    it('should revert with InsufficientSellBalance after significant negative rebase', async function () {
       const orderAddress = await orderNoPartial.getAddress()
       const [hash, , , sellAmount] = await orderNoPartial.getOrderDetails()
 
@@ -789,7 +788,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         .withArgs(sellAmount, balanceAfter)
     })
 
-    it('should revert on multiple compounding negative rebases exceeding tolerance', async () => {
+    it('should revert on multiple compounding negative rebases exceeding tolerance', async function () {
       // Apply multiple 10% rebases - compounds to ~60% loss
       const orderAddress = await orderNoPartial.getAddress()
       let currentBalance = await tokenFrom.balanceOf(orderAddress)
@@ -806,7 +805,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         .withArgs(sellAmount, currentBalance)
     })
 
-    it('should revert when balance drops to near zero', async () => {
+    it('should revert when balance drops to near zero', async function () {
       const orderAddress = await orderNoPartial.getAddress()
       const currentBalance = await tokenFrom.balanceOf(orderAddress)
 
@@ -823,12 +822,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Unauthorized Access Attempts', () => {
-    beforeEach(async () => {
+  context('Unauthorized Access Attempts', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should revert when non-manager tries to place order', async () => {
+    it('should revert when non-manager tries to place order', async function () {
       const [, , unauthorized] = await ethers.getSigners()
 
       await expect(stonks.connect(unauthorized).placeOrder(parseEther('1')))
@@ -836,7 +835,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         .withArgs(await unauthorized.getAddress())
     })
 
-    it('anyone can recover tokens from order after expiration', async () => {
+    it('anyone can recover tokens from order after expiration', async function () {
       const [, , anyone] = await ethers.getSigners()
 
       await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
@@ -845,7 +844,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       await expect(order.connect(anyone).recoverTokenFrom()).to.not.be.reverted
     })
 
-    it('should revert when non-admin/manager tries to recover ERC20 from order', async () => {
+    it('should revert when non-admin/manager tries to recover ERC20 from order', async function () {
       const [, , unauthorized] = await ethers.getSigners()
 
       await expect(order.connect(unauthorized).recoverERC20(contracts.STETH, 1n))
@@ -854,8 +853,8 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Multiple Orders Can Be Created', () => {
-    it('should allow creating multiple orders consecutively', async () => {
+  context('Multiple Orders Can Be Created', function () {
+    it('should allow creating multiple orders consecutively', async function () {
       // Stonks contract doesn't prevent multiple orders - each placeOrder creates a new Order contract
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       const token = tokenFrom.connect(treasurySigner)
@@ -878,7 +877,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(order1Address).to.not.equal(order2Address)
     })
 
-    it('should fail when insufficient balance for new order', async () => {
+    it('should fail when insufficient balance for new order', async function () {
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       const token = tokenFrom.connect(treasurySigner)
       await impersonateAccount(contracts.AGENT)
@@ -895,12 +894,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Recovery Before Expiration', () => {
-    beforeEach(async () => {
+  context('Recovery Before Expiration', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should revert when trying to recover before expiration', async () => {
+    it('should revert when trying to recover before expiration', async function () {
       const [, , , , , validTo] = await order.getOrderDetails()
 
       await expect(order.recoverTokenFrom())
@@ -908,7 +907,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         .withArgs(validTo, anyValue)
     })
 
-    it('should revert even after 99% of order duration', async () => {
+    it('should revert even after 99% of order duration', async function () {
       const duration = await stonks.ORDER_DURATION_IN_SECONDS()
       await time.increase((duration * 99n) / 100n)
 
@@ -920,12 +919,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Invalid Hash Scenarios', () => {
-    beforeEach(async () => {
+  context('Invalid Hash Scenarios', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should revert with wrong order hash', async () => {
+    it('should revert with wrong order hash', async function () {
       const [correctHash] = await order.getOrderDetails()
       const wrongHash = ethers.ZeroHash
 
@@ -934,7 +933,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         .withArgs(correctHash, wrongHash)
     })
 
-    it('should revert with random hash', async () => {
+    it('should revert with random hash', async function () {
       const [correctHash] = await order.getOrderDetails()
       const randomHash = ethers.keccak256(ethers.toUtf8Bytes('random'))
 
@@ -944,12 +943,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Expired Order Operations', () => {
-    beforeEach(async () => {
+  context('Expired Order Operations', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should revert signature validation after expiration', async () => {
+    it('should revert signature validation after expiration', async function () {
       await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
 
       const [hash, , , , , validTo] = await order.getOrderDetails()
@@ -959,7 +958,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         .withArgs(validTo)
     })
 
-    it('should revert on expired order even with positive rebase', async () => {
+    it('should revert on expired order even with positive rebase', async function () {
       const orderAddress = await order.getAddress()
 
       // Apply positive rebase
@@ -975,7 +974,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         .withArgs(validTo)
     })
 
-    it('should still be valid exactly at expiration timestamp', async () => {
+    it('should still be valid exactly at expiration timestamp', async function () {
       // Order is valid until validTo (inclusive: validTo >= block.timestamp)
       await time.increase(await stonks.ORDER_DURATION_IN_SECONDS())
 
@@ -986,8 +985,8 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Insufficient Balance Scenarios', () => {
-    it('should revert when trying to place order with insufficient balance', async () => {
+  context('Insufficient Balance Scenarios', function () {
+    it('should revert when trying to place order with insufficient balance', async function () {
       // stonks has no balance - placeOrder should fail
       const amount = parseEther('1')
       await expect(stonks.placeOrder(amount)).to.be.revertedWithCustomError(
@@ -996,7 +995,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       )
     })
 
-    it('should revert when balance is below minimum (10 wei)', async () => {
+    it('should revert when balance is below minimum (10 wei)', async function () {
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       const token = tokenFrom.connect(treasurySigner)
       await impersonateAccount(contracts.AGENT)
@@ -1013,12 +1012,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Catastrophic Rebase Scenarios', () => {
-    beforeEach(async () => {
+  context('Catastrophic Rebase Scenarios', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should handle 90% negative rebase', async () => {
+    it('should handle 90% negative rebase', async function () {
       const orderAddress = await order.getAddress()
       const initialBalance = await tokenFrom.balanceOf(orderAddress)
       const rebaseAmount = (initialBalance * 90n) / 100n
@@ -1038,7 +1037,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       }
     })
 
-    it('should handle multiple severe rebases in succession', async () => {
+    it('should handle multiple severe rebases in succession', async function () {
       const orderAddress = await order.getAddress()
       let currentBalance = await tokenFrom.balanceOf(orderAddress)
 
@@ -1054,12 +1053,12 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Edge Cases', () => {
-    beforeEach(async () => {
+  context('Edge Cases', function () {
+    beforeEach(async function () {
       await snapshotOrderPlaced.restore()
     })
 
-    it('should handle dust amounts after multiple rebases', async () => {
+    it('should handle dust amounts after multiple rebases', async function () {
       const dustValue = parseEther('0.001')
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       const token = tokenFrom.connect(treasurySigner)
@@ -1070,7 +1069,6 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const orderTx = await stonks.placeOrder(expectedBuy)
       const receipt = (await orderTx.wait())!
       const { address } = await getPlaceOrderData(receipt)
-      const dustOrder = await ethers.getContractAt('Order', address)
 
       const initialBalance = await tokenFrom.balanceOf(address)
 
@@ -1091,7 +1089,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(finalBalance).to.be.lt((initialBalance * 99n) / 100n)
     })
 
-    it('should validate order parameters remain unchanged after rebases', async () => {
+    it('should validate order parameters remain unchanged after rebases', async function () {
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       const token = tokenFrom.connect(treasurySigner)
       await impersonateAccount(contracts.AGENT)
@@ -1119,18 +1117,18 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
   })
 
-  context('Dust Recovery from Stonks Contract', () => {
+  context('Dust Recovery from Stonks Contract', function () {
     let snapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       snapshot = await takeSnapshot()
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await snapshot.restore()
     })
 
-    it('should allow admin to recover dust stETH from Stonks contract', async () => {
+    it('should allow admin to recover dust stETH from Stonks contract', async function () {
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       await impersonateAccount(contracts.AGENT)
 
@@ -1157,7 +1155,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(stonksBalanceAfter).to.be.lt(stonksBalance)
     })
 
-    it('should allow manager to recover dust stETH from Stonks contract', async () => {
+    it('should allow manager to recover dust stETH from Stonks contract', async function () {
       await impersonateAccount(contracts.AGENT)
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
 
@@ -1175,7 +1173,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(agentBalanceAfter - agentBalanceBefore).to.be.closeTo(dustAmount, 2n)
     })
 
-    it('should recover dust from Stonks after order expires and tokens are recovered', async () => {
+    it('should recover dust from Stonks after order expires and tokens are recovered', async function () {
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       await impersonateAccount(contracts.AGENT)
 
@@ -1213,7 +1211,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(agentBalanceAfter - agentBalanceBefore).to.be.closeTo(stonksBalance, 2n)
     })
 
-    it('should not allow unauthorized users to recover dust from Stonks', async () => {
+    it('should not allow unauthorized users to recover dust from Stonks', async function () {
       const [, , unauthorized] = await ethers.getSigners()
 
       await expect(
@@ -1221,7 +1219,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       ).to.be.revertedWithCustomError(stonks, 'NotAdminOrManager')
     })
 
-    it('should recover dust LDO tokens accidentally sent to Stonks', async () => {
+    it('should recover dust LDO tokens accidentally sent to Stonks', async function () {
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       await impersonateAccount(contracts.AGENT)
 

@@ -89,20 +89,22 @@ describe('Integration: AmountConverter Denominations', () => {
     resetTestFeedRegistryStub()
   })
 
+  const extractConverterAddress = async (logs: any[]) => {
+    const factoryAddress = (await factory.getAddress()).toLowerCase()
+    const eventLog = logs.find((log: any) => log.address?.toLowerCase() === factoryAddress)
+    if (!eventLog) {
+      throw new Error('AmountConverterDeployed event not found')
+    }
+    return factory.interface.parseLog(eventLog)?.args[0]
+  }
+
   describe('ETH-quoted to ETH-quoted with ETH mode', () => {
     let converter: AmountConverter
 
     beforeEach(async () => {
       const tx = await factory.deployAmountConverter([contracts.STETH], [contracts.LDO], true)
       const receipt = await tx.wait()
-      const event = receipt?.logs.find((log: any) => {
-        try {
-          return factory.interface.parseLog(log)?.name === 'AmountConverterDeployed'
-        } catch {
-          return false
-        }
-      })
-      const converterAddress = factory.interface.parseLog(event as any)?.args[0]
+      const converterAddress = await extractConverterAddress(receipt?.logs ?? [])
       converter = await ethers.getContractAt('AmountConverter', converterAddress)
     })
 
@@ -159,14 +161,7 @@ describe('Integration: AmountConverter Denominations', () => {
         false // USD mode (required for mixed denominations)
       )
       const receipt = await tx.wait()
-      const event = receipt?.logs.find((log: any) => {
-        try {
-          return factory.interface.parseLog(log)?.name === 'AmountConverterDeployed'
-        } catch {
-          return false
-        }
-      })
-      const converterAddress = factory.interface.parseLog(event as any)?.args[0]
+      const converterAddress = await extractConverterAddress(receipt?.logs ?? [])
       converter = await ethers.getContractAt('AmountConverter', converterAddress)
     })
 

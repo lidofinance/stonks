@@ -23,7 +23,7 @@ describe('AmountConverterFactory', function () {
   let oracleRouter: OracleRouter
   let snapshot: SnapshotRestorer
 
-  this.beforeAll(async function () {
+  before(async function () {
     snapshot = await takeSnapshot()
 
     oracleRouter = await getTestOracleRouter({
@@ -45,6 +45,15 @@ describe('AmountConverterFactory', function () {
     })
   })
   describe('amount converter deployment:', async function () {
+    const extractConverterAddress = async (logs: any[]) => {
+      const factoryAddress = (await subject.getAddress()).toLowerCase()
+      const eventLog = logs.find((log: any) => log.address?.toLowerCase() === factoryAddress)
+      if (!eventLog) {
+        throw new Error('AmountConverterDeployed event not found')
+      }
+      return subject.interface.parseLog(eventLog)?.args[0]
+    }
+
     it('should deploy with USD mode (useEthAnchor=false)', async function () {
       const tokensFrom = [contracts.STETH]
       const tokensTo = [contracts.DAI]
@@ -71,17 +80,7 @@ describe('AmountConverterFactory', function () {
       const receipt = await tx.wait()
 
       // Extract deployed address from event
-      const event = receipt?.logs.find((log: any) => {
-        try {
-          return subject.interface.parseLog(log)?.name === 'AmountConverterDeployed'
-        } catch {
-          return false
-        }
-      })
-
-      expect(event).to.not.be.undefined
-
-      const converterAddress = subject.interface.parseLog(event as any)?.args[0]
+      const converterAddress = await extractConverterAddress(receipt?.logs ?? [])
       const converter = await ethers.getContractAt('AmountConverter', converterAddress)
 
       // Verify it's configured correctly
@@ -97,17 +96,7 @@ describe('AmountConverterFactory', function () {
       const receipt = await tx.wait()
 
       // Extract deployed address from event
-      const event = receipt?.logs.find((log: any) => {
-        try {
-          return subject.interface.parseLog(log)?.name === 'AmountConverterDeployed'
-        } catch {
-          return false
-        }
-      })
-
-      expect(event).to.not.be.undefined
-
-      const converterAddress = subject.interface.parseLog(event as any)?.args[0]
+      const converterAddress = await extractConverterAddress(receipt?.logs ?? [])
       const converter = await ethers.getContractAt('AmountConverter', converterAddress)
 
       // Verify it's configured correctly
@@ -121,26 +110,12 @@ describe('AmountConverterFactory', function () {
       // Deploy USD mode
       const tx1 = await subject.deployAmountConverter(tokensFrom, [contracts.DAI], false)
       const receipt1 = await tx1.wait()
-      const event1 = receipt1?.logs.find((log: any) => {
-        try {
-          return subject.interface.parseLog(log)?.name === 'AmountConverterDeployed'
-        } catch {
-          return false
-        }
-      })
-      const address1 = subject.interface.parseLog(event1 as any)?.args[0]
+      const address1 = await extractConverterAddress(receipt1?.logs ?? [])
 
       // Deploy ETH mode
       const tx2 = await subject.deployAmountConverter(tokensFrom, [contracts.LDO], true)
       const receipt2 = await tx2.wait()
-      const event2 = receipt2?.logs.find((log: any) => {
-        try {
-          return subject.interface.parseLog(log)?.name === 'AmountConverterDeployed'
-        } catch {
-          return false
-        }
-      })
-      const address2 = subject.interface.parseLog(event2 as any)?.args[0]
+      const address2 = await extractConverterAddress(receipt2?.logs ?? [])
 
       // Should be different addresses
       expect(address1).to.not.equal(address2)
@@ -154,7 +129,7 @@ describe('AmountConverterFactory', function () {
     })
   })
 
-  this.afterAll(async function () {
+  after(async function () {
     await snapshot.restore()
     resetTestOracleRouter() // Clean up global state
     resetTestFeedRegistryStub()

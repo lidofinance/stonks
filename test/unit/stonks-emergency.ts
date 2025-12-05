@@ -31,7 +31,7 @@ describe('Stonks - Emergency Controls', function () {
   let snapshot: SnapshotRestorer
   let emergencyOperator: Signer
 
-  this.beforeAll(async function () {
+  before(async function () {
     snapshot = await takeSnapshot()
     const signers = await ethers.getSigners()
     manager = signers[0]
@@ -270,7 +270,7 @@ describe('Stonks - Emergency Controls', function () {
     })
   })
 
-  this.afterAll(async function () {
+  after(async function () {
     await snapshot.restore()
     resetTestOracleRouter()
     resetTestFeedRegistryStub()

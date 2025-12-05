@@ -2,26 +2,18 @@ import { ethers } from 'hardhat'
 import { Signer } from 'ethers'
 import { expect } from 'chai'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
-import {
-  deployStonksWithTestOracle,
-  resetTestOracleRouter,
-  getTestOracleRouter,
-} from '../../utils/test-oracle-router'
+import { deployStonksWithTestOracle, resetTestOracleRouter } from '../../utils/test-oracle-router'
 import { refreshTestFeedData } from '../../utils/test-feed-registry'
 import {
   AmountConverter,
   AssetRecovererTest__factory,
   Stonks,
   Stonks__factory,
-  OracleRouter__factory,
-  Order,
 } from '../../typechain-types'
 import { getContracts } from '../../utils/contracts'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
-import { MAX_BASIS_POINTS, MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
+import { MAX_BASIS_POINTS } from '../../utils/gpv2-helpers'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
-import { getPlaceOrderData } from '../../utils/get-events'
-import { simulateNegativeRebase } from '../../utils/test-oracle-router'
 
 const contracts = getContracts()
 
@@ -38,7 +30,7 @@ describe('Stonks', function () {
   let AssetRecovererFactory: AssetRecovererTest__factory
   let managerAddress: string
 
-  this.beforeAll(async function () {
+  before(async function () {
     signer = (await ethers.getSigners())[0]
     snapshot = await takeSnapshot()
 
@@ -94,18 +86,7 @@ describe('Stonks', function () {
       allowPartialFill: boolean
     }
 
-    this.beforeAll(async function () {
-      const oracleRouterFactory = (await ethers.getContractFactory(
-        'OracleRouter'
-      )) as OracleRouter__factory
-      const oracleRouter = await (
-        await oracleRouterFactory.deploy(
-          contracts.ADMIN,
-          18,
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY
-        )
-      ).getAddress()
-
+    before(async function () {
       validParams = {
         admin: contracts.ADMIN,
         agent: contracts.AGENT,
@@ -122,7 +103,7 @@ describe('Stonks', function () {
       } as const
     })
 
-    it('should set correct constructor params', async () => {
+    it('should set correct constructor params', async function () {
       const stonks = await ContractFactory.deploy(validParams)
 
       expect(await stonks.ADMIN()).to.equal(validParams.admin)
@@ -136,7 +117,7 @@ describe('Stonks', function () {
       expect(priceToleranceInBasisPoints).to.be.equal(validParams.priceToleranceInBasisPoints)
     })
 
-    it('should emit events for every parameter', async () => {
+    it('should emit events for every parameter', async function () {
       const stonksLocal = await ContractFactory.deploy(validParams)
 
       await expect(stonksLocal.deploymentTransaction())
@@ -328,7 +309,7 @@ describe('Stonks', function () {
       expect(await subject.estimateTradeOutputFromCurrentBalance()).to.equal(expectedOutWithMargin)
       await localSnapshot.restore()
     })
-    it('should revert if balance is zero', async () => {
+    it('should revert if balance is zero', async function () {
       await expect(subject.estimateTradeOutputFromCurrentBalance()).to.be.revertedWithCustomError(
         subject,
         'InvalidAmount'
@@ -544,7 +525,7 @@ describe('Stonks', function () {
   describe('access control:', function () {
     let stranger: Signer
 
-    this.beforeAll(async function () {
+    before(async function () {
       stranger = (await ethers.getSigners())[3]
     })
 
@@ -617,7 +598,7 @@ describe('Stonks', function () {
     })
   })
 
-  this.afterAll(async function () {
+  after(async function () {
     await snapshot.restore()
     resetTestOracleRouter()
   })

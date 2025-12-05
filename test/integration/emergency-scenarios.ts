@@ -22,7 +22,6 @@ describe('Emergency scenarios', () => {
   let stonks: Stonks
   let manager: Signer
   let tokenFrom: IERC20
-  let tokenTo: IERC20
   let admin: Signer
   let emergencyOperator: Signer
 
@@ -42,7 +41,6 @@ describe('Emergency scenarios', () => {
     manager = result.manager
 
     tokenFrom = await ethers.getContractAt('IERC20', await stonks.TOKEN_FROM())
-    tokenTo = await ethers.getContractAt('IERC20', await stonks.TOKEN_TO())
 
     admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
     await setBalance(contracts.ADMIN, parseEther('100'))
@@ -225,7 +223,6 @@ describe('Emergency scenarios', () => {
       const orderDuration = await stonks.ORDER_DURATION_IN_SECONDS()
       await time.increase(Number(orderDuration) + 1)
 
-      const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
       await setBalance(contracts.ADMIN, parseEther('1'))
 
       const agentBalanceBefore = await tokenFrom.balanceOf(await stonks.getAddress())
@@ -250,7 +247,6 @@ describe('Emergency scenarios', () => {
       await order.connect(admin).setEmergencyOperator(await emergencyOperator.getAddress())
 
       const stonksBalanceBefore = await tokenFrom.balanceOf(await stonks.getAddress())
-      const orderBalance = await tokenFrom.balanceOf(await order.getAddress())
 
       await order.connect(emergencyOperator).emergencyCancelAndReturn()
 
@@ -314,7 +310,7 @@ describe('Emergency scenarios', () => {
     })
 
     it('should change emergency operator and new operator can pause', async () => {
-      const order = await placeOrder(parseEther('1000'))
+      await placeOrder(parseEther('1000'))
 
       const [, , , newEmergencySigner] = await ethers.getSigners()
 
@@ -354,7 +350,7 @@ describe('Emergency scenarios', () => {
     })
 
     it('should change manager and new manager cannot place orders for old Stonks', async () => {
-      const order = await placeOrder(parseEther('1000'))
+      await placeOrder(parseEther('1000'))
 
       const [, , , newManagerSigner] = await ethers.getSigners()
 
@@ -403,7 +399,6 @@ describe('Emergency scenarios', () => {
       await order.connect(admin).setEmergencyOperator(await emergencyOperator.getAddress())
 
       const relayerAddress = contracts.VAULT_RELAYER
-      const tokenFromAddress = await tokenFrom.getAddress()
 
       const allowanceBefore = await tokenFrom.allowance(await order.getAddress(), relayerAddress)
       expect(allowanceBefore).to.be.greaterThan(0n)

@@ -36,7 +36,7 @@ describe('Multi-order scenarios', function () {
     allowPartialFill: true,
   }
 
-  this.beforeAll(async () => {
+  before(async function () {
     snapshot = await takeSnapshot()
 
     const result = await setup(pair)
@@ -49,25 +49,25 @@ describe('Multi-order scenarios', function () {
     await setBalance(contracts.AGENT, parseEther('100'))
   })
 
-  this.afterAll(async () => {
+  after(async function () {
     await snapshot.restore()
   })
-  async function placeOrder(fundAmount: bigint): Promise<Order> {
+  const placeOrder = async (fundAmount: bigint): Promise<Order> => {
     return placeOrderFromAgent(stonks, manager, tokenFrom, fundAmount)
   }
 
   describe('Sequential orders', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should place second order after first expires', async () => {
+    it('should place second order after first expires', async function () {
       const order1 = await placeOrder(parseEther('1000'))
       const [hash1] = await order1.getOrderDetails()
       expect(await order1.isValidSignature(hash1, '0x')).to.equal(MAGIC_VALUE)
@@ -87,7 +87,7 @@ describe('Multi-order scenarios', function () {
       expect(await order1.getAddress()).to.not.equal(await order2.getAddress())
     })
 
-    it('should handle 5 sequential orders with partial fills', async () => {
+    it('should handle 5 sequential orders with partial fills', async function () {
       const orders: Order[] = []
 
       for (let i = 0; i < 5; i++) {
@@ -109,7 +109,7 @@ describe('Multi-order scenarios', function () {
       expect(uniqueAddresses.size).to.equal(5)
     })
 
-    it('should maintain independent state across orders', async () => {
+    it('should maintain independent state across orders', async function () {
       const order1 = await placeOrder(parseEther('1000'))
       const [, , , sellAmount1, buyAmount1] = await order1.getOrderDetails()
 
@@ -132,15 +132,15 @@ describe('Multi-order scenarios', function () {
   describe('Order lifecycle edge cases', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should handle order placement with zero balance in Stonks', async () => {
+    it('should handle order placement with zero balance in Stonks', async function () {
       const stonksBalance = await tokenFrom.balanceOf(await stonks.getAddress())
       if (stonksBalance > 0n) {
         const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
@@ -155,7 +155,7 @@ describe('Multi-order scenarios', function () {
       ).to.be.revertedWithCustomError(stonks, 'MinimumPossibleBalanceNotMet')
     })
 
-    it('should handle rapid order placements (stress test)', async () => {
+    it('should handle rapid order placements (stress test)', async function () {
       const orders: Order[] = []
 
       for (let i = 0; i < 3; i++) {
@@ -179,15 +179,15 @@ describe('Multi-order scenarios', function () {
   describe('Rebase affecting order placement', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should reflect rebase in Stonks balance before placing new order', async () => {
+    it('should reflect rebase in Stonks balance before placing new order', async function () {
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       await impersonateAccount(contracts.AGENT)
       await tokenFrom
@@ -215,7 +215,7 @@ describe('Multi-order scenarios', function () {
       expect(sellAmount).to.be.closeTo(balanceAfter, REBASE_TOLERANCE)
     })
 
-    it('should place order with correct amount after negative "rebase" in Stonks', async () => {
+    it('should place order with correct amount after negative "rebase" in Stonks', async function () {
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       await impersonateAccount(contracts.AGENT)
       await tokenFrom
@@ -252,15 +252,15 @@ describe('Multi-order scenarios', function () {
   describe('Order cancellation and recovery patterns', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should recover from multiple expired orders', async () => {
+    it('should recover from multiple expired orders', async function () {
       const orders: Order[] = []
 
       for (let i = 0; i < 3; i++) {
@@ -290,7 +290,7 @@ describe('Multi-order scenarios', function () {
       )
     })
 
-    it('should handle emergency cancel of order after partial fill', async () => {
+    it('should handle emergency cancel of order after partial fill', async function () {
       const order = await placeOrder(parseEther('1000'))
 
       const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
@@ -324,15 +324,15 @@ describe('Multi-order scenarios', function () {
   describe('Advanced multi-order behavior', function () {
     let testSnapshot: SnapshotRestorer
 
-    beforeEach(async () => {
+    beforeEach(async function () {
       testSnapshot = await takeSnapshot()
     })
 
-    afterEach(async () => {
+    afterEach(async function () {
       await testSnapshot.restore()
     })
 
-    it('should handle 10+ concurrent orders for same token pair', async () => {
+    it('should handle 10+ concurrent orders for same token pair', async function () {
       const orders: Order[] = []
       const orderCount = 12
 
@@ -358,7 +358,7 @@ describe('Multi-order scenarios', function () {
       }
     })
 
-    it('should handle order expiration cascades', async () => {
+    it('should handle order expiration cascades', async function () {
       const orders: Order[] = []
       const expirations = [1, 2, 3]
 
@@ -392,7 +392,7 @@ describe('Multi-order scenarios', function () {
       )
     })
 
-    it('should handle emergency cancel on subset of active orders', async () => {
+    it('should handle emergency cancel on subset of active orders', async function () {
       const orders: Order[] = []
 
       const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)

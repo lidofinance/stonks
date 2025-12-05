@@ -27,7 +27,7 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
     useRealPrices: true,
   }
 
-  const getCurrentTimestamp = async () => {
+  const getCurrentTimestamp = async function () {
     const block = await ethers.provider.getBlock('latest')
     return BigInt(block!.timestamp)
   }
@@ -379,11 +379,11 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
     })
   })
 
-  async function deployConverter(
+  const deployConverter = async (
     allowedTokensToSell: string[],
     allowedTokensToBuy: string[],
     useEthAnchor: boolean
-  ): Promise<AmountConverter> {
+  ): Promise<AmountConverter> => {
     return deployConverterWithFactory(
       factory,
       allowedTokensToSell,
@@ -392,26 +392,27 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
     )
   }
 
-  async function deployConverterWithFactory(
+  const deployConverterWithFactory = async (
     factoryInstance: AmountConverterFactory,
     allowedTokensToSell: string[],
     allowedTokensToBuy: string[],
     useEthAnchor: boolean
-  ): Promise<AmountConverter> {
+  ): Promise<AmountConverter> => {
     const tx = await factoryInstance.deployAmountConverter(
       allowedTokensToSell,
       allowedTokensToBuy,
       useEthAnchor
     )
     const receipt = await tx.wait()
-    const event = receipt?.logs.find((log: any) => {
-      try {
-        return factoryInstance.interface.parseLog(log)?.name === 'AmountConverterDeployed'
-      } catch {
-        return false
-      }
-    })
-    const converterAddress = factoryInstance.interface.parseLog(event as any)?.args[0]
+    const factoryAddress = (await factoryInstance.getAddress()).toLowerCase()
+    const eventLog = receipt?.logs.find((log: any) => log.address?.toLowerCase() === factoryAddress)
+    if (!eventLog) {
+      throw new Error('AmountConverterDeployed event not found')
+    }
+    // Fix type compatibility for parseLog argument due to readonly vs mutable array types
+    const { topics, data } = eventLog
+    const converterAddress = factoryInstance.interface.parseLog({ topics: [...topics], data })
+      ?.args[0]
     return ethers.getContractAt('AmountConverter', converterAddress)
   }
 })

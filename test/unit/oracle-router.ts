@@ -2051,14 +2051,47 @@ describe('OracleRouter', function () {
       await oracleRouter.connect(adminSigner).setTokenEthUsdStalenessOverride(contracts.LDO, 3_600)
 
       const [price1, price2] = await oracleRouter.getUsdPrices(contracts.STETH, contracts.LDO)
+      const expectedStethInitial = await getExpectedUsdBridgePrice(oracleRouter, contracts.STETH)
+      const expectedLdoInitial = await getExpectedUsdBridgePrice(oracleRouter, contracts.LDO)
+      expect(price1).to.equal(expectedStethInitial)
+      expect(price2).to.equal(expectedLdoInitial)
+
+      const currentTimestamp = await getCurrentTimestamp()
+      const staleUpdatedAt = currentTimestamp - 5_000n
+      await updateTokenFeed(
+        feedConfig,
+        contracts.CHAINLINK_ETH_QUOTE,
+        contracts.CHAINLINK_USD_QUOTE,
+        {
+          updatedAt: staleUpdatedAt,
+        }
+      )
+
+      await expect(
+        oracleRouter.getUsdPrices.staticCall(contracts.STETH, contracts.LDO)
+      ).to.be.revertedWithCustomError(oracleRouter, 'OracleStale')
 
       await oracleRouter
         .connect(adminSigner)
         .setTokenEthUsdStalenessOverride(contracts.STETH, 7_200)
+      await oracleRouter.connect(adminSigner).setTokenEthUsdStalenessOverride(contracts.LDO, 7_200)
 
       const [price3, price4] = await oracleRouter.getUsdPrices(contracts.STETH, contracts.LDO)
-      const expectedStethNew = await getExpectedUsdBridgePrice(oracleRouter, contracts.STETH)
-      expect(price3).to.equal(expectedStethNew)
+      const expectedStethUpdated = await getExpectedUsdBridgePrice(oracleRouter, contracts.STETH)
+
+      expect(price3).to.equal(expectedStethUpdated)
+      expect(price4).to.equal(expectedLdoInitial)
+      expect(price3).to.equal(price1)
+      expect(price4).to.equal(price2)
+
+      await updateTokenFeed(
+        feedConfig,
+        contracts.CHAINLINK_ETH_QUOTE,
+        contracts.CHAINLINK_USD_QUOTE,
+        {
+          updatedAt: currentTimestamp,
+        }
+      )
     })
   })
 
