@@ -43,8 +43,10 @@ contract Order is IERC1271, AssetRecoverer {
     uint256 private constant MIN_POSSIBLE_BALANCE = 10;
     /// @notice Maximum basis points value for percentage calculations.
     uint256 private constant MAX_BASIS_POINTS = 1e4;
-    /// @notice Price scaling factor for ratio calculations (1e18 matches router precision).
+    /// @notice Price scaling factor for ratio calculations (1e18 matches router precision PRICE_UNIT).
     uint256 private constant PRICE_SCALE = 1e18;
+    /// @notice Allowed delta (in token units) when comparing amounts to absorb rounding noise.
+    uint256 private constant AMOUNT_EQUALITY_TOLERANCE = 2;
     /// @notice Application-specific data for the CoW order (empty JSON object hash).
     bytes32 private constant APP_DATA = keccak256("{}");
 
@@ -63,9 +65,9 @@ contract Order is IERC1271, AssetRecoverer {
     /// @notice Internal flag indicating whether the contract has been initialized.
     bool private initialized;
     /// @notice Whether this order allows partial fills (cached from Stonks to avoid external calls).
-    bool private allowPartialFill;
+    bool public allowPartialFill;
     /// @notice Order cancellation flag.
-    bool private cancelled;
+    bool public cancelled;
 
     /// @notice Cached token addresses to avoid repeated external calls to Stonks.
     address private tokenFrom;
@@ -76,7 +78,7 @@ contract Order is IERC1271, AssetRecoverer {
     event RelayerSet(address relayer);
     event DomainSeparatorSet(bytes32 domainSeparator);
     event OrderCreated(address indexed order, bytes32 orderHash, GPv2Order.Data orderData);
-    event OrderCancelledEvent(address indexed order);
+    event OrderCancelled(address indexed order);
     event RelayerAllowanceRevokedEvent(address indexed order);
     event OrderFundsReturnedEvent(address indexed order, uint256 amount);
 
@@ -94,7 +96,7 @@ contract Order is IERC1271, AssetRecoverer {
     error InsufficientSellBalance(uint256 required, uint256 available);
     error ZeroQuotableAmount(uint256 basisSellAmount);
     error SignaturesGloballyPaused();
-    error OrderCancelled();
+    error OrderIsCancelled();
     error NotInitialized();
 
     // ==================== Constructor ====================
@@ -141,6 +143,8 @@ contract Order is IERC1271, AssetRecoverer {
         initialized = true;
         stonks = msg.sender;
         manager = manager_;
+
+        emit ManagerSet(manager_);
 
         IStonks stonksContract = IStonks(stonks);
         (
@@ -218,7 +222,7 @@ contract Order is IERC1271, AssetRecoverer {
         IStonks stonksContract = IStonks(stonks);
         // Check per-order cancellation before global pause
         if (cancelled) {
-            revert OrderCancelled();
+            revert OrderIsCancelled();
         }
 
         // Global signatures pause handled by Stonks
@@ -252,8 +256,11 @@ contract Order is IERC1271, AssetRecoverer {
         // Pro-rate the original buyAmount to the basis sell amount
         uint256 baselineBuyAmount = Math.mulDiv(buyAmount, basisSellAmount, sellAmount);
 
-        // Fast path: exact amount match avoids rounding issues in price ratio comparison
-        if (currentEstimatedBuyAmount == baselineBuyAmount) {
+        // Fast path: amount match (with tolerance) avoids rounding issues in price ratio comparison
+        uint256 amountDiff = currentEstimatedBuyAmount > baselineBuyAmount
+            ? currentEstimatedBuyAmount - baselineBuyAmount
+            : baselineBuyAmount - currentEstimatedBuyAmount;
+        if (amountDiff <= AMOUNT_EQUALITY_TOLERANCE) {
             return ERC1271_MAGIC_VALUE;
         }
 
@@ -272,6 +279,13 @@ contract Order is IERC1271, AssetRecoverer {
 
         // Fast path: exact price match (handles cases where amounts differ due to rounding but prices match)
         if (currentExecutionPrice == originalLimitPrice) {
+            return ERC1271_MAGIC_VALUE;
+        }
+
+        uint256 priceDiff = currentExecutionPrice > originalLimitPrice
+            ? currentExecutionPrice - originalLimitPrice
+            : originalLimitPrice - currentExecutionPrice;
+        if (priceDiff <= AMOUNT_EQUALITY_TOLERANCE) {
             return ERC1271_MAGIC_VALUE;
         }
 
@@ -428,7 +442,7 @@ contract Order is IERC1271, AssetRecoverer {
         if (!cancelled) {
             cancelled = true;
 
-            emit OrderCancelledEvent(address(this));
+            emit OrderCancelled(address(this));
         }
 
         _revokeRelayerAllowance();

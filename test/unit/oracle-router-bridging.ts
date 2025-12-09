@@ -114,7 +114,7 @@ describe('OracleRouter - Bridging Tests', function () {
 
   beforeEach(async function () {
     await refreshFeedData(feedConfig)
-    oracleRouter = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
+    oracleRouter = await oracleRouterFactory.deploy(adminAddress, feedRegistryAddress)
     await oracleRouter.waitForDeployment()
 
     const admin = await getAdminSigner()
@@ -527,7 +527,7 @@ describe('OracleRouter - Bridging Tests', function () {
 
   describe('Edge Cases', function () {
     it('should revert if ETH/USD bridge is missing when bridging is needed', async function () {
-      const freshRouter = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
+      const freshRouter = await oracleRouterFactory.deploy(adminAddress, feedRegistryAddress)
       await freshRouter.waitForDeployment()
 
       const admin = await getAdminSigner()

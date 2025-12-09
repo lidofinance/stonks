@@ -1,8 +1,13 @@
 import { ethers } from 'hardhat'
 import { Signer } from 'ethers'
 import { expect } from 'chai'
+import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
-import { deployStonksWithTestOracle, resetTestOracleRouter } from '../../utils/test-oracle-router'
+import {
+  deployStonksWithTestOracle,
+  resetTestOracleRouter,
+  getTestOracleRouter,
+} from '../../utils/test-oracle-router'
 import { refreshTestFeedData } from '../../utils/test-feed-registry'
 import {
   AmountConverter,
@@ -14,6 +19,8 @@ import { getContracts } from '../../utils/contracts'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
 import { MAX_BASIS_POINTS } from '../../utils/gpv2-helpers'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
+import { deployAmountConverterFactory } from '../../scripts/deployments/amount-converter-factory'
+import { getTokenConverterDeployment, getPlaceOrderData } from '../../utils/get-events'
 
 const contracts = getContracts()
 
@@ -59,7 +66,7 @@ describe('Stonks', function () {
       },
       amountConverterParams: {
         allowedTokensToSell: [contracts.STETH],
-        allowedStableTokensToBuy: [contracts.DAI],
+        allowedTokensToBuy: [contracts.DAI],
         useEthAnchor: false,
       },
     })
@@ -137,6 +144,54 @@ describe('Stonks', function () {
         .withArgs(validParams.marginInBasisPoints)
         .and.to.emit(stonksLocal, 'PriceToleranceInBasisPointsSet')
         .withArgs(validParams.priceToleranceInBasisPoints)
+        .and.to.emit(stonksLocal, 'MaxImprovementInBasisPointsSet')
+        .withArgs(validParams.maxImprovementInBasisPoints)
+        .and.to.emit(stonksLocal, 'AllowPartialFillSet')
+        .withArgs(validParams.allowPartialFill)
+    })
+
+    it('should emit MaxImprovementInBasisPointsSet event with correct value', async function () {
+      const testParams = {
+        ...validParams,
+        maxImprovementInBasisPoints: 500n,
+      }
+      const stonksLocal = await ContractFactory.deploy(testParams)
+
+      await expect(stonksLocal.deploymentTransaction())
+        .to.emit(stonksLocal, 'MaxImprovementInBasisPointsSet')
+        .withArgs(500n)
+    })
+
+    it('should emit MaxImprovementInBasisPointsSet event with type(uint256).max', async function () {
+      const testParams = {
+        ...validParams,
+        maxImprovementInBasisPoints: ethers.MaxUint256,
+      }
+      const stonksLocal = await ContractFactory.deploy(testParams)
+
+      await expect(stonksLocal.deploymentTransaction())
+        .to.emit(stonksLocal, 'MaxImprovementInBasisPointsSet')
+        .withArgs(ethers.MaxUint256)
+    })
+
+    it('should emit AllowPartialFillSet event with true', async function () {
+      const testParams = {
+        ...validParams,
+        allowPartialFill: true,
+      }
+      const stonksLocal = await ContractFactory.deploy(testParams)
+
+      await expect(stonksLocal.deploymentTransaction())
+        .to.emit(stonksLocal, 'AllowPartialFillSet')
+        .withArgs(true)
+    })
+
+    it('should emit AllowPartialFillSet event with false', async function () {
+      const stonksLocal = await ContractFactory.deploy(validParams)
+
+      await expect(stonksLocal.deploymentTransaction())
+        .to.emit(stonksLocal, 'AllowPartialFillSet')
+        .withArgs(false)
     })
 
     it('should not initialize with admin zero address', async function () {
@@ -155,16 +210,7 @@ describe('Stonks', function () {
         .to.be.revertedWithCustomError(AssetRecovererFactory, 'InvalidAgentAddress')
         .withArgs(ethers.ZeroAddress)
     })
-    it('should not initialize with manager zero address', async function () {
-      await expect(
-        ContractFactory.deploy({
-          ...validParams,
-          manager: ethers.ZeroAddress,
-        })
-      )
-        .to.be.revertedWithCustomError(ContractFactory, 'InvalidManagerAddress')
-        .withArgs(ethers.ZeroAddress)
-    })
+
     it('should not initialize with tokenFrom zero address', async function () {
       await expect(
         ContractFactory.deploy({
@@ -261,7 +307,7 @@ describe('Stonks', function () {
           maxImprovementInBasisPoints: 1001n,
         })
       )
-        .to.be.revertedWithCustomError(ContractFactory, 'MarginOverflowsAllowedLimit')
+        .to.be.revertedWithCustomError(ContractFactory, 'MaxImprovementOverflowsAllowedLimit')
         .withArgs(1000, 1001)
     })
     it('should allow maxImprovementInBasisPoints_ equal to type(uint256).max', async function () {
@@ -271,6 +317,80 @@ describe('Stonks', function () {
       })
       await stonks.waitForDeployment()
       expect(await stonks.getMaxImprovementBps()).to.equal(ethers.MaxUint256)
+    })
+
+    it('should revert when tokenFrom is not in allowedTokensToSell', async function () {
+      const localSnapshot = await takeSnapshot()
+
+      const oracleRouter = await getTestOracleRouter({
+        tokens: [contracts.STETH, contracts.USDC, contracts.DAI],
+      })
+
+      const { amountConverterFactory } = await deployAmountConverterFactory(
+        await oracleRouter.getAddress()
+      )
+
+      const deployTx = await amountConverterFactory.deployAmountConverter(
+        [contracts.STETH],
+        [contracts.DAI],
+        false
+      )
+      const receipt = await deployTx.wait()
+      if (!receipt) throw new Error('No transaction receipt')
+
+      const { address: amountConverterAddress } = getTokenConverterDeployment(receipt)
+      const amountConverter = await ethers.getContractAt('AmountConverter', amountConverterAddress)
+
+      expect(await amountConverter.allowedTokensToSell(contracts.USDC)).to.equal(false)
+
+      await expect(
+        ContractFactory.deploy({
+          ...validParams,
+          tokenFrom: contracts.USDC,
+          amountConverter: amountConverterAddress,
+        })
+      )
+        .to.be.revertedWithCustomError(ContractFactory, 'TokenFromNotSupported')
+        .withArgs(contracts.USDC)
+
+      await localSnapshot.restore()
+    })
+
+    it('should revert when tokenTo is not in allowedTokensToBuy', async function () {
+      const localSnapshot = await takeSnapshot()
+
+      const oracleRouter = await getTestOracleRouter({
+        tokens: [contracts.STETH, contracts.USDC, contracts.DAI],
+      })
+
+      const { amountConverterFactory } = await deployAmountConverterFactory(
+        await oracleRouter.getAddress()
+      )
+
+      const deployTx = await amountConverterFactory.deployAmountConverter(
+        [contracts.STETH],
+        [contracts.DAI],
+        false
+      )
+      const receipt = await deployTx.wait()
+      if (!receipt) throw new Error('No transaction receipt')
+
+      const { address: amountConverterAddress } = getTokenConverterDeployment(receipt)
+      const amountConverter = await ethers.getContractAt('AmountConverter', amountConverterAddress)
+
+      expect(await amountConverter.allowedTokensToBuy(contracts.USDC)).to.equal(false)
+
+      await expect(
+        ContractFactory.deploy({
+          ...validParams,
+          tokenTo: contracts.USDC,
+          amountConverter: amountConverterAddress,
+        })
+      )
+        .to.be.revertedWithCustomError(ContractFactory, 'TokenToNotSupported')
+        .withArgs(contracts.USDC)
+
+      await localSnapshot.restore()
     })
   })
 
@@ -325,6 +445,39 @@ describe('Stonks', function () {
       )
     })
 
+    it('should revert when tokens are not quotable', async function () {
+      const localSnapshot = await takeSnapshot()
+
+      // Fund stonks with tokens first (before deactivating)
+      await fillUpERC20FromTreasury({
+        token: contracts.STETH,
+        amount: ethers.parseEther('1'),
+        address: await subject.getAddress(),
+      })
+
+      // Get expected buy amount before deactivating tokens
+      const expectedBuyAmount = await subject.estimateTradeOutputFromCurrentBalance()
+
+      // Deactivate tokens in router to make them unquotable
+      const oracleRouter = await ethers.getContractAt(
+        'OracleRouter',
+        await subjectTokenConverter.ORACLE_ROUTER()
+      )
+      const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
+      await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
+
+      const [tokenFrom, tokenTo] = await subject.getOrderParameters()
+      await oracleRouter.connect(adminSigner).setTokenActive(tokenFrom, false)
+      await oracleRouter.connect(adminSigner).setTokenActive(tokenTo, false)
+
+      // Should revert when trying to place order because assertQuotable fails
+      // The revert happens during Order.initialize when it calls assertQuotable
+      // which calls router.getUsdPrices, which reverts with TokenNotConfigured
+      await expect(subject.placeOrder(expectedBuyAmount)).to.be.reverted
+
+      await localSnapshot.restore()
+    })
+
     it('should place order', async function () {
       const steth = await ethers.getContractAt('IERC20', contracts.STETH, signer)
 
@@ -337,14 +490,25 @@ describe('Stonks', function () {
 
       const expectedBuyAmount = await subject.estimateTradeOutputFromCurrentBalance()
       const tx = await subject.placeOrder(expectedBuyAmount)
-      await tx.wait()
+      const receipt = await tx.wait()
+      if (!receipt) throw new Error('No transaction receipt')
+
+      const { address: orderAddress } = await getPlaceOrderData(receipt)
+      const order = await ethers.getContractAt('Order', orderAddress)
+
+      await expect(tx)
+        .to.emit(subject, 'OrderContractCreated')
+        .withArgs(orderAddress, expectedBuyAmount)
+        .and.to.emit(order, 'ManagerSet')
+        .withArgs(await signer.getAddress())
+        .and.to.emit(order, 'OrderCreated')
+        .withArgs(orderAddress, anyValue, anyValue)
     })
 
     it('placeOrderWithAmount sends only specified amount', async function () {
       const steth = await ethers.getContractAt('IERC20', contracts.STETH, signer)
       const stonksAddr = await subject.getAddress()
 
-      // fund 3 ETH
       await fillUpERC20FromTreasury({
         token: contracts.STETH,
         amount: ethers.parseEther('3'),
@@ -357,7 +521,19 @@ describe('Stonks', function () {
 
       const tx = await subject.placeOrderWithAmount(sellAmount, minBuy)
       const rc = await tx.wait()
-      expect(rc?.status).to.equal(1)
+      if (!rc) throw new Error('No transaction receipt')
+      expect(rc.status).to.equal(1)
+
+      const { address: orderAddress } = await getPlaceOrderData(rc)
+      const order = await ethers.getContractAt('Order', orderAddress)
+
+      await expect(tx)
+        .to.emit(subject, 'OrderContractCreated')
+        .withArgs(orderAddress, minBuy)
+        .and.to.emit(order, 'ManagerSet')
+        .withArgs(await signer.getAddress())
+        .and.to.emit(order, 'OrderCreated')
+        .withArgs(orderAddress, anyValue, anyValue)
 
       const afterBalance = await steth.balanceOf(stonksAddr)
       const diff = beforeBalance - afterBalance

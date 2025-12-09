@@ -35,7 +35,7 @@ describe('OracleRouter - Fuzz Tests', () => {
     await refreshFeedData(feedConfig)
 
     const factory = await ethers.getContractFactory('OracleRouter')
-    oracleRouter = await factory.deploy(contracts.ADMIN, 18, await stub.getAddress())
+    oracleRouter = await factory.deploy(contracts.ADMIN, await stub.getAddress())
     await oracleRouter.waitForDeployment()
 
     await ethers.provider.send('hardhat_setBalance', [

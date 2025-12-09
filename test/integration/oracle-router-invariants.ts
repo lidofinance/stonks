@@ -23,7 +23,7 @@ describe('OracleRouter invariants', function () {
     ])
 
     const routerFactory = await ethers.getContractFactory('OracleRouter')
-    router = await routerFactory.deploy(contracts.ADMIN, 8, contracts.CHAINLINK_PRICE_FEED_REGISTRY)
+    router = await routerFactory.deploy(contracts.ADMIN, contracts.CHAINLINK_PRICE_FEED_REGISTRY)
     await router.waitForDeployment()
 
     await router.connect(adminSigner).setEthUsdBridge(86400)

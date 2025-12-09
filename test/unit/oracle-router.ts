@@ -147,7 +147,7 @@ describe('OracleRouter', function () {
 
   beforeEach(async function () {
     await refreshFeedData(feedConfig)
-    oracleRouter = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
+    oracleRouter = await oracleRouterFactory.deploy(adminAddress, feedRegistryAddress)
     await oracleRouter.waitForDeployment()
   })
 
@@ -160,25 +160,13 @@ describe('OracleRouter', function () {
 
     it('reverts with zero admin address', async function () {
       await expect(
-        oracleRouterFactory.deploy(ethers.ZeroAddress, 18, feedRegistryAddress)
+        oracleRouterFactory.deploy(ethers.ZeroAddress, feedRegistryAddress)
       ).to.be.revertedWithCustomError(oracleRouter, 'InvalidAdminAddress')
-    })
-
-    it('reverts with zero unit decimals', async function () {
-      await expect(
-        oracleRouterFactory.deploy(adminAddress, 0, feedRegistryAddress)
-      ).to.be.revertedWithCustomError(oracleRouter, 'InvalidUnitDecimals')
-    })
-
-    it('reverts with unit decimals > 38', async function () {
-      await expect(
-        oracleRouterFactory.deploy(adminAddress, 39, feedRegistryAddress)
-      ).to.be.revertedWithCustomError(oracleRouter, 'InvalidUnitDecimals')
     })
 
     it('reverts with zero feed registry address', async function () {
       await expect(
-        oracleRouterFactory.deploy(adminAddress, 18, ethers.ZeroAddress)
+        oracleRouterFactory.deploy(adminAddress, ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(oracleRouter, 'InvalidFeedRegistryAddress')
     })
   })
@@ -228,7 +216,7 @@ describe('OracleRouter', function () {
     })
 
     it('emits EthUsdBridgeConfigured', async function () {
-      const freshRouter = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
+      const freshRouter = await oracleRouterFactory.deploy(adminAddress, feedRegistryAddress)
       await freshRouter.waitForDeployment()
       const adminSigner = await getAdminSigner()
 
@@ -284,6 +272,20 @@ describe('OracleRouter', function () {
       ).to.be.revertedWithCustomError(oracleRouter, 'NotAdminOrManager')
     })
 
+    it('reverts sync when bridge is not configured', async function () {
+      const freshRouter = await oracleRouterFactory.deploy(adminAddress, feedRegistryAddress)
+      await freshRouter.waitForDeployment()
+
+      const adminSigner = await getAdminSigner()
+
+      const bridgeConfigBefore = await freshRouter.ethUsdBridge()
+      expect(bridgeConfigBefore.aggregator).to.equal(ethers.ZeroAddress)
+
+      await expect(
+        freshRouter.connect(adminSigner).syncEthUsdBridge()
+      ).to.be.revertedWithCustomError(freshRouter, 'EthUsdBridgeMissing')
+    })
+
     it('syncs bridge', async function () {
       const adminSigner = await getAdminSigner()
       await expect(oracleRouter.connect(adminSigner).syncEthUsdBridge())
@@ -293,243 +295,6 @@ describe('OracleRouter', function () {
       const bridgeConfig = await oracleRouter.ethUsdBridge()
       expect(bridgeConfig.aggregator).to.not.equal(ethers.ZeroAddress)
       expect(bridgeConfig.maxStalenessSeconds).to.equal(86_400)
-    })
-  })
-
-  describe('18 Decimal Scaling Tests', function () {
-    let oracleRouter18: OracleRouter
-
-    beforeEach(async function () {
-      await refreshFeedData(feedConfig)
-
-      // Deploy OracleRouter with 18 decimals
-      oracleRouter18 = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
-      await oracleRouter18.waitForDeployment()
-
-      const adminSigner = await getAdminSigner()
-      await oracleRouter18.connect(adminSigner).setEthUsdBridge(86_400)
-    })
-
-    it('should correctly scale 8-decimal feed to 18-decimal unit', async function () {
-      const adminSigner = await getAdminSigner()
-
-      // Configure a token with 8-decimal feed
-      await oracleRouter18
-        .connect(adminSigner)
-        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
-
-      const targetDecimals = BigInt(await oracleRouter18.PRICE_DECIMALS())
-      const expectedPrice = await readNormalizedFeedPrice(
-        contracts.DAI,
-        contracts.CHAINLINK_USD_QUOTE,
-        targetDecimals
-      )
-
-      const [basePrice, quotePrice] = await oracleRouter18.getUsdPrices(
-        contracts.DAI,
-        contracts.DAI
-      )
-      expect(basePrice).to.equal(expectedPrice)
-      expect(quotePrice).to.equal(expectedPrice)
-    })
-
-    it('should correctly scale 18-decimal feed to 18-decimal unit', async function () {
-      const adminSigner = await getAdminSigner()
-
-      // Configure a token with 18-decimal feed (if any exist)
-      await oracleRouter18
-        .connect(adminSigner)
-        .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86_400, true)
-
-      const targetDecimals = BigInt(await oracleRouter18.PRICE_DECIMALS())
-      const expectedPrice = await readNormalizedFeedPrice(
-        contracts.STETH,
-        contracts.CHAINLINK_USD_QUOTE,
-        targetDecimals
-      )
-
-      const [basePrice, quotePrice] = await oracleRouter18.getUsdPrices(
-        contracts.STETH,
-        contracts.STETH
-      )
-      expect(basePrice).to.equal(expectedPrice)
-      expect(quotePrice).to.equal(expectedPrice)
-    })
-
-    it('should handle cross-decimal conversions correctly with 18-decimal unit', async function () {
-      const adminSigner = await getAdminSigner()
-
-      // Configure tokens with different decimals
-      await oracleRouter18
-        .connect(adminSigner)
-        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
-
-      await oracleRouter18
-        .connect(adminSigner)
-        .setTokenFeed(contracts.USDT, QuoteDenomination.USD, 86_400, true)
-
-      const targetDecimals = BigInt(await oracleRouter18.PRICE_DECIMALS())
-      const expectedDai = await readNormalizedFeedPrice(
-        contracts.DAI,
-        contracts.CHAINLINK_USD_QUOTE,
-        targetDecimals
-      )
-      const expectedUsdt = await readNormalizedFeedPrice(
-        contracts.USDT,
-        contracts.CHAINLINK_USD_QUOTE,
-        targetDecimals
-      )
-
-      const [daiPrice, usdtPrice] = await oracleRouter18.getUsdPrices(contracts.DAI, contracts.USDT)
-      expect(daiPrice).to.equal(expectedDai)
-      expect(usdtPrice).to.equal(expectedUsdt)
-    })
-
-    it('should maintain precision with 18-decimal unit', async function () {
-      const adminSigner = await getAdminSigner()
-
-      await oracleRouter18
-        .connect(adminSigner)
-        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
-
-      // Test that we don't lose precision due to scaling
-      const [price1, price2] = await oracleRouter18.getUsdPrices(contracts.DAI, contracts.DAI)
-      expect(price1).to.equal(price2) // Same token should have same price
-    })
-
-    it('should have correct 18-decimal unit values', async function () {
-      expect(await oracleRouter18.PRICE_DECIMALS()).to.equal(18)
-      expect(await oracleRouter18.PRICE_UNIT()).to.equal(ethers.parseEther('1'))
-    })
-
-    it('should scale differently than 8-decimal router for same tokens', async function () {
-      const adminSigner = await getAdminSigner()
-
-      const router8 = await oracleRouterFactory.deploy(adminAddress, 8, feedRegistryAddress)
-      await router8.waitForDeployment()
-      await router8.connect(adminSigner).setEthUsdBridge(86_400)
-      await router8
-        .connect(adminSigner)
-        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
-
-      await oracleRouter18
-        .connect(adminSigner)
-        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
-
-      const [price8, _] = await router8.getUsdPrices(contracts.DAI, contracts.DAI)
-      const [price18, __] = await oracleRouter18.getUsdPrices(contracts.DAI, contracts.DAI)
-
-      // Prices should be different due to different decimal scaling
-      // 18-decimal router should have 10^10 times larger values than 8-decimal router
-      const scaleFactor = 10n ** 10n
-      expect(price18).to.equal(price8 * scaleFactor)
-    })
-  })
-
-  describe('8 Decimal Scaling Tests', function () {
-    let oracleRouterLegacy: OracleRouter
-
-    beforeEach(async function () {
-      oracleRouterLegacy = await oracleRouterFactory.deploy(adminAddress, 8, feedRegistryAddress)
-      await oracleRouterLegacy.waitForDeployment()
-      const adminSigner = await getAdminSigner()
-      await oracleRouterLegacy.connect(adminSigner).setEthUsdBridge(86_400)
-    })
-
-    it('should correctly scale 8-decimal feed to 8-decimal unit', async function () {
-      const adminSigner = await getAdminSigner()
-
-      // Configure a token with 8-decimal feed
-      await oracleRouterLegacy
-        .connect(adminSigner)
-        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
-
-      const targetDecimals = BigInt(await oracleRouterLegacy.PRICE_DECIMALS())
-      const expectedPrice = await readNormalizedFeedPrice(
-        contracts.DAI,
-        contracts.CHAINLINK_USD_QUOTE,
-        targetDecimals
-      )
-
-      const [basePrice, quotePrice] = await oracleRouterLegacy.getUsdPrices(
-        contracts.DAI,
-        contracts.DAI
-      )
-      expect(basePrice).to.equal(expectedPrice)
-      expect(quotePrice).to.equal(expectedPrice)
-    })
-
-    it('should correctly scale 18-decimal feed to 8-decimal unit', async function () {
-      const adminSigner = await getAdminSigner()
-
-      // Configure a token with 18-decimal feed (if any exist)
-      await oracleRouterLegacy
-        .connect(adminSigner)
-        .setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86_400, true)
-
-      const targetDecimals = BigInt(await oracleRouterLegacy.PRICE_DECIMALS())
-      const expectedPrice = await readNormalizedFeedPrice(
-        contracts.STETH,
-        contracts.CHAINLINK_USD_QUOTE,
-        targetDecimals
-      )
-
-      const [basePrice, quotePrice] = await oracleRouterLegacy.getUsdPrices(
-        contracts.STETH,
-        contracts.STETH
-      )
-      expect(basePrice).to.equal(expectedPrice)
-      expect(quotePrice).to.equal(expectedPrice)
-    })
-
-    it('should handle cross-decimal conversions correctly', async function () {
-      const adminSigner = await getAdminSigner()
-
-      // Configure tokens with different decimals
-      await oracleRouterLegacy.connect(adminSigner).setTokenFeed(
-        contracts.DAI, // 18 decimals
-        QuoteDenomination.USD,
-        86_400,
-        true
-      )
-
-      await oracleRouterLegacy.connect(adminSigner).setTokenFeed(
-        contracts.USDT, // 6 decimals
-        QuoteDenomination.USD,
-        86_400,
-        true
-      )
-
-      const targetDecimals = BigInt(await oracleRouterLegacy.PRICE_DECIMALS())
-      const expectedDai = await readNormalizedFeedPrice(
-        contracts.DAI,
-        contracts.CHAINLINK_USD_QUOTE,
-        targetDecimals
-      )
-      const expectedUsdt = await readNormalizedFeedPrice(
-        contracts.USDT,
-        contracts.CHAINLINK_USD_QUOTE,
-        targetDecimals
-      )
-
-      const [daiPrice, usdtPrice] = await oracleRouterLegacy.getUsdPrices(
-        contracts.DAI,
-        contracts.USDT
-      )
-      expect(daiPrice).to.equal(expectedDai)
-      expect(usdtPrice).to.equal(expectedUsdt)
-    })
-
-    it('should maintain precision with 8-decimal unit', async function () {
-      const adminSigner = await getAdminSigner()
-
-      await oracleRouterLegacy
-        .connect(adminSigner)
-        .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
-
-      // Test that we don't lose precision due to scaling
-      const [price1, price2] = await oracleRouterLegacy.getUsdPrices(contracts.DAI, contracts.DAI)
-      expect(price1).to.equal(price2) // Same token should have same price
     })
   })
 
@@ -717,6 +482,15 @@ describe('OracleRouter', function () {
         ).to.be.revertedWithCustomError(oracleRouter, 'InvalidTokenAddress')
       })
 
+      it('reverts when token is not configured', async function () {
+        const adminSigner = await getAdminSigner()
+        await expect(
+          oracleRouter.connect(adminSigner).setTokenEthUsdStalenessOverride(contracts.STETH, 43_200)
+        )
+          .to.be.revertedWithCustomError(oracleRouter, 'TokenNotConfigured')
+          .withArgs(contracts.STETH)
+      })
+
       it('reverts when called by non-admin', async function () {
         const [, nonAdminSigner] = await ethers.getSigners()
         await expect(
@@ -724,6 +498,23 @@ describe('OracleRouter', function () {
             .connect(nonAdminSigner)
             .setTokenEthUsdStalenessOverride(contracts.DAI, 43_200)
         ).to.be.revertedWithCustomError(oracleRouter, 'NotAdminOrManager')
+      })
+
+      it('preserves override when setTokenFeed is called', async function () {
+        const adminSigner = await getAdminSigner()
+        // Set an override
+        await oracleRouter
+          .connect(adminSigner)
+          .setTokenEthUsdStalenessOverride(contracts.DAI, 43_200)
+
+        // Reconfigure the token feed
+        await oracleRouter
+          .connect(adminSigner)
+          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
+
+        // Verify the override is preserved
+        const tokenConfig = await oracleRouter.tokenConfig(contracts.DAI)
+        expect(tokenConfig.ethUsdMaxStalenessOverrideSeconds).to.equal(43_200)
       })
     })
   })
@@ -1124,11 +915,7 @@ describe('OracleRouter', function () {
         it('should revert if ETH/USD bridge is not configured when bridging is needed', async function () {
           const admin = await getAdminSigner()
           // Deploy a fresh router without bridge configured
-          const freshRouter = await oracleRouterFactory.deploy(
-            adminAddress,
-            18,
-            feedRegistryAddress
-          )
+          const freshRouter = await oracleRouterFactory.deploy(adminAddress, feedRegistryAddress)
           await freshRouter.waitForDeployment()
 
           await freshRouter
@@ -1499,48 +1286,6 @@ describe('OracleRouter', function () {
     })
   })
 
-  // -------- Quantization guard
-
-  describe('OracleQuantizedToZero guard', function () {
-    it('reverts when normalization floors to zero at chosen PRICE_UNIT', async function () {
-      const smallUnitFactory = await ethers.getContractFactory('OracleRouter')
-      const smallUnitRouter = await smallUnitFactory.deploy(
-        adminAddress,
-        2, // PRICE_DECIMALS = 2
-        feedRegistryAddress
-      )
-      await smallUnitRouter.waitForDeployment()
-
-      const adminSigner = await getAdminSigner()
-      await smallUnitRouter.connect(adminSigner).setEthUsdBridge(86_400)
-
-      const feedRegistry = await ethers.getContractAt(
-        'ChainlinkFeedRegistryStub',
-        feedRegistryAddress
-      )
-
-      await feedRegistry.setFeed(contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
-        aggregator: await feedRegistry.getAddress(),
-        answer: 1n, // tiny value with 18 decimals → 0 at PRICE_UNIT=1e2
-        updatedAt: await getCurrentTimestamp(),
-        startedAt: 0n,
-        answeredInRound: 1n,
-        roundId: 1n,
-        decimals: 18,
-      })
-
-      await expect(
-        smallUnitRouter
-          .connect(adminSigner)
-          .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
-      ).to.emit(smallUnitRouter, 'TokenConfigured')
-
-      await expect(
-        smallUnitRouter.getUsdPrices(contracts.DAI, contracts.DAI)
-      ).to.be.revertedWithCustomError(smallUnitRouter, 'OracleQuantizedToZero')
-    })
-  })
-
   // -------- Per-token ETH/USD staleness override semantics
 
   describe('Per-token ETH/USD staleness override', function () {
@@ -1864,7 +1609,7 @@ describe('OracleRouter', function () {
       it('should revert if ETH/USD bridge is not configured when bridging is needed', async function () {
         const admin = await getAdminSigner()
         // Deploy a fresh router without bridge configured
-        const freshRouter = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
+        const freshRouter = await oracleRouterFactory.deploy(adminAddress, feedRegistryAddress)
         await freshRouter.waitForDeployment()
 
         await freshRouter
@@ -1911,7 +1656,7 @@ describe('OracleRouter', function () {
         const admin = await getAdminSigner()
 
         // Deploy a fresh router without bridge
-        const freshRouter = await oracleRouterFactory.deploy(adminAddress, 18, feedRegistryAddress)
+        const freshRouter = await oracleRouterFactory.deploy(adminAddress, feedRegistryAddress)
         await freshRouter.waitForDeployment()
 
         // Configure only ETH-quoted tokens (no bridge)

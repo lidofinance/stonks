@@ -24,6 +24,7 @@ const stethLdoPair: TokenPair = {
   name: 'stETH->LDO Rebasable',
   priceFeedHeartbeatTimeout: 86400,
   useEthBridge: true,
+  allowPartialFill: true,
 }
 
 /**
@@ -199,21 +200,9 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const expectedBalance = balanceBefore - rebaseAmount
       expect(balanceAfter).to.be.closeTo(expectedBalance, 2n)
 
-      // Order validity depends on ALLOW_PARTIAL_FILL setting
-      const [hash, , , sellAmount] = await order.getOrderDetails()
-      const allowPartialFill = await stonks.ALLOW_PARTIAL_FILL()
-
-      if (allowPartialFill) {
-        // Should remain valid with partial fills
-        expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
-      } else {
-        // May revert if balance < sellAmount
-        if (balanceAfter < sellAmount) {
-          await expect(order.isValidSignature(hash, '0x'))
-            .to.be.revertedWithCustomError(order, 'InsufficientSellBalance')
-            .withArgs(sellAmount, balanceAfter)
-        }
-      }
+      // Order validity check - 1% rebase should keep balance above sellAmount
+      const [hash] = await order.getOrderDetails()
+      expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
     })
 
     it('should handle 10% negative rebase', async function () {
@@ -230,18 +219,9 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const expectedBalance = balanceBefore - rebaseAmount
       expect(balanceAfter).to.be.closeTo(expectedBalance, 2n)
 
-      const [hash, , , sellAmount] = await order.getOrderDetails()
-      const allowPartialFill = await stonks.ALLOW_PARTIAL_FILL()
-
-      if (allowPartialFill) {
-        expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
-      } else {
-        if (balanceAfter < sellAmount) {
-          await expect(order.isValidSignature(hash, '0x'))
-            .to.be.revertedWithCustomError(order, 'InsufficientSellBalance')
-            .withArgs(sellAmount, balanceAfter)
-        }
-      }
+      // Order validity check - 10% rebase should keep balance above sellAmount
+      const [hash] = await order.getOrderDetails()
+      expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
     })
 
     it('should handle 50% negative rebase (extreme case)', async function () {
@@ -258,17 +238,9 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const expectedBalance = balanceBefore - rebaseAmount
       expect(balanceAfter).to.be.closeTo(expectedBalance, 2n)
 
-      const [hash, , , sellAmount] = await order.getOrderDetails()
-      const allowPartialFill = await stonks.ALLOW_PARTIAL_FILL()
-
-      if (allowPartialFill) {
-        expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
-      } else {
-        // 50% rebase will definitely make balance < sellAmount
-        await expect(order.isValidSignature(hash, '0x'))
-          .to.be.revertedWithCustomError(order, 'InsufficientSellBalance')
-          .withArgs(sellAmount, balanceAfter)
-      }
+      // Order validity check - with partial fills enabled, 50% rebase should still be valid
+      const [hash] = await order.getOrderDetails()
+      expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
     })
   })
 
@@ -427,13 +399,9 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(afterNegative).to.be.closeTo(beforeNegative - negativeRebase, 2n)
       expect(afterNegative).to.be.closeTo(afterPositive - negativeRebase, 2n)
 
-      // Order should still be valid
+      // Order should still be valid after positive then negative rebase
       const [hash] = await order.getOrderDetails()
-      const allowPartialFill = await stonks.ALLOW_PARTIAL_FILL()
-
-      if (allowPartialFill || afterNegative >= (await order.getOrderDetails())[3]) {
-        expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
-      }
+      expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
     })
   })
 
@@ -467,12 +435,9 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
 
       expect(balanceAfter).to.be.closeTo(balanceBefore - tinyRebase, 2n)
 
+      // Order should remain valid after tiny rebase
       const [hash] = await smallOrder.getOrderDetails()
-      const allowPartialFill = await stonks.ALLOW_PARTIAL_FILL()
-
-      if (allowPartialFill) {
-        expect(await smallOrder.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
-      }
+      expect(await smallOrder.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
     })
   })
 
@@ -555,12 +520,9 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       expect(currentBalance).to.be.gt((initialBalance * 94n) / 100n)
       expect(currentBalance).to.be.lt((initialBalance * 96n) / 100n)
 
+      // Order should remain valid after multiple small rebases
       const [hash] = await order.getOrderDetails()
-      const allowPartialFill = await stonks.ALLOW_PARTIAL_FILL()
-
-      if (allowPartialFill) {
-        expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
-      }
+      expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
     })
 
     it('should handle sequence of mixed rebases', async function () {
@@ -607,11 +569,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
 
       // Order should still be valid (not expired yet)
       const [hash] = await order.getOrderDetails()
-      const allowPartialFill = await stonks.ALLOW_PARTIAL_FILL()
-
-      if (allowPartialFill || balanceAfter >= (await order.getOrderDetails())[3]) {
-        expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
-      }
+      expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
     })
 
     it('should handle positive rebase right at expiration boundary', async function () {
@@ -1027,14 +985,9 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const finalBalance = await tokenFrom.balanceOf(orderAddress)
       expect(finalBalance).to.be.lt((initialBalance * 15n) / 100n)
 
-      const [hash, , , sellAmount] = await order.getOrderDetails()
-      const allowPartialFill = await stonks.ALLOW_PARTIAL_FILL()
-
-      if (!allowPartialFill) {
-        await expect(order.isValidSignature(hash, '0x'))
-          .to.be.revertedWithCustomError(order, 'InsufficientSellBalance')
-          .withArgs(sellAmount, finalBalance)
-      }
+      // Order should remain valid with partial fills enabled even after 90% rebase
+      const [hash] = await order.getOrderDetails()
+      expect(await order.isValidSignature(hash, '0x')).to.equal(MAGIC_VALUE)
     })
 
     it('should handle multiple severe rebases in succession', async function () {

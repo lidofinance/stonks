@@ -59,7 +59,6 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
   const oracleRouterFactory = await ethers.getContractFactory('OracleRouter')
   const oracleRouter = await oracleRouterFactory.deploy(
     await manager.getAddress(),
-    8,
     contracts.CHAINLINK_PRICE_FEED_REGISTRY
   )
   await oracleRouter.waitForDeployment()
@@ -193,7 +192,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
     amountConverterParams: {
       oracleRouter: await oracleRouter.getAddress(),
       allowedTokensToSell: [pair.tokenFrom],
-      allowedStableTokensToBuy: [pair.tokenTo],
+      allowedTokensToBuy: [pair.tokenTo],
       useEthAnchor: pair.useEthBridge ?? false,
     },
     skipRouterConfiguration: true,

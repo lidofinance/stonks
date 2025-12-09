@@ -202,13 +202,8 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
       })
 
       it('should revert with OracleQuantizedToZero when feed normalizes to zero', async function () {
-        const unitDecimals = 6
         const freshRouterFactory = await ethers.getContractFactory('OracleRouter')
-        const freshRouter = await freshRouterFactory.deploy(
-          contracts.ADMIN,
-          unitDecimals,
-          feedRegistryAddress
-        )
+        const freshRouter = await freshRouterFactory.deploy(contracts.ADMIN, feedRegistryAddress)
         await freshRouter.waitForDeployment()
 
         const freshFactoryContract = await ethers.getContractFactory('AmountConverterFactory')
@@ -225,6 +220,28 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
         const adminSigner = await ethers.getImpersonatedSigner(contracts.ADMIN)
         await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
 
+        const currentTimestamp = await getCurrentTimestamp()
+        const feedRegistry = await ethers.getContractAt(
+          'ChainlinkFeedRegistryStub',
+          feedRegistryAddress
+        )
+
+        const priceDecimals = await getRouterPriceDecimals(freshRouter)
+        const feedDecimals = 20
+
+        expect(priceDecimals).to.equal(18n)
+
+        const scaleDenominator = 10n ** BigInt(feedDecimals - Number(priceDecimals))
+        const maxAnswerBeforeZero = scaleDenominator - 1n
+
+        await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
+          answer: maxAnswerBeforeZero,
+          updatedAt: currentTimestamp,
+          roundId: 1n,
+          answeredInRound: 1n,
+          decimals: feedDecimals,
+        })
+
         await freshRouter
           .connect(adminSigner)
           .setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86_400, true)
@@ -232,45 +249,25 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
           .connect(adminSigner)
           .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
 
-        const currentTimestamp = await getCurrentTimestamp()
-        const feedRegistry = await ethers.getContractAt(
-          'ChainlinkFeedRegistryStub',
-          feedRegistryAddress
-        )
         const feed = await feedRegistry.feeds(contracts.DAI, contracts.CHAINLINK_USD_QUOTE)
-
-        const priceDecimals = await getRouterPriceDecimals(freshRouter)
-        const feedDecimals = 8n
-
-        // Explicit precondition with exact values
-        expect(priceDecimals).to.equal(6n)
-        expect(feedDecimals).to.equal(8n)
-
-        const minNonZeroFeedPrice = 1n
-        await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
-          answer: minNonZeroFeedPrice,
-          updatedAt: currentTimestamp,
-          roundId: 1n,
-          answeredInRound: 1n,
-          decimals: Number(feedDecimals),
-        })
 
         await expect(
           converter.getExpectedOut(contracts.DAI, contracts.USDC, ethers.parseEther('1'))
         )
           .to.be.revertedWithCustomError(freshRouter, 'OracleQuantizedToZero')
-          .withArgs(feed.aggregator, Number(feedDecimals), Number(priceDecimals))
+          .withArgs(feed.aggregator, feedDecimals, Number(priceDecimals))
+
+        await updateTokenFeed(feedConfig, contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
+          decimals: 8,
+          answer: 1n * 10n ** 8n,
+        })
       })
     })
 
     describe('Bridge missing in ETH mode', function () {
       it('should revert with EthUsdBridgeMissing when bridge not configured and bridging needed', async function () {
         const freshRouterFactory = await ethers.getContractFactory('OracleRouter')
-        const freshRouter = await freshRouterFactory.deploy(
-          contracts.ADMIN,
-          18,
-          feedRegistryAddress
-        )
+        const freshRouter = await freshRouterFactory.deploy(contracts.ADMIN, feedRegistryAddress)
         await freshRouter.waitForDeployment()
 
         const freshFactoryContract = await ethers.getContractFactory('AmountConverterFactory')
@@ -327,7 +324,6 @@ describe('Integration: OracleRouter Failure Scenarios', function () {
           .connect(adminSigner)
           .setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86_400, true)
 
-        // deterministically ensure both feeds are positive and fresh
         await refreshFeedData(feedConfig, [contracts.DAI, contracts.USDC])
 
         const freshTimestamp = await getCurrentTimestamp()

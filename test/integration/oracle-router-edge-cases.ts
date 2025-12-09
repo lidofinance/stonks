@@ -58,7 +58,6 @@ describe('OracleRouter edge cases', function () {
       const routerFactory = await ethers.getContractFactory('OracleRouter')
       router = await routerFactory.deploy(
         await deployer.getAddress(),
-        18,
         contracts.CHAINLINK_PRICE_FEED_REGISTRY
       )
       await router.waitForDeployment()
@@ -118,7 +117,7 @@ describe('OracleRouter edge cases', function () {
 
       const [deployer] = await ethers.getSigners()
       const routerFactory = await ethers.getContractFactory('OracleRouter')
-      router = await routerFactory.deploy(await deployer.getAddress(), 18, stubAddress)
+      router = await routerFactory.deploy(await deployer.getAddress(), stubAddress)
       await router.waitForDeployment()
 
       const factoryContract = await ethers.getContractFactory('AmountConverterFactory')
@@ -248,7 +247,6 @@ describe('OracleRouter edge cases', function () {
       const routerFactory = await ethers.getContractFactory('OracleRouter')
       router = await routerFactory.deploy(
         await deployer.getAddress(),
-        18,
         contracts.CHAINLINK_PRICE_FEED_REGISTRY
       )
       await router.waitForDeployment()
@@ -343,7 +341,6 @@ describe('OracleRouter edge cases', function () {
       const routerFactory = await ethers.getContractFactory('OracleRouter')
       router = await routerFactory.deploy(
         await deployer.getAddress(),
-        18,
         contracts.CHAINLINK_PRICE_FEED_REGISTRY
       )
       await router.waitForDeployment()
@@ -405,7 +402,6 @@ describe('OracleRouter edge cases', function () {
       const routerFactory = await ethers.getContractFactory('OracleRouter')
       router = await routerFactory.deploy(
         await deployer.getAddress(),
-        18,
         contracts.CHAINLINK_PRICE_FEED_REGISTRY
       )
       await router.waitForDeployment()
@@ -422,15 +418,13 @@ describe('OracleRouter edge cases', function () {
     it('should reflect heartbeat change immediately', async () => {
       await router.setTokenFeed(contracts.STETH, QuoteDenomination.USD, 3600, true)
 
-      let config = await router.tokenConfig(contracts.STETH)
-      const feedConfig1 = config[1]
-      expect(feedConfig1[3]).to.equal(3600)
+      const staleness1 = (await router.tokenConfig(contracts.STETH))[0][3]
+      expect(staleness1).to.equal(3600)
 
       await router.setTokenFeed(contracts.STETH, QuoteDenomination.USD, 7200, true)
 
-      config = await router.tokenConfig(contracts.STETH)
-      const feedConfig2 = config[1]
-      expect(feedConfig2[3]).to.equal(7200)
+      const staleness2 = (await router.tokenConfig(contracts.STETH))[0][3]
+      expect(staleness2).to.equal(7200)
     })
 
     it('should deactivate token and reject queries immediately', async () => {

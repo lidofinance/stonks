@@ -290,11 +290,12 @@ describe('State invariants', function () {
       expect(await stonks.isCreationPaused()).to.be.true
 
       await order.connect(emergencyOperator).emergencyCancelAndReturn()
+      expect(await order.cancelled()).to.be.true
 
       const [hash] = await order.getOrderDetails()
       await expect(order.isValidSignature(hash, '0x')).to.be.revertedWithCustomError(
         order,
-        'OrderCancelled'
+        'OrderIsCancelled'
       )
     })
   })
@@ -322,6 +323,7 @@ describe('State invariants', function () {
       const orderBalance = await tokenFrom.balanceOf(await order.getAddress())
 
       await order.connect(adminSigner).emergencyCancelAndReturn()
+      expect(await order.cancelled()).to.be.true
 
       const stonksBalanceAfter = await tokenFrom.balanceOf(await stonks.getAddress())
 
@@ -372,6 +374,8 @@ describe('State invariants', function () {
       await order.connect(adminSigner).setEmergencyOperator(await adminSigner.getAddress())
       await order.connect(adminSigner).emergencyCancelAndReturn()
 
+      expect(await order.cancelled()).to.be.true
+
       const stonksBalanceAfter = await tokenFrom.balanceOf(await stonks.getAddress())
 
       expect(stonksBalanceAfter).to.be.closeTo(orderBalance, parseEther('0.01'))
@@ -398,13 +402,13 @@ describe('State invariants', function () {
       await order.connect(adminSigner).setEmergencyOperator(await adminSigner.getAddress())
       await order.connect(adminSigner).emergencyCancelAndReturn()
 
+      expect(await order.cancelled()).to.be.true
+
       const [hash] = await order.getOrderDetails()
       await expect(order.isValidSignature(hash, '0x')).to.be.revertedWithCustomError(
         order,
-        'OrderCancelled'
+        'OrderIsCancelled'
       )
-
-      await order.connect(adminSigner).emergencyCancelAndReturn()
     })
 
     it('should never allow signature validation when globally paused', async function () {

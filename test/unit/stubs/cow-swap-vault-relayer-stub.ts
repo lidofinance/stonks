@@ -25,57 +25,84 @@ type HardhatEthersSigner = Awaited<ReturnType<(typeof ethers)['getSigners']>>[nu
 
 const contracts = getContracts()
 
+const STETH_PRICE = 2000n * 10n ** 8n
+const DAI_PRICE = 1n * 10n ** 8n
+const FEED_DECIMALS = 8n
+const MAX_STALENESS = 86_400
+const ORDER_DURATION = 3600
+const MARGIN_BPS = 1_00
+const PRICE_TOLERANCE_BPS = 50
+const FUND_AMOUNT = 10n ** 18n
+const ETH_BALANCE = 100n * 10n ** 18n
+
 describe('CoWSwapVaultRelayerStub', async () => {
   let owner: HardhatEthersSigner
   let manager: HardhatEthersSigner
   let deployer: HardhatEthersSigner
   let stranger: HardhatEthersSigner
+  let ownerAddress: string
+  let managerAddress: string
+  let strangerAddress: string
   let relayer: CoWSwapVaultRelayerStub
   let stonks: Stonks
   let snapshot: SnapshotRestorer
 
   before(async () => {
     ;[owner, manager, deployer, stranger] = await ethers.getSigners()
-    relayer = await new CoWSwapVaultRelayerStub__factory(deployer).deploy(owner, manager)
+    ownerAddress = await owner.getAddress()
+    managerAddress = await manager.getAddress()
+    strangerAddress = await stranger.getAddress()
+
+    relayer = await new CoWSwapVaultRelayerStub__factory(deployer).deploy(
+      ownerAddress,
+      managerAddress
+    )
     await relayer.waitForDeployment()
 
-    assert.equal(await relayer.owner(), owner.address)
-    assert.equal(await relayer.manager(), manager.address)
+    assert.equal(await relayer.owner(), ownerAddress)
+    assert.equal(await relayer.manager(), managerAddress)
 
     const settlement = await new CoWSwapSettlementStub__factory(deployer).deploy()
     await settlement.waitForDeployment()
 
     const feedRegistry = await new ChainlinkFeedRegistryStub__factory(deployer).deploy(
-      owner,
-      manager
+      ownerAddress,
+      managerAddress
     )
     await feedRegistry.waitForDeployment()
+    const feedRegistryAddress = await feedRegistry.getAddress()
+
+    const latestBlock = await ethers.provider.getBlock('latest')
+    const nowTs = BigInt(latestBlock!.timestamp)
+
+    const feedData = {
+      aggregator: feedRegistryAddress,
+      roundId: 1n,
+      updatedAt: nowTs,
+      startedAt: nowTs,
+      answeredInRound: 1n,
+      decimals: FEED_DECIMALS,
+    }
 
     await feedRegistry.connect(manager).setFeed(contracts.STETH, contracts.CHAINLINK_USD_QUOTE, {
-      aggregator: await feedRegistry.getAddress(), // Use registry address as aggregator
-      roundId: 1n,
-      answer: 1000n * 10n ** 18n,
-      updatedAt: 0n,
-      startedAt: 0n,
-      answeredInRound: 1n,
-      decimals: 18n,
+      ...feedData,
+      answer: STETH_PRICE,
     })
     await feedRegistry.connect(manager).setFeed(contracts.DAI, contracts.CHAINLINK_USD_QUOTE, {
-      aggregator: await feedRegistry.getAddress(), // Use registry address as aggregator
-      roundId: 1n,
-      answer: 1n * 10n ** 8n,
-      updatedAt: 0n,
-      startedAt: 0n,
-      answeredInRound: 1n,
-      decimals: 8n,
+      ...feedData,
+      answer: DAI_PRICE,
     })
 
     const oracleRouter = await deployAndConfigureOracleRouter({
-      feedRegistry: await feedRegistry.getAddress(),
+      feedRegistry: feedRegistryAddress,
       tokensUsd: [contracts.STETH, contracts.DAI],
+      maxStaleness: MAX_STALENESS,
+      skipEthUsdBridge: true,
     })
+    const oracleRouterAddress = await oracleRouter.getAddress()
+
     const amountConverter = await new AmountConverter__factory(deployer).deploy(
-      await oracleRouter.getAddress(),
+      oracleRouterAddress,
       [contracts.STETH],
       [contracts.DAI],
       false
@@ -93,14 +120,14 @@ describe('CoWSwapVaultRelayerStub', async () => {
     stonks = await new Stonks__factory(deployer).deploy({
       admin: contracts.ADMIN,
       agent: contracts.AGENT,
-      manager: manager.address,
+      manager: managerAddress,
       tokenFrom: contracts.STETH,
       tokenTo: contracts.DAI,
       amountConverter: await amountConverter.getAddress(),
       orderSample: await orderSample.getAddress(),
-      orderDurationInSeconds: 3600,
-      marginInBasisPoints: 1_00,
-      priceToleranceInBasisPoints: 50,
+      orderDurationInSeconds: ORDER_DURATION,
+      marginInBasisPoints: MARGIN_BPS,
+      priceToleranceInBasisPoints: PRICE_TOLERANCE_BPS,
       maxImprovementInBasisPoints: 0,
       allowPartialFill: false,
     })
@@ -112,26 +139,26 @@ describe('CoWSwapVaultRelayerStub', async () => {
   afterEach(async () => snapshot.restore())
 
   it('should transfer ownership and emit event', async () => {
-    assert.equal(await relayer.owner(), owner.address)
-    await expect(relayer.connect(stranger).setOwner(stranger))
+    assert.equal(await relayer.owner(), ownerAddress)
+    await expect(relayer.connect(stranger).setOwner(strangerAddress))
       .to.revertedWithCustomError(relayer, 'NotOwner')
-      .withArgs(stranger.address, owner.address)
+      .withArgs(strangerAddress, ownerAddress)
 
-    const tx = await relayer.connect(owner).setOwner(stranger)
+    const tx = await relayer.connect(owner).setOwner(strangerAddress)
     const receipt = await tx.wait()
-    expect(receipt).to.emit(relayer, 'OwnerSet').withArgs(stranger.address)
+    expect(receipt).to.emit(relayer, 'OwnerSet').withArgs(strangerAddress)
 
-    assert.equal(await relayer.owner(), stranger.address)
+    assert.equal(await relayer.owner(), strangerAddress)
   })
 
   it('should fill order and transfer tokens', async () => {
     await impersonateAccount(contracts.AGENT)
-    await setBalance(contracts.AGENT, 100n * 10n ** 18n)
+    await setBalance(contracts.AGENT, ETH_BALANCE)
 
     const agentUnlocked = await ethers.getSigner(contracts.AGENT)
 
     const stETH = IERC20__factory.connect(contracts.STETH, ethers.provider)
-    await stETH.connect(agentUnlocked).transfer(stonks, 10n ** 18n)
+    await stETH.connect(agentUnlocked).transfer(stonks, FUND_AMOUNT)
 
     const tx = await stonks
       .connect(manager)
@@ -154,12 +181,10 @@ describe('CoWSwapVaultRelayerStub', async () => {
       stETH.balanceOf(order),
     ])
 
-    // when manager is set only it may fill orders
     await expect(relayer.connect(stranger).fill(order))
       .revertedWithCustomError(relayer, 'NotManager')
-      .withArgs(stranger.address, manager.address)
+      .withArgs(strangerAddress, managerAddress)
 
-    // when manager is zero address anyone can fill order
     await relayer.connect(owner).setManager(ethers.ZeroAddress)
 
     const fillTx = await relayer.connect(stranger).fill(order)

@@ -15,7 +15,6 @@ let globalFeedRegistryStub: ChainlinkFeedRegistryStub | null = null
 export type TestOracleRouterConfig = {
   tokens: string[]
   admin?: string
-  unitDecimals?: number
   useRealPrices?: boolean
 }
 
@@ -24,7 +23,7 @@ async function initializeGlobalOracleRouter(config: TestOracleRouterConfig): Pro
     return
   }
 
-  const { tokens, admin, unitDecimals = 18, useRealPrices = true } = config
+  const { tokens, admin, useRealPrices = true } = config
   const [deployer] = await ethers.getSigners()
   const adminAddress = admin || (await deployer.getAddress())
 
@@ -32,11 +31,7 @@ async function initializeGlobalOracleRouter(config: TestOracleRouterConfig): Pro
   globalFeedRegistryStub = stub
 
   const oracleRouterFactory = await ethers.getContractFactory('OracleRouter')
-  const oracleRouter = await oracleRouterFactory.deploy(
-    adminAddress,
-    unitDecimals,
-    await stub.getAddress()
-  )
+  const oracleRouter = await oracleRouterFactory.deploy(adminAddress, await stub.getAddress())
   await oracleRouter.waitForDeployment()
   globalOracleRouter = oracleRouter
 

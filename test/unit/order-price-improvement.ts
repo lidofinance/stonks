@@ -77,7 +77,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       },
       amountConverterParams: {
         allowedTokensToSell: [contracts.STETH],
-        allowedStableTokensToBuy: [contracts.DAI],
+        allowedTokensToBuy: [contracts.DAI],
       },
     })
 
@@ -147,7 +147,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       amountConverterParams: {
         oracleRouter: await oracleRouter.getAddress(),
         allowedTokensToSell: [contracts.STETH],
-        allowedStableTokensToBuy: [contracts.DAI],
+        allowedTokensToBuy: [contracts.DAI],
       },
     })
 
@@ -355,7 +355,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         },
         amountConverterParams: {
           allowedTokensToSell: [contracts.STETH],
-          allowedStableTokensToBuy: [contracts.DAI],
+          allowedTokensToBuy: [contracts.DAI],
         },
       })
 
@@ -470,7 +470,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         amountConverterParams: {
           oracleRouter: await oracleRouterLocal.getAddress(),
           allowedTokensToSell: [contracts.STETH],
-          allowedStableTokensToBuy: [contracts.DAI],
+          allowedTokensToBuy: [contracts.DAI],
         },
       })
 

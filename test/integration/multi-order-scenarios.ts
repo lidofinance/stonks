@@ -31,7 +31,7 @@ describe('Multi-order scenarios', function () {
   const pair: TokenPair = {
     tokenFrom: contracts.STETH,
     tokenTo: contracts.LDO,
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
     useEthBridge: true,
     allowPartialFill: true,
   }
@@ -305,7 +305,11 @@ describe('Multi-order scenarios', function () {
       )
 
       const stonksBalanceBefore = await tokenFrom.balanceOf(await stonks.getAddress())
+
       await order.connect(adminSigner).emergencyCancelAndReturn()
+
+      expect(await order.cancelled()).to.be.true
+
       const stonksBalanceAfter = await tokenFrom.balanceOf(await stonks.getAddress())
 
       expect(stonksBalanceAfter).to.be.closeTo(
@@ -316,7 +320,7 @@ describe('Multi-order scenarios', function () {
       const [hash] = await order.getOrderDetails()
       await expect(order.isValidSignature(hash, '0x')).to.be.revertedWithCustomError(
         order,
-        'OrderCancelled'
+        'OrderIsCancelled'
       )
     })
   })
@@ -360,13 +364,15 @@ describe('Multi-order scenarios', function () {
 
     it('should handle order expiration cascades', async function () {
       const orders: Order[] = []
-      const expirations = [1, 2, 3]
+      const orderCount = 3
+      const orderDuration = await stonks.ORDER_DURATION_IN_SECONDS()
 
-      for (const expiry of expirations) {
+      for (let i = 0; i < orderCount; i++) {
         const order = await placeOrder(parseEther('20'))
         orders.push(order)
-        await time.increase(expiry * 3600)
       }
+
+      await time.increase(orderDuration + 1n)
 
       for (const order of orders) {
         const [hash] = await order.getOrderDetails()
@@ -412,6 +418,9 @@ describe('Multi-order scenarios', function () {
       await orders[1].connect(adminSigner).emergencyCancelAndReturn()
       await orders[3].connect(adminSigner).emergencyCancelAndReturn()
 
+      expect(await orders[1].cancelled()).to.be.true
+      expect(await orders[3].cancelled()).to.be.true
+
       const [hash0] = await orders[0].getOrderDetails()
       const [hash1] = await orders[1].getOrderDetails()
       const [hash2] = await orders[2].getOrderDetails()
@@ -421,12 +430,12 @@ describe('Multi-order scenarios', function () {
       expect(await orders[0].isValidSignature(hash0, '0x')).to.equal(MAGIC_VALUE)
       await expect(orders[1].isValidSignature(hash1, '0x')).to.be.revertedWithCustomError(
         orders[1],
-        'OrderCancelled'
+        'OrderIsCancelled'
       )
       expect(await orders[2].isValidSignature(hash2, '0x')).to.equal(MAGIC_VALUE)
       await expect(orders[3].isValidSignature(hash3, '0x')).to.be.revertedWithCustomError(
         orders[3],
-        'OrderCancelled'
+        'OrderIsCancelled'
       )
       expect(await orders[4].isValidSignature(hash4, '0x')).to.equal(MAGIC_VALUE)
     })

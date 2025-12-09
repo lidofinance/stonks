@@ -28,7 +28,7 @@ export type DeployStonksParams = {
   amountConverterParams: {
     oracleRouter?: string
     allowedTokensToSell: string[]
-    allowedStableTokensToBuy: string[]
+    allowedTokensToBuy: string[]
     useEthAnchor?: boolean
   }
   skipRouterConfiguration?: boolean
@@ -69,7 +69,6 @@ export async function deployStonks({
       const [deployer] = await ethers.getSigners()
       oracleRouter = await new OracleRouter__factory(deployer).deploy(
         admin,
-        18,
         priceFeedRegistry as any
       )
       await oracleRouter.waitForDeployment()
@@ -119,7 +118,7 @@ export async function deployStonks({
 
     const deployTokenConverterTX = await amountConverterFactory.deployAmountConverter(
       amountConverterParams.allowedTokensToSell,
-      amountConverterParams.allowedStableTokensToBuy,
+      amountConverterParams.allowedTokensToBuy,
       amountConverterParams.useEthAnchor ?? false
     )
     const receipt = await deployTokenConverterTX.wait()

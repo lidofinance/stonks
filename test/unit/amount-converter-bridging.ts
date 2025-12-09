@@ -342,10 +342,8 @@ describe('AmountConverter - Bridging Tests', () => {
         useRealPrices: true,
       })
       const oracleRouterFactory = await ethers.getContractFactory('OracleRouter')
-      const unitDecimals = Number(await router.PRICE_DECIMALS())
       const freshRouter = await oracleRouterFactory.deploy(
         contracts.ADMIN,
-        unitDecimals,
         await feedRegistry.getAddress()
       )
       await freshRouter.waitForDeployment()

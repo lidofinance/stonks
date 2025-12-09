@@ -45,7 +45,11 @@ async function main() {
 
   const factory = AmountConverterFactory__factory.connect(AMOUNT_CONVERTER_FACTORY, deployer)
 
-  const tx = await factory.deployAmountConverter(ALLOWED_TOKENS_TO_SELL, ALLOWED_TOKENS_TO_BUY, USE_ETH_ANCHOR)
+  const tx = await factory.deployAmountConverter(
+    ALLOWED_TOKENS_TO_SELL,
+    ALLOWED_TOKENS_TO_BUY,
+    USE_ETH_ANCHOR
+  )
 
   const receipt = await waitForDeployment(tx)
 
@@ -57,7 +61,7 @@ async function main() {
     throw new Error(`AmountConverterDeployed event is not found in the deploy tx`)
   }
 
-  const { amountConverterAddress, oracleRouter, allowedTokensToSell, allowedStableTokensToBuy } =
+  const { amountConverterAddress, oracleRouter, allowedTokensToSell, allowedTokensToBuy } =
     amountConverterDeployedLog.args
 
   // prettier-ignore
@@ -80,7 +84,7 @@ async function main() {
     ALLOWED_TOKENS_TO_SELL.map((a) => a.toLowerCase())
   )
   assert.deepEqual(
-    allowedStableTokensToBuy.map((a) => a.toLowerCase()),
+    allowedTokensToBuy.map((a) => a.toLowerCase()),
     ALLOWED_TOKENS_TO_BUY.map((a) => a.toLowerCase())
   )
 }

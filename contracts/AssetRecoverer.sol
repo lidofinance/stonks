@@ -56,7 +56,6 @@ abstract contract AssetRecoverer is Ownable {
 
     /**
      * @dev Allows the admin or manager to recover Ether held by the contract.
-     * @notice Implements CEI pattern: Checks (authorization) -> Effects (events) -> Interactions (transfer)
      * Emits an EtherRecovered event upon success.
      */
     function recoverEther() external onlyAdminOrManager {
@@ -69,6 +68,7 @@ abstract contract AssetRecoverer is Ownable {
 
     /**
      * @dev Allows the admin or manager to recover ERC721 tokens held by the contract.
+     *      The receiver must implement the IERC721Receiver interface to receive the tokens.
      * @param token_ The address of the ERC721 token to recover.
      * @param tokenId_ The token ID of the ERC721 token to recover.
      * Emits an ERC721Recovered event upon success.
@@ -81,6 +81,7 @@ abstract contract AssetRecoverer is Ownable {
 
     /**
      * @dev Allows the admin or manager to recover ERC1155 tokens held by the contract.
+     *      The receiver must implement the IERC1155Receiver interface to receive the tokens.
      * @param token_ The address of the ERC1155 token to recover.
      * @param tokenId_ The token ID of the ERC1155 token to recover.
      * Emits an ERC1155Recovered event upon success.

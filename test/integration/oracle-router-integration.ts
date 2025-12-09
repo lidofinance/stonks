@@ -22,7 +22,6 @@ describe('OracleRouter integration', function () {
     const routerFactory = await ethers.getContractFactory('OracleRouter')
     router = await routerFactory.deploy(
       await deployer.getAddress(),
-      18,
       contracts.CHAINLINK_PRICE_FEED_REGISTRY
     )
     await router.waitForDeployment()
@@ -248,15 +247,13 @@ describe('OracleRouter integration', function () {
     it('should allow admin to change heartbeat timeout', async () => {
       await router.setTokenFeed(contracts.DAI, QuoteDenomination.USD, 3600, true)
 
-      let config = await router.tokenConfig(contracts.DAI)
-      const feedConfig1 = config[1]
-      expect(feedConfig1[3]).to.equal(3600)
+      const staleness1 = (await router.tokenConfig(contracts.DAI))[0][3]
+      expect(staleness1).to.equal(3600)
 
       await router.setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
 
-      config = await router.tokenConfig(contracts.DAI)
-      const feedConfig2 = config[1]
-      expect(feedConfig2[3]).to.equal(86400)
+      const staleness2 = (await router.tokenConfig(contracts.DAI))[0][3]
+      expect(staleness2).to.equal(86400)
     })
   })
 
@@ -271,7 +268,6 @@ describe('OracleRouter integration', function () {
       const [deployer] = await ethers.getSigners()
       const freshRouter = await ethers.deployContract('OracleRouter', [
         await deployer.getAddress(),
-        18,
         contracts.CHAINLINK_PRICE_FEED_REGISTRY,
       ])
 

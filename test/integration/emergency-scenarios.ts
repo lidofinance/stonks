@@ -237,10 +237,6 @@ describe('Emergency scenarios', () => {
   })
 
   describe('Emergency cancel and return', () => {
-    beforeEach(async () => {
-      // Reset state for each test - don't use snapshot here as it may interfere with Order state
-    })
-
     it('should emergency cancel active order and return funds', async () => {
       const order = await placeOrder(parseEther('1000'))
 
@@ -250,6 +246,8 @@ describe('Emergency scenarios', () => {
 
       await order.connect(emergencyOperator).emergencyCancelAndReturn()
 
+      expect(await order.cancelled()).to.be.true
+
       const stonksBalanceAfter = await tokenFrom.balanceOf(await stonks.getAddress())
 
       const balanceIncrease = stonksBalanceAfter - stonksBalanceBefore
@@ -258,7 +256,7 @@ describe('Emergency scenarios', () => {
       const [hash] = await order.getOrderDetails()
       await expect(order.isValidSignature(hash, '0x')).to.be.revertedWithCustomError(
         order,
-        'OrderCancelled'
+        'OrderIsCancelled'
       )
     })
 
@@ -273,6 +271,9 @@ describe('Emergency scenarios', () => {
 
       const stonksBalanceBefore = await tokenFrom.balanceOf(await stonks.getAddress())
       await order.connect(emergencyOperator).emergencyCancelAndReturn()
+
+      expect(await order.cancelled()).to.be.true
+
       const stonksBalanceAfter = await tokenFrom.balanceOf(await stonks.getAddress())
 
       const balanceIncrease = stonksBalanceAfter - stonksBalanceBefore
@@ -291,6 +292,9 @@ describe('Emergency scenarios', () => {
 
       const stonksBalanceBefore = await tokenFrom.balanceOf(await stonks.getAddress())
       await order.connect(emergencyOperator).emergencyCancelAndReturn()
+
+      expect(await order.cancelled()).to.be.true
+
       const stonksBalanceAfter = await tokenFrom.balanceOf(await stonks.getAddress())
 
       const balanceIncrease = stonksBalanceAfter - stonksBalanceBefore

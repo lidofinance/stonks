@@ -34,9 +34,7 @@ describe('AmountConverter - Fuzz Tests', () => {
     await refreshTestFeedData([addresses.STETH, addresses.LDO, addresses.DAI, addresses.USDC])
 
     const admin = await getAdminSigner()
-    await router
-      .connect(admin)
-      .setTokenFeed(addresses.STETH, QuoteDenomination.ETH, 86400, true)
+    await router.connect(admin).setTokenFeed(addresses.STETH, QuoteDenomination.ETH, 86400, true)
     await router.connect(admin).setTokenFeed(addresses.LDO, QuoteDenomination.ETH, 86400, true)
   })
 
@@ -108,9 +106,22 @@ describe('AmountConverter - Fuzz Tests', () => {
       }
 
       describe('Decimal scaling invariants', () => {
-        it('should never overflow for valid uint128 amounts', async () => {
+        it('should handle all safe values from minimum to maximum', async () => {
+          const decimalsDiff =
+            decimalsFrom >= decimalsTo ? decimalsFrom - decimalsTo : decimalsTo - decimalsFrom
+          const pow10 = 10n ** decimalsDiff
+
+          let maxSafeAmount: bigint
+          if (decimalsFrom >= decimalsTo) {
+            maxSafeAmount = ethers.MaxUint256 / priceFromUsd
+          } else {
+            const contractLimit = ethers.MaxUint256 / pow10
+            const testHelperLimit = ethers.MaxUint256 / (pow10 * priceFromUsd)
+            maxSafeAmount = contractLimit < testHelperLimit ? contractLimit : testHelperLimit
+          }
+
           await fc.assert(
-            fc.asyncProperty(fc.bigInt({ min: 1n, max: 2n ** 128n - 1n }), async (amount) => {
+            fc.asyncProperty(fc.bigInt({ min: 1n, max: maxSafeAmount }), async (amount) => {
               const result = await converter.getExpectedOut(tokenFrom, tokenTo, amount)
               const expected = calculateExpectedOut(amount)
               expect(result).to.equal(expected)
@@ -242,24 +253,131 @@ describe('AmountConverter - Fuzz Tests', () => {
       })
 
       describe('Boundary conditions', () => {
-        it('should handle minimum amounts', async () => {
+        it('should handle minimum amounts (1)', async () => {
           const amount = 1n
           const result = await converter.getExpectedOut(tokenFrom, tokenTo, amount)
           const expected = calculateExpectedOut(amount)
           expect(result).to.equal(expected)
         })
 
-        it('should handle amounts near uint128 max', async () => {
+        it('should handle maximum safe amounts', async () => {
+          const decimalsDiff =
+            decimalsFrom >= decimalsTo ? decimalsFrom - decimalsTo : decimalsTo - decimalsFrom
+          const pow10 = 10n ** decimalsDiff
+
+          let maxSafeAmount: bigint
+          if (decimalsFrom >= decimalsTo) {
+            maxSafeAmount = ethers.MaxUint256 / priceFromUsd
+          } else {
+            const contractLimit = ethers.MaxUint256 / pow10
+            const testHelperLimit = ethers.MaxUint256 / (pow10 * priceFromUsd)
+            maxSafeAmount = contractLimit < testHelperLimit ? contractLimit : testHelperLimit
+          }
+
+          const result = await converter.getExpectedOut(tokenFrom, tokenTo, maxSafeAmount)
+          const expected = calculateExpectedOut(maxSafeAmount)
+          expect(result).to.equal(expected)
+        })
+
+        it('should handle extremely large amounts near maximum safe value', async () => {
+          const decimalsDiff =
+            decimalsFrom >= decimalsTo ? decimalsFrom - decimalsTo : decimalsTo - decimalsFrom
+          const pow10 = 10n ** decimalsDiff
+
+          let maxSafeAmount: bigint
+          if (decimalsFrom >= decimalsTo) {
+            maxSafeAmount = ethers.MaxUint256 / priceFromUsd
+          } else {
+            const contractLimit = ethers.MaxUint256 / pow10
+            const testHelperLimit = ethers.MaxUint256 / (pow10 * priceFromUsd)
+            maxSafeAmount = contractLimit < testHelperLimit ? contractLimit : testHelperLimit
+          }
+
+          const minAmount = maxSafeAmount / 1000n
+          await fc.assert(
+            fc.asyncProperty(fc.bigInt({ min: minAmount, max: maxSafeAmount }), async (amount) => {
+              const result = await converter.getExpectedOut(tokenFrom, tokenTo, amount)
+              const expected = calculateExpectedOut(amount)
+              expect(result).to.equal(expected)
+            }),
+            { numRuns: 20 }
+          )
+        })
+      })
+
+      describe('ScaledAmountFromTooLarge error fuzzing', () => {
+        it('should fuzz ScaledAmountFromTooLarge boundary for decimalsFrom < decimalsTo', async () => {
+          if (decimalsFrom >= decimalsTo) {
+            return
+          }
+
+          const decimalsDiff = decimalsTo - decimalsFrom
+          const pow10 = 10n ** decimalsDiff
+          const maxAmountBeforeScale = ethers.MaxUint256 / pow10
+
           await fc.assert(
             fc.asyncProperty(
-              fc.bigInt({ min: 2n ** 127n, max: 2n ** 128n - 1n }),
-              async (amount) => {
-                const result = await converter.getExpectedOut(tokenFrom, tokenTo, amount)
-                const expected = calculateExpectedOut(amount)
-                expect(result).to.equal(expected)
+              fc.bigInt({ min: maxAmountBeforeScale + 1n, max: ethers.MaxUint256 }),
+              async (tooLargeAmount) => {
+                await expect(converter.getExpectedOut(tokenFrom, tokenTo, tooLargeAmount))
+                  .to.be.revertedWithCustomError(converter, 'ScaledAmountFromTooLarge')
+                  .withArgs(tooLargeAmount)
               }
             ),
-            { numRuns: 20 }
+            { numRuns: 50 }
+          )
+        })
+
+        it('should fuzz safe values up to boundary for decimalsFrom < decimalsTo', async () => {
+          if (decimalsFrom >= decimalsTo) {
+            return
+          }
+
+          const decimalsDiff = decimalsTo - decimalsFrom
+          const pow10 = 10n ** decimalsDiff
+          const maxAmountBeforeScale = ethers.MaxUint256 / pow10
+          const testHelperLimit = ethers.MaxUint256 / (pow10 * priceFromUsd)
+          const maxSafeAmount =
+            maxAmountBeforeScale < testHelperLimit ? maxAmountBeforeScale : testHelperLimit
+
+          await fc.assert(
+            fc.asyncProperty(fc.bigInt({ min: 1n, max: maxSafeAmount }), async (safeAmount) => {
+              const result = await converter.getExpectedOut(tokenFrom, tokenTo, safeAmount)
+              const expected = calculateExpectedOut(safeAmount)
+              expect(result).to.equal(expected)
+            }),
+            { numRuns: 50 }
+          )
+        })
+
+        it('should fuzz boundary values around maxAmountBeforeScale', async () => {
+          if (decimalsFrom >= decimalsTo) {
+            return
+          }
+
+          const decimalsDiff = decimalsTo - decimalsFrom
+          const pow10 = 10n ** decimalsDiff
+          const maxAmountBeforeScale = ethers.MaxUint256 / pow10
+
+          await fc.assert(
+            fc.asyncProperty(
+              fc.bigInt({
+                min: maxAmountBeforeScale - 1000n,
+                max: maxAmountBeforeScale + 1000n,
+              }),
+              async (amount) => {
+                if (amount <= maxAmountBeforeScale) {
+                  const result = await converter.getExpectedOut(tokenFrom, tokenTo, amount)
+                  const expected = calculateExpectedOut(amount)
+                  expect(result).to.equal(expected)
+                } else {
+                  await expect(converter.getExpectedOut(tokenFrom, tokenTo, amount))
+                    .to.be.revertedWithCustomError(converter, 'ScaledAmountFromTooLarge')
+                    .withArgs(amount)
+                }
+              }
+            ),
+            { numRuns: 100 }
           )
         })
       })

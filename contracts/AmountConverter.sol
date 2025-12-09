@@ -47,7 +47,7 @@ contract AmountConverter is IAmountConverter {
     error BuyTokenNotAllowed(address tokenTo);
     error TokensCannotBeSame();
     error InvalidDecimalsDifference(uint8 diff);
-    error AmountFromTooLarge(uint256 amount);
+    error ScaledAmountFromTooLarge(uint256 amount);
     error ScaledPriceOverflow();
     error PriceFromUsdZero();
     error PriceToUsdZero();
@@ -145,10 +145,6 @@ contract AmountConverter is IAmountConverter {
             revert InvalidAmount(amountFrom_);
         }
 
-        if (amountFrom_ > type(uint128).max) {
-            revert AmountFromTooLarge(amountFrom_);
-        }
-
         if (!allowedTokensToSell[tokenFrom_]) {
             revert SellTokenNotAllowed(tokenFrom_);
         }
@@ -198,10 +194,6 @@ contract AmountConverter is IAmountConverter {
             decimalsDiff = decimalsOfBuyToken - decimalsOfSellToken;
         }
 
-        if (decimalsDiff > ROUTER_MAX_DECIMALS) {
-            revert InvalidDecimalsDifference(decimalsDiff);
-        }
-
         if (sellHasMoreOrEqualDecimals) {
             if (decimalsDiff == 0) {
                 expectedOutputAmount = Math.mulDiv(amountFrom_, priceFrom, priceTo);
@@ -224,7 +216,7 @@ contract AmountConverter is IAmountConverter {
             uint256 maxAmountFromBeforeScale = type(uint256).max / pow10;
 
             if (amountFrom_ > maxAmountFromBeforeScale) {
-                revert AmountFromTooLarge(amountFrom_);
+                revert ScaledAmountFromTooLarge(amountFrom_);
             }
 
             uint256 scaledAmountFrom = amountFrom_ * pow10;

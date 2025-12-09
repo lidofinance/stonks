@@ -80,7 +80,7 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
       amountConverterParams: {
         oracleRouter: await oracleRouter.getAddress(),
         allowedTokensToSell: [contracts.STETH],
-        allowedStableTokensToBuy: [contracts.LDO],
+        allowedTokensToBuy: [contracts.LDO],
         useEthAnchor: true,
       },
     })
@@ -109,7 +109,7 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
       amountConverterParams: {
         oracleRouter: await oracleRouter.getAddress(),
         allowedTokensToSell: [contracts.STETH],
-        allowedStableTokensToBuy: [contracts.LDO],
+        allowedTokensToBuy: [contracts.LDO],
         useEthAnchor: true,
       },
     })

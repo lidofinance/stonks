@@ -76,4 +76,12 @@ contract AmountConverterTest {
     ) external view returns (uint256) {
         return (amountConverter.getExpectedOut(tokenFrom, tokenTo, amount) * multiplierInBP) / 1e4;
     }
+
+    function allowedTokensToSell(address token) external view returns (bool) {
+        return amountConverter.allowedTokensToSell(token);
+    }
+
+    function allowedTokensToBuy(address token) external view returns (bool) {
+        return amountConverter.allowedTokensToBuy(token);
+    }
 }

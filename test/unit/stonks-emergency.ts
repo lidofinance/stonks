@@ -76,7 +76,7 @@ describe('Stonks - Emergency Controls', function () {
       amountConverterParams: {
         oracleRouter: await oracleRouter.getAddress(),
         allowedTokensToSell: [contracts.STETH],
-        allowedStableTokensToBuy: [contracts.DAI],
+        allowedTokensToBuy: [contracts.DAI],
       },
     })
     stonks = stonksInstance
@@ -170,27 +170,8 @@ describe('Stonks - Emergency Controls', function () {
     expect(await stonks.isCreationPaused()).to.equal(false)
   })
 
-  it('killSwitch is irreversible, pauses creation and signatures', async function () {
-    // Engage kill switch via emergency operator multisig
-    await stonks.connect(emergencyOperator).killSwitch()
-    expect(await stonks.isKilled()).to.equal(true)
-    expect(await stonks.isCreationPaused()).to.equal(true)
-    expect(await stonks.areSignaturesPaused()).to.equal(true)
-
-    const expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
-    await expect(stonks.placeOrder(expectedBuyAmount)).to.be.revertedWithCustomError(
-      stonks,
-      'StonksKilled'
-    )
-    await expect(order.isValidSignature(orderHash, '0x')).to.be.revertedWithCustomError(
-      order,
-      'SignaturesGloballyPaused'
-    )
-  })
-
   describe('emergency operator access control', function () {
     it('allows manager to pause and unpause creation and signatures', async function () {
-      // ensure clean state
       if (await stonks.isCreationPaused()) {
         await stonks.connect(admin).unpauseCreation()
       }
@@ -212,7 +193,6 @@ describe('Stonks - Emergency Controls', function () {
     })
 
     it('allows admin to pause and unpause creation and signatures', async function () {
-      // ensure clean state
       if (await stonks.isCreationPaused()) {
         await stonks.connect(admin).unpauseCreation()
       }
@@ -234,7 +214,6 @@ describe('Stonks - Emergency Controls', function () {
     })
 
     it('allows emergency operator multisig to pause and unpause creation and signatures', async function () {
-      // ensure clean state
       if (await stonks.isCreationPaused()) {
         await stonks.connect(admin).unpauseCreation()
       }
@@ -267,6 +246,100 @@ describe('Stonks - Emergency Controls', function () {
       await expect(stonks.connect(stranger).killSwitch())
         .to.be.revertedWithCustomError(stonks, 'NotEmergencyOperator')
         .withArgs(await stranger.getAddress())
+    })
+  })
+
+  describe('killSwitch', function () {
+    let killSwitchStonks: Stonks
+    let killSwitchOrder: Order
+    let killSwitchOrderHash: string
+    let killSwitchEmergencyOperator: Signer
+
+    before(async function () {
+      const amountConverterTestFactory = await ethers.getContractFactory('AmountConverterTest')
+
+      const killSwitchOracleRouter = await getTestOracleRouter({
+        tokens: getAllTestTokens(),
+        useRealPrices: true,
+      })
+      await refreshTestFeedData(getAllTestTokens())
+
+      const killSwitchAmountConverterTest = await amountConverterTestFactory.deploy(
+        await killSwitchOracleRouter.getAddress(),
+        [contracts.STETH],
+        [contracts.DAI],
+        false
+      )
+      await killSwitchAmountConverterTest.waitForDeployment()
+
+      const { stonks: killSwitchStonksInstance } = await deployStonks({
+        factoryParams: {
+          admin: contracts.ADMIN,
+          agent: contracts.AGENT,
+          relayer: contracts.VAULT_RELAYER,
+          settlement: contracts.SETTLEMENT,
+          priceFeedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+          oracleRouterAddress: await killSwitchOracleRouter.getAddress(),
+        },
+        stonksParams: {
+          tokenFrom: contracts.STETH,
+          tokenTo: contracts.DAI,
+          manager: await manager.getAddress(),
+          marginInBps: MARGIN_IN_BPS,
+          orderDuration: 3600,
+          priceToleranceInBps: PRICE_TOLERANCE_IN_BP,
+          maxImprovementInBps: 100,
+          allowPartialFill: true,
+          amountConverterAddress: await killSwitchAmountConverterTest.getAddress(),
+        },
+        amountConverterParams: {
+          oracleRouter: await killSwitchOracleRouter.getAddress(),
+          allowedTokensToSell: [contracts.STETH],
+          allowedTokensToBuy: [contracts.DAI],
+        },
+      })
+      killSwitchStonks = killSwitchStonksInstance
+
+      const killSwitchAdmin = await ethers.getImpersonatedSigner(contracts.ADMIN)
+      await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
+      await ethers.provider.send('hardhat_setBalance', [
+        contracts.EMERGENCY_MULTISIG,
+        '0x1000000000000000000',
+      ])
+      await killSwitchStonks
+        .connect(killSwitchAdmin)
+        .setEmergencyOperator(contracts.EMERGENCY_MULTISIG)
+      killSwitchEmergencyOperator = await ethers.getImpersonatedSigner(contracts.EMERGENCY_MULTISIG)
+
+      await fillUpERC20FromTreasury({
+        token: contracts.STETH,
+        amount: ethers.parseEther('1'),
+        address: await killSwitchStonks.getAddress(),
+      })
+
+      const expectedBuyAmount = await killSwitchStonks.estimateTradeOutputFromCurrentBalance()
+      const tx = await killSwitchStonks.placeOrder(expectedBuyAmount)
+      const rc = await tx.wait()
+      if (!rc) throw new Error('no rc')
+      const evt = await getPlaceOrderData(rc)
+      killSwitchOrder = await ethers.getContractAt('Order', evt.address, manager)
+      killSwitchOrderHash = await formOrderHashFromTxReceipt(rc)
+    })
+
+    it('killSwitch is irreversible, pauses creation and signatures', async function () {
+      await killSwitchStonks.connect(killSwitchEmergencyOperator).killSwitch()
+      expect(await killSwitchStonks.isKilled()).to.equal(true)
+      expect(await killSwitchStonks.isCreationPaused()).to.equal(true)
+      expect(await killSwitchStonks.areSignaturesPaused()).to.equal(true)
+
+      const expectedBuyAmount = await killSwitchStonks.estimateTradeOutputFromCurrentBalance()
+      await expect(killSwitchStonks.placeOrder(expectedBuyAmount)).to.be.revertedWithCustomError(
+        killSwitchStonks,
+        'StonksKilled'
+      )
+      await expect(
+        killSwitchOrder.isValidSignature(killSwitchOrderHash, '0x')
+      ).to.be.revertedWithCustomError(killSwitchOrder, 'SignaturesGloballyPaused')
     })
   })
 

@@ -3,7 +3,7 @@ import { expect } from 'chai'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
 import { StonksFactory, StonksFactory__factory } from '../../typechain-types'
-import { resetTestOracleRouter } from '../../utils/test-oracle-router'
+import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
 import {
   getAllTestTokens,
   refreshTestFeedData,
@@ -99,11 +99,27 @@ describe('StonksFactory', function () {
   })
   describe('stonks deployment:', async function () {
     it('should deploy stonks with correct params', async function () {
+      const oracleRouter = await getTestOracleRouter({
+        tokens: getAllTestTokens(),
+        useRealPrices: true,
+      })
+
+      await refreshTestFeedData(getAllTestTokens())
+
+      const amountConverterTestFactory = await ethers.getContractFactory('AmountConverterTest')
+      const amountConverterTest = await amountConverterTestFactory.deploy(
+        await oracleRouter.getAddress(),
+        [contracts.STETH],
+        [contracts.DAI],
+        false
+      )
+      await amountConverterTest.waitForDeployment()
+
       const signers = await ethers.getSigners()
       const manager = await signers[0].getAddress()
       const tokenFrom = contracts.STETH
       const tokenTo = contracts.DAI
-      const amountConverter = await signers[1].getAddress()
+      const amountConverter = await amountConverterTest.getAddress()
       const orderSample = await subject.ORDER_SAMPLE()
       const orderDuration = 3600
       const marginInBP = 100

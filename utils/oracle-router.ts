@@ -9,11 +9,11 @@ export const QuoteDenomination = {
 
 type DeployOptions = {
   admin?: string
-  unitDecimals?: number
   feedRegistry: string
   tokensUsd: string[]
   tokensEth?: string[]
   maxStaleness?: number
+  skipEthUsdBridge?: boolean
 }
 
 export async function deployAndConfigureOracleRouter(
@@ -21,36 +21,27 @@ export async function deployAndConfigureOracleRouter(
 ): Promise<OracleRouter> {
   const {
     admin,
-    unitDecimals = 18,
     feedRegistry,
     tokensUsd,
     tokensEth = [],
     maxStaleness = 86_400,
+    skipEthUsdBridge = false,
   } = options
 
   const [deployer] = await ethers.getSigners()
   const adminAddress = admin ?? (await deployer.getAddress())
 
-  const router = await new OracleRouter__factory(deployer).deploy(
-    adminAddress,
-    unitDecimals,
-    feedRegistry as any
-  )
+  const router = await new OracleRouter__factory(deployer).deploy(adminAddress, feedRegistry)
   await router.waitForDeployment()
 
-  // Bridge ETH/USD (skip silently if registry lacks ETH/USD in stub)
-  try {
+  if (!skipEthUsdBridge) {
     await router.setEthUsdBridge(maxStaleness)
-  } catch (_) {
-    // ignore
   }
 
-  // Configure TOKEN/USD feeds
   for (const token of tokensUsd) {
     await router.setTokenFeed(token, QuoteDenomination.USD, maxStaleness, true)
   }
 
-  // Configure TOKEN/ETH feeds (optional)
   for (const token of tokensEth) {
     await router.setTokenFeed(token, QuoteDenomination.ETH, maxStaleness, true)
   }

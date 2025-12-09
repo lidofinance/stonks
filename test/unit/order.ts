@@ -79,7 +79,7 @@ describe('Order', async function () {
       amountConverterParams: {
         oracleRouter: await oracleRouter.getAddress(),
         allowedTokensToSell: [contracts.STETH],
-        allowedStableTokensToBuy: [contracts.DAI],
+        allowedTokensToBuy: [contracts.DAI],
       },
     })
 
@@ -185,6 +185,8 @@ describe('Order', async function () {
       expect(BigInt(orderData.order.validTo)).to.be.equal(
         BigInt(orderData.timestamp) + orderDurationInSeconds
       )
+      expect(await subject.allowPartialFill()).to.equal(false)
+      expect(await subject.cancelled()).to.equal(false)
     })
     it('should return correct params from getOrderDetails', async function () {
       const [tokenFromParam, tokenToParam, orderDurationInSeconds] =

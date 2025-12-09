@@ -54,7 +54,7 @@ describe('Order - Fuzz Tests', () => {
       amountConverterParams: {
         oracleRouter: await oracleRouter.getAddress(),
         allowedTokensToSell: [contracts.STETH],
-        allowedStableTokensToBuy: [contracts.DAI],
+        allowedTokensToBuy: [contracts.DAI],
       },
     })
 

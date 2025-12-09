@@ -42,7 +42,7 @@ describe('Stonks - Fuzz Tests', () => {
         },
         amountConverterParams: {
           allowedTokensToSell: [contracts.STETH],
-          allowedStableTokensToBuy: [contracts.DAI],
+          allowedTokensToBuy: [contracts.DAI],
         },
       }
     )

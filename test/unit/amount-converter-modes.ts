@@ -466,12 +466,45 @@ describe('AmountConverter - ETH/USD Modes', () => {
           .withArgs(notAllowed)
       })
 
-      it('should revert if amount exceeds uint128 max', async () => {
-        const tooLarge = 2n ** 128n + 1n
+      it('should revert with ScaledAmountFromTooLarge when scaled amount would overflow', async () => {
+        await refreshTestFeedData([contracts.USDC, contracts.DAI])
 
-        await expect(usdConverter.getExpectedOut(contracts.DAI, contracts.USDC, tooLarge))
-          .to.be.revertedWithCustomError(usdConverter, 'AmountFromTooLarge')
-          .withArgs(tooLarge)
+        const testConverter = await factory.deploy(
+          await router.getAddress(),
+          [contracts.USDC],
+          [contracts.DAI],
+          false
+        )
+        await testConverter.waitForDeployment()
+
+        const decimalsDiff = 12
+        const pow10 = 10n ** BigInt(decimalsDiff)
+        const maxAmountBeforeScale = ethers.MaxUint256 / pow10
+        const tooLargeForScaling = maxAmountBeforeScale + 1n
+
+        await expect(
+          testConverter.getExpectedOut(contracts.USDC, contracts.DAI, tooLargeForScaling)
+        )
+          .to.be.revertedWithCustomError(testConverter, 'ScaledAmountFromTooLarge')
+          .withArgs(tooLargeForScaling)
+      })
+
+      it('should succeed with extremely large amounts when safe', async () => {
+        await refreshTestFeedData([contracts.DAI, contracts.USDC])
+        const veryLargeAmount = 2n ** 240n
+        const result = await usdConverter.getExpectedOut(
+          contracts.DAI,
+          contracts.USDC,
+          veryLargeAmount
+        )
+        const expected = await getExpectedOutFromRouter(
+          router,
+          contracts.DAI,
+          contracts.USDC,
+          veryLargeAmount,
+          QuoteDenomination.USD
+        )
+        expect(result).to.equal(expected)
       })
     })
   })

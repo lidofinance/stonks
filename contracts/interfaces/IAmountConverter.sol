@@ -8,4 +8,8 @@ interface IAmountConverter {
         address tokenTo_,
         uint256 amountFrom_
     ) external view returns (uint256);
+
+    function allowedTokensToSell(address token) external view returns (bool);
+
+    function allowedTokensToBuy(address token) external view returns (bool);
 }

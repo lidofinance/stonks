@@ -15,14 +15,12 @@ import {IFeedRegistry} from "../interfaces/IFeedRegistry.sol";
  *         - TOKEN/USD (preferred), or
  *         - TOKEN/ETH bridged via ETH/USD.
  *         All outputs are normalized to PRICE_UNIT (10 ** PRICE_DECIMALS).
+ * @dev    PRICE_DECIMALS is fixed to 18 for minimizing precision loss in calculations.
+ *         ERC-20 tokens without decimals() implementation are not supported.
  */
 contract OracleRouter is IOracleRouter, Ownable {
     // ==================== Immutables ====================
 
-    /// @notice Number of decimals used for price normalization (typically 8 or 18).
-    uint8 public immutable PRICE_DECIMALS;
-    /// @notice Price unit calculated as 10 ** PRICE_DECIMALS.
-    uint256 public immutable PRICE_UNIT;
     /// @notice Address of the Chainlink Feed Registry contract.
     address public immutable FEED_REGISTRY;
 
@@ -35,23 +33,27 @@ contract OracleRouter is IOracleRouter, Ownable {
 
     /// @notice Maximum supported decimals for feeds and tokens.
     uint128 public constant MAX_DECIMALS = 38;
+    /// @notice Number of decimals used for price normalization (fixed to 18).
+    uint8 public constant PRICE_DECIMALS = 18;
+    /// @notice Price unit calculated as 10 ** PRICE_DECIMALS.
+    uint256 public constant PRICE_UNIT = 1e18;
 
     // ==================== Type Definitions ====================
 
     struct FeedConfig {
-        address aggregator;
         uint128 scaleNumerator;
         uint128 scaleDenominator;
+        address aggregator;
         uint32 maxStalenessSeconds;
         uint8 aggregatorDecimals;
     }
 
     struct TokenConfig {
-        IOracleRouter.QuoteDenomination primaryQuote;
         FeedConfig primaryFeed;
+        uint32 ethUsdMaxStalenessOverrideSeconds;
         uint8 tokenDecimals;
+        IOracleRouter.QuoteDenomination primaryQuote;
         bool isActive;
-        uint32 ethUsdMaxStalenessOverrideSeconds; // 0 => use global bridge staleness
     }
 
     struct BridgeCache {
@@ -95,7 +97,6 @@ contract OracleRouter is IOracleRouter, Ownable {
     error InvalidTokenAddress(address token);
     error InvalidStaleness();
     error InvalidAggregatorDecimals();
-    error InvalidUnitDecimals();
     error InvalidTokenDecimals();
     error TokenNotConfigured(address token);
     error TokenStateUnchanged(address token, bool currentState);
@@ -117,24 +118,14 @@ contract OracleRouter is IOracleRouter, Ownable {
     /**
      * @notice Constructor
      * @param admin_ Address of the admin.
-     * @param unitDecimals_ Number of decimals for price normalization.
      * @param feedRegistry_ Address of the Chainlink Feed Registry.
      */
-    constructor(address admin_, uint8 unitDecimals_, address feedRegistry_) Ownable(admin_) {
-        if (unitDecimals_ == 0 || unitDecimals_ > MAX_DECIMALS) {
-            revert InvalidUnitDecimals();
-        }
-
+    constructor(address admin_, address feedRegistry_) Ownable(admin_) {
         if (feedRegistry_ == address(0)) {
             revert InvalidFeedRegistryAddress(feedRegistry_);
         }
 
         FEED_REGISTRY = feedRegistry_;
-        PRICE_DECIMALS = unitDecimals_;
-
-        unchecked {
-            PRICE_UNIT = 10 ** unitDecimals_;
-        }
     }
 
     // ==================== External Functions ====================
@@ -156,6 +147,10 @@ contract OracleRouter is IOracleRouter, Ownable {
      * @dev Preserves the existing staleness threshold while updating feed metadata.
      */
     function syncEthUsdBridge() external onlyAdminOrManager {
+        if (ethUsdBridge.aggregator == address(0)) {
+            revert EthUsdBridgeMissing();
+        }
+
         _updateEthUsdBridge(ethUsdBridge.maxStalenessSeconds);
     }
 
@@ -188,7 +183,13 @@ contract OracleRouter is IOracleRouter, Ownable {
             revert InvalidTokenAddress(token_);
         }
 
-        tokenConfig[token_].ethUsdMaxStalenessOverrideSeconds = overrideSeconds_;
+        TokenConfig storage config = tokenConfig[token_];
+
+        if (config.primaryFeed.aggregator == address(0)) {
+            revert TokenNotConfigured(token_);
+        }
+
+        config.ethUsdMaxStalenessOverrideSeconds = overrideSeconds_;
 
         emit TokenEthUsdStalenessOverridden(token_, overrideSeconds_);
     }
@@ -210,7 +211,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         }
 
         if (isActive_) {
-            if (config.tokenDecimals == 0) {
+            if (config.primaryFeed.aggregator == address(0)) {
                 revert TokenNotConfigured(token_);
             }
         }
@@ -226,7 +227,7 @@ contract OracleRouter is IOracleRouter, Ownable {
     function syncTokenFeed(address token_) external onlyAdminOrManager {
         TokenConfig storage config = tokenConfig[token_];
 
-        if (config.tokenDecimals == 0) {
+        if (config.primaryFeed.aggregator == address(0)) {
             revert TokenNotConfigured(token_);
         }
 
@@ -309,14 +310,14 @@ contract OracleRouter is IOracleRouter, Ownable {
         TokenConfig storage baseConfig = tokenConfig[baseToken_];
         baseTokenDecimals = baseConfig.tokenDecimals;
 
-        if (!baseConfig.isActive || baseTokenDecimals == 0) {
+        if (!baseConfig.isActive || baseConfig.primaryFeed.aggregator == address(0)) {
             revert TokenNotConfigured(baseToken_);
         }
 
         TokenConfig storage quoteConfig = tokenConfig[quoteToken_];
         quoteTokenDecimals = quoteConfig.tokenDecimals;
 
-        if (!quoteConfig.isActive || quoteTokenDecimals == 0) {
+        if (!quoteConfig.isActive || quoteConfig.primaryFeed.aggregator == address(0)) {
             revert TokenNotConfigured(quoteToken_);
         }
 
@@ -350,8 +351,9 @@ contract OracleRouter is IOracleRouter, Ownable {
      */
     function isFeedInSync(address token_) external view returns (bool) {
         TokenConfig storage configEntry = tokenConfig[token_];
+        FeedConfig storage primaryFeed = configEntry.primaryFeed;
 
-        if (configEntry.tokenDecimals == 0) {
+        if (primaryFeed.aggregator == address(0)) {
             return false;
         }
 
@@ -364,8 +366,7 @@ contract OracleRouter is IOracleRouter, Ownable {
 
         (address aggregator, uint8 decimals) = _currentFeedMeta(token_, quote);
 
-        return (aggregator == configEntry.primaryFeed.aggregator &&
-            decimals == configEntry.primaryFeed.aggregatorDecimals);
+        return (aggregator == primaryFeed.aggregator && decimals == primaryFeed.aggregatorDecimals);
     }
 
     // ==================== Internal Functions ====================
@@ -411,7 +412,7 @@ contract OracleRouter is IOracleRouter, Ownable {
         TokenConfig storage config_,
         BridgeCache memory sharedBridge_
     ) internal view returns (uint256 price) {
-        if (!config_.isActive || config_.tokenDecimals == 0) {
+        if (!config_.isActive || config_.primaryFeed.aggregator == address(0)) {
             revert TokenNotConfigured(token_);
         }
 
@@ -611,7 +612,7 @@ contract OracleRouter is IOracleRouter, Ownable {
 
         uint8 erc20Decimals = IERC20Metadata(token_).decimals();
 
-        if (erc20Decimals == 0 || erc20Decimals > MAX_DECIMALS) {
+        if (erc20Decimals == 0) {
             revert InvalidTokenDecimals();
         }
 
@@ -640,7 +641,10 @@ contract OracleRouter is IOracleRouter, Ownable {
             }),
             tokenDecimals: erc20Decimals,
             isActive: isActive_,
-            ethUsdMaxStalenessOverrideSeconds: 0
+            ethUsdMaxStalenessOverrideSeconds: tokenConfig[token_].primaryFeed.aggregator !=
+                address(0)
+                ? tokenConfig[token_].ethUsdMaxStalenessOverrideSeconds
+                : 0
         });
 
         emit TokenConfigured(
@@ -679,7 +683,7 @@ contract OracleRouter is IOracleRouter, Ownable {
 
         decimals = registry.decimals(baseToken_, quoteToken_);
 
-        if (decimals == 0 || decimals > MAX_DECIMALS) {
+        if (decimals == 0) {
             revert InvalidAggregatorDecimals();
         }
 
@@ -698,30 +702,20 @@ contract OracleRouter is IOracleRouter, Ownable {
 
     function _computeScaleFactors(
         uint8 feedDecimals_
-    ) internal view returns (uint128 numerator, uint128 denominator) {
-        if (feedDecimals_ == PRICE_DECIMALS) {
-            return (1, 1);
-        }
-
-        if (feedDecimals_ < PRICE_DECIMALS) {
-            uint8 upDiff = PRICE_DECIMALS - feedDecimals_;
-
-            if (upDiff > MAX_DECIMALS) {
-                revert InvalidAggregatorDecimals();
+    ) internal pure returns (uint128 numerator, uint128 denominator) {
+        unchecked {
+            if (feedDecimals_ == PRICE_DECIMALS) {
+                return (1, 1);
             }
 
-            unchecked {
+            if (feedDecimals_ < PRICE_DECIMALS) {
+                uint8 upDiff = PRICE_DECIMALS - feedDecimals_;
+
                 return (uint128(10 ** upDiff), 1);
             }
-        }
 
-        uint8 downDiff = feedDecimals_ - PRICE_DECIMALS;
+            uint8 downDiff = feedDecimals_ - PRICE_DECIMALS;
 
-        if (downDiff > MAX_DECIMALS) {
-            revert InvalidAggregatorDecimals();
-        }
-
-        unchecked {
             return (1, uint128(10 ** downDiff));
         }
     }

@@ -23,7 +23,7 @@ contract OracleRouterStub is IOracleRouter {
     mapping(address => mapping(address => mapping(QuoteDenomination => PriceConfig)))
         public priceConfigs;
 
-    constructor(address, uint8, address feedRegistry_) {
+    constructor(address, address feedRegistry_) {
         FEED_REGISTRY = feedRegistry_;
     }
 

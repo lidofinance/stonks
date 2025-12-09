@@ -38,7 +38,7 @@ describe('AmountConverter', () => {
     const adminAddress = await deployer.getAddress()
 
     const routerFactory = await ethers.getContractFactory('OracleRouter')
-    router8 = await routerFactory.deploy(adminAddress, 8, feedRegistryAddress)
+    router8 = await routerFactory.deploy(adminAddress, feedRegistryAddress)
     await router8.waitForDeployment()
 
     const adminSigner = await ethers.getImpersonatedSigner(adminAddress)
@@ -187,17 +187,23 @@ describe('AmountConverter', () => {
       expect(result).to.equal(expectedResult)
     })
 
-    it('should handle amount at uint128 boundary', async () => {
+    it('should handle very large amounts', async () => {
       await refreshTestFeedData([addresses.DAI, addresses.USDC])
-      const maxUint128 = 2n ** 128n - 1n
-      const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, maxUint128)
-      const expectedResult = await getExpectedOut(addresses.DAI, addresses.USDC, maxUint128)
-      expect(result).to.equal(expectedResult)
+      const largeAmount1 = 2n ** 200n
+      const largeAmount2 = 2n ** 220n
+
+      const result1 = await converter.getExpectedOut(addresses.DAI, addresses.USDC, largeAmount1)
+      const expected1 = await getExpectedOut(addresses.DAI, addresses.USDC, largeAmount1)
+      expect(result1).to.equal(expected1)
+
+      const result2 = await converter.getExpectedOut(addresses.DAI, addresses.USDC, largeAmount2)
+      const expected2 = await getExpectedOut(addresses.DAI, addresses.USDC, largeAmount2)
+      expect(result2).to.equal(expected2)
     })
 
     it('should handle conversions with maximum decimal difference (38)', async () => {
       await refreshTestFeedData([addresses.DAI, addresses.USDC])
-      const largeAmount = 2n ** 127n - 1n
+      const largeAmount = 2n ** 200n
       const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, largeAmount)
       const expected = await getExpectedOut(addresses.DAI, addresses.USDC, largeAmount)
       expect(result).to.equal(expected)
@@ -224,9 +230,10 @@ describe('AmountConverter', () => {
 
       await time.increase(2)
 
-      await expect(
-        converter.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1'))
-      ).to.be.revertedWithCustomError(router, 'OracleStale')
+      const daiConfig = await router.tokenConfig(addresses.DAI)
+      await expect(converter.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1')))
+        .to.be.revertedWithCustomError(router, 'OracleStale')
+        .withArgs(daiConfig.primaryFeed.aggregator, nowTs)
 
       await router.setTokenFeed(addresses.DAI, QuoteDenomination.USD, 86_400, true)
       await refreshTestFeedData([addresses.DAI])
@@ -252,24 +259,40 @@ describe('AmountConverter', () => {
         decimals: current.decimals,
       })
 
-      await expect(
-        converter.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1'))
-      ).to.be.revertedWithCustomError(router, 'OracleBadAnswer')
+      const currentFeed = await stub.feeds(addresses.DAI, USD_QUOTE)
+      await expect(converter.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1')))
+        .to.be.revertedWithCustomError(router, 'OracleBadAnswer')
+        .withArgs(currentFeed.aggregator, 0n)
 
       await refreshTestFeedData([addresses.DAI])
     })
 
-    it('reverts with AmountTooLarge when input exceeds uint128 limit', async () => {
-      const tooLarge = 2n ** 128n + 1n
-      await expect(
-        converter.getExpectedOut(addresses.DAI, addresses.USDC, tooLarge)
-      ).to.be.revertedWithCustomError(converter, 'AmountFromTooLarge')
+    it('reverts with ScaledAmountFromTooLarge when scaled amount would overflow', async () => {
+      await refreshTestFeedData([addresses.USDC, addresses.DAI])
+
+      const decimalsDiff = 12
+      const pow10 = 10n ** BigInt(decimalsDiff)
+      const maxAmountBeforeScale = ethers.MaxUint256 / pow10
+      const tooLargeForScaling = maxAmountBeforeScale + 1n
+
+      await expect(converter.getExpectedOut(addresses.USDC, addresses.DAI, tooLargeForScaling))
+        .to.be.revertedWithCustomError(converter, 'ScaledAmountFromTooLarge')
+        .withArgs(tooLargeForScaling)
     })
 
-    it('should succeed with large amount within uint128 limit', async () => {
-      const maxAmount = 2n ** 120n
-      const result = await converter.getExpectedOut(addresses.USDC, addresses.USDT, maxAmount)
-      const expected = await getExpectedOut(addresses.USDC, addresses.USDT, maxAmount)
+    it('should succeed with extremely large amounts when safe', async () => {
+      await refreshTestFeedData([addresses.DAI, addresses.USDC])
+      const veryLargeAmount = 2n ** 240n
+      const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, veryLargeAmount)
+      const expected = await getExpectedOut(addresses.DAI, addresses.USDC, veryLargeAmount)
+      expect(result).to.equal(expected)
+    })
+
+    it('should succeed with large amounts for different token pairs', async () => {
+      await refreshTestFeedData([addresses.USDC, addresses.USDT])
+      const largeAmount = 2n ** 200n
+      const result = await converter.getExpectedOut(addresses.USDC, addresses.USDT, largeAmount)
+      const expected = await getExpectedOut(addresses.USDC, addresses.USDT, largeAmount)
       expect(result).to.equal(expected)
     })
 
@@ -283,7 +306,6 @@ describe('AmountConverter', () => {
       it('should revert with PriceFromUsdZero when priceFrom is zero in USD mode', async () => {
         const oracleRouterStub = await OracleRouterStubFactory.deploy(
           await (await ethers.getSigners())[0].getAddress(),
-          18,
           await router.FEED_REGISTRY()
         )
         await oracleRouterStub.waitForDeployment()
@@ -314,7 +336,6 @@ describe('AmountConverter', () => {
       it('should revert with PriceToUsdZero when priceTo is zero in USD mode', async () => {
         const oracleRouterStub = await OracleRouterStubFactory.deploy(
           await (await ethers.getSigners())[0].getAddress(),
-          18,
           await router.FEED_REGISTRY()
         )
         await oracleRouterStub.waitForDeployment()
@@ -345,7 +366,6 @@ describe('AmountConverter', () => {
       it('should revert with PriceFromEthZero when priceFrom is zero in ETH mode', async () => {
         const oracleRouterStub = await OracleRouterStubFactory.deploy(
           await (await ethers.getSigners())[0].getAddress(),
-          18,
           await router.FEED_REGISTRY()
         )
         await oracleRouterStub.waitForDeployment()
@@ -376,7 +396,6 @@ describe('AmountConverter', () => {
       it('should revert with PriceToEthZero when priceTo is zero in ETH mode', async () => {
         const oracleRouterStub = await OracleRouterStubFactory.deploy(
           await (await ethers.getSigners())[0].getAddress(),
-          18,
           await router.FEED_REGISTRY()
         )
         await oracleRouterStub.waitForDeployment()

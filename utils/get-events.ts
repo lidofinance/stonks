@@ -74,13 +74,17 @@ export const getTokenConverterDeployment = (
   address: string
   oracleRouter: string
   allowedTokensToSell: string[]
-  allowedStableTokensToBuy: string[]
+  allowedTokensToBuy: string[]
 } => {
   const amountConverterFactoryInterface = AmountConverterFactory__factory.createInterface()
   const event = amountConverterFactoryInterface.getEvent('AmountConverterDeployed')
   const topic = event.topicHash
   const raw = (receipt as any).logs.find((l: Log) => l.topics?.[0] === topic)
-  if (!raw) throw new Error('AmountConverterDeployed event not found in receipt logs')
+
+  if (!raw) {
+    throw new Error('AmountConverterDeployed event not found in receipt logs')
+  }
+
   const deployEvent = amountConverterFactoryInterface.parseLog(raw)
   const data: any = deployEvent?.args
 
@@ -88,6 +92,6 @@ export const getTokenConverterDeployment = (
     address: data[0],
     oracleRouter: data[1],
     allowedTokensToSell: data[2],
-    allowedStableTokensToBuy: data[3],
+    allowedTokensToBuy: data[3],
   }
 }

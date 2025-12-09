@@ -20,7 +20,7 @@ contract AmountConverterFactory {
         address indexed amountConverterAddress,
         address oracleRouter,
         address[] allowedTokensToSell,
-        address[] allowedStableTokensToBuy,
+        address[] allowedTokensToBuy,
         bool useEthAnchor
     );
 

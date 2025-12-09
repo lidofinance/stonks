@@ -28,6 +28,7 @@ describe('Order - Emergency Controls & Signature Pause', function () {
   let oracleRouter: OracleRouter
   let amountConverterTest: AmountConverterTest
   let snapshot: SnapshotRestorer
+  let setupSnapshot: SnapshotRestorer
   let admin: Signer
   let emergencyOperator: Signer
 
@@ -76,33 +77,44 @@ describe('Order - Emergency Controls & Signature Pause', function () {
       amountConverterParams: {
         oracleRouter: await oracleRouter.getAddress(),
         allowedTokensToSell: [contracts.STETH],
-        allowedStableTokensToBuy: [contracts.DAI],
+        allowedTokensToBuy: [contracts.DAI],
       },
     })
+
     stonks = stonksInstance
     admin = await ethers.getImpersonatedSigner(contracts.ADMIN)
+
     await ethers.provider.send('hardhat_setBalance', [contracts.ADMIN, '0x1000000000000000000'])
+    await ethers.provider.send('hardhat_setBalance', [
+      contracts.EMERGENCY_MULTISIG,
+      '0x1000000000000000000',
+    ])
+
     await fillUpERC20FromTreasury({
       token: contracts.STETH,
       amount: ethers.parseEther('1'),
       address: await stonks.getAddress(),
     })
 
+    emergencyOperator = await ethers.getImpersonatedSigner(contracts.EMERGENCY_MULTISIG)
+
+    setupSnapshot = await takeSnapshot()
+  })
+
+  beforeEach(async function () {
+    await setupSnapshot.restore()
+
     const expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
     const tx = await stonks.placeOrder(expectedBuyAmount)
     const rc = await tx.wait()
+
     if (!rc) throw new Error('no rc')
+
     const evt = await getPlaceOrderData(rc)
     order = await ethers.getContractAt('Order', evt.address, manager)
     orderHash = await formOrderHashFromTxReceipt(rc)
 
-    // configure emergency operator on the Order itself
-    await ethers.provider.send('hardhat_setBalance', [
-      contracts.EMERGENCY_MULTISIG,
-      '0x1000000000000000000',
-    ])
     await order.connect(admin).setEmergencyOperator(contracts.EMERGENCY_MULTISIG)
-    emergencyOperator = await ethers.getImpersonatedSigner(contracts.EMERGENCY_MULTISIG)
   })
 
   it('baseline sanity: validation works', async function () {
@@ -124,6 +136,7 @@ describe('Order - Emergency Controls & Signature Pause', function () {
 
     // perform cancellation
     await order.emergencyCancelAndReturn()
+    expect(await order.cancelled()).to.be.true
 
     // balance should move back to Stonks (allow small rounding)
     const balAfter = await token.balanceOf(order)
@@ -132,7 +145,7 @@ describe('Order - Emergency Controls & Signature Pause', function () {
     // validation should now revert with OrderCancelled
     await expect(order.isValidSignature(orderHash, '0x')).to.be.revertedWithCustomError(
       order,
-      'OrderCancelled'
+      'OrderIsCancelled'
     )
 
     // idempotent call
@@ -140,18 +153,8 @@ describe('Order - Emergency Controls & Signature Pause', function () {
   })
 
   it('per-order emergencyRevokeRelayer zeroes allowance without moving funds', async function () {
-    // create a new order to test revoke separately
-    const expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
-    const tx = await stonks.placeOrder(expectedBuyAmount)
-    const rc = await tx.wait()
-    const evt = await getPlaceOrderData(rc!)
-    const freshOrder = await ethers.getContractAt('Order', evt.address, manager)
-    const freshHash = await formOrderHashFromTxReceipt(rc!)
-
-    // revoke allowance
-    await freshOrder.emergencyRevokeRelayer()
-    // validation should still work until signatures are paused or cancelled
-    expect(await freshOrder.isValidSignature(freshHash, '0x')).to.equal(MAGIC_VALUE)
+    await order.emergencyRevokeRelayer()
+    expect(await order.isValidSignature(orderHash, '0x')).to.equal(MAGIC_VALUE)
   })
 
   it('allows manager to call emergency controls on Order', async function () {
@@ -162,6 +165,7 @@ describe('Order - Emergency Controls & Signature Pause', function () {
 
     await order.connect(manager).emergencyRevokeRelayer()
     await order.connect(manager).emergencyCancelAndReturn()
+    expect(await order.cancelled()).to.be.true
 
     const balAfter = await token.balanceOf(order)
     expect(balAfter).to.be.closeTo(0n, 2n)
@@ -175,6 +179,7 @@ describe('Order - Emergency Controls & Signature Pause', function () {
 
     await order.connect(admin).emergencyRevokeRelayer()
     await order.connect(admin).emergencyCancelAndReturn()
+    expect(await order.cancelled()).to.be.true
 
     const balAfter = await token.balanceOf(order)
     expect(balAfter).to.be.closeTo(0n, 2n)
@@ -188,6 +193,7 @@ describe('Order - Emergency Controls & Signature Pause', function () {
 
     await order.connect(emergencyOperator).emergencyRevokeRelayer()
     await order.connect(emergencyOperator).emergencyCancelAndReturn()
+    expect(await order.cancelled()).to.be.true
 
     const balAfter = await token.balanceOf(order)
     expect(balAfter).to.be.closeTo(0n, 2n)

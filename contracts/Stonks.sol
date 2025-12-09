@@ -103,6 +103,8 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     event OrderDurationInSecondsSet(uint256 orderDurationInSeconds);
     event MarginInBasisPointsSet(uint256 marginInBasisPoints);
     event PriceToleranceInBasisPointsSet(uint256 priceToleranceInBasisPoints);
+    event MaxImprovementInBasisPointsSet(uint256 maxImprovementInBasisPoints);
+    event AllowPartialFillSet(bool allowPartialFill);
     event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
     event SignaturesPaused(address indexed by);
     event SignaturesUnpaused(address indexed by);
@@ -110,7 +112,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
 
     // ==================== Errors ====================
 
-    error InvalidManagerAddress(address manager);
     error InvalidTokenFromAddress(address tokenFrom);
     error InvalidTokenToAddress(address tokenTo);
     error InvalidAmountConverterAddress(address amountConverter);
@@ -119,17 +120,20 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     error InvalidOrderDuration(uint256 min, uint256 max, uint256 received);
     error MarginOverflowsAllowedLimit(uint256 limit, uint256 received);
     error PriceToleranceOverflowsAllowedLimit(uint256 limit, uint256 received);
+    error MaxImprovementOverflowsAllowedLimit(uint256 limit, uint256 received);
     error MinimumPossibleBalanceNotMet(uint256 min, uint256 received);
     error InvalidAmount(uint256 amount);
     error SellAmountExceedsBalance(uint256 available, uint256 requested);
     error StonksKilled();
+    error TokenFromNotSupported(address token);
+    error TokenToNotSupported(address token);
 
     // ==================== Emergency State ====================
 
     bool private _signaturesPaused;
     bool private _killed;
 
-    modifier notKilled() {
+    modifier whenNotKilled() {
         if (_killed) {
             revert StonksKilled();
         }
@@ -143,9 +147,10 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
      * @param initParams_ Struct containing all initialization parameters.
      * @dev Stores essential parameters for trade execution in immutable variables, ensuring consistency and security of trades.
      */
-    constructor(InitParams memory initParams_) AssetRecoverer(initParams_.admin, initParams_.agent) {
+    constructor(
+        InitParams memory initParams_
+    ) AssetRecoverer(initParams_.admin, initParams_.agent) {
         _validateAddresses(
-            initParams_.manager,
             initParams_.tokenFrom,
             initParams_.tokenTo,
             initParams_.amountConverter,
@@ -157,6 +162,16 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
             initParams_.priceToleranceInBasisPoints,
             initParams_.maxImprovementInBasisPoints
         );
+
+        IAmountConverter amountConverter = IAmountConverter(initParams_.amountConverter);
+
+        if (!amountConverter.allowedTokensToSell(initParams_.tokenFrom)) {
+            revert TokenFromNotSupported(initParams_.tokenFrom);
+        }
+
+        if (!amountConverter.allowedTokensToBuy(initParams_.tokenTo)) {
+            revert TokenToNotSupported(initParams_.tokenTo);
+        }
 
         manager = initParams_.manager;
         ORDER_SAMPLE = initParams_.orderSample;
@@ -182,6 +197,8 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         emit OrderDurationInSecondsSet(initParams_.orderDurationInSeconds);
         emit MarginInBasisPointsSet(initParams_.marginInBasisPoints);
         emit PriceToleranceInBasisPointsSet(initParams_.priceToleranceInBasisPoints);
+        emit MaxImprovementInBasisPointsSet(initParams_.maxImprovementInBasisPoints);
+        emit AllowPartialFillSet(initParams_.allowPartialFill);
     }
 
     // ==================== External Functions ====================
@@ -195,7 +212,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
      */
     function placeOrder(
         uint256 minBuyAmount_
-    ) external nonReentrant onlyAdminOrManager notKilled whenNotPaused returns (address) {
+    ) external nonReentrant onlyAdminOrManager whenNotKilled whenNotPaused returns (address) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
 
         return _placeOrder(balance, minBuyAmount_, balance);
@@ -210,7 +227,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     function placeOrderWithAmount(
         uint256 sellAmount_,
         uint256 minBuyAmount_
-    ) external nonReentrant onlyAdminOrManager notKilled whenNotPaused returns (address) {
+    ) external nonReentrant onlyAdminOrManager whenNotKilled whenNotPaused returns (address) {
         uint256 balance = IERC20(TOKEN_FROM).balanceOf(address(this));
 
         return _placeOrder(sellAmount_, minBuyAmount_, balance);
@@ -256,7 +273,6 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         return MAX_IMPROVEMENT_IN_BASIS_POINTS;
     }
 
-
     // ==================== Emergency Control Views ====================
 
     function areSignaturesPaused() external view returns (bool) {
@@ -283,7 +299,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     /**
      * @notice Unpause order creation. No effect if killSwitch was engaged.
      */
-    function unpauseCreation() external onlyEmergencyOperator {
+    function unpauseCreation() external onlyEmergencyOperator whenNotKilled {
         _unpause();
     }
 
@@ -303,7 +319,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     /**
      * @notice Unpause signatures globally (resume fills).
      */
-    function unpauseSignatures() external onlyEmergencyOperator {
+    function unpauseSignatures() external onlyEmergencyOperator whenNotKilled {
         if (!_signaturesPaused) {
             return;
         }
@@ -331,9 +347,9 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         // Mark killed (irreversible)
         if (!_killed) {
             _killed = true;
-        }
 
-        emit KillEngaged(msg.sender);
+            emit KillEngaged(msg.sender);
+        }
     }
 
     // ==================== Public Functions ====================
@@ -405,16 +421,11 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     // ==================== Private Functions ====================
 
     function _validateAddresses(
-        address manager_,
         address tokenFrom_,
         address tokenTo_,
         address amountConverter_,
         address orderSample_
     ) private pure {
-        if (manager_ == address(0)) {
-            revert InvalidManagerAddress(manager_);
-        }
-
         if (tokenFrom_ == address(0)) {
             revert InvalidTokenFromAddress(tokenFrom_);
         }
@@ -469,7 +480,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
             maxImprovementInBasisPoints_ != type(uint256).max &&
             maxImprovementInBasisPoints_ > BASIS_POINTS_PARAMETERS_LIMIT
         ) {
-            revert MarginOverflowsAllowedLimit(
+            revert MaxImprovementOverflowsAllowedLimit(
                 BASIS_POINTS_PARAMETERS_LIMIT,
                 maxImprovementInBasisPoints_
             );
