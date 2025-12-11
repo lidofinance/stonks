@@ -56,22 +56,26 @@ contract Order is IERC1271, AssetRecoverer {
     uint256 private sellAmount;
     /// @notice Minimum amount of tokens to buy in the order.
     uint256 private buyAmount;
+    /// @notice Price tolerance in basis points (cached from Stonks to avoid external calls).
+    uint256 private priceToleranceBps;
+    /// @notice Maximum price improvement in basis points (cached from Stonks to avoid external calls).
+    uint256 private maxImprovementBps;
+    /// @notice Time until which the order is valid.
+    uint32 private validTo;
     /// @notice Hash of the order for signature validation.
     bytes32 private orderHash;
     /// @notice Address of the Stonks contract that created this order.
     address public stonks;
-    /// @notice Time until which the order is valid.
-    uint32 private validTo;
+    /// @notice token from address (cached from Stonks to avoid external calls).
+    address private tokenFrom;
+    /// @notice token to address (cached from Stonks to avoid external calls).
+    address private tokenTo;
     /// @notice Internal flag indicating whether the contract has been initialized.
     bool private initialized;
     /// @notice Whether this order allows partial fills (cached from Stonks to avoid external calls).
     bool public allowPartialFill;
     /// @notice Order cancellation flag.
     bool public cancelled;
-
-    /// @notice Cached token addresses to avoid repeated external calls to Stonks.
-    address private tokenFrom;
-    address private tokenTo;
 
     // ==================== Events ====================
 
@@ -172,6 +176,10 @@ contract Order is IERC1271, AssetRecoverer {
         }
 
         allowPartialFill = stonksContract.ALLOW_PARTIAL_FILL();
+
+        // Cache immutable values to avoid repeated external calls during validation
+        priceToleranceBps = stonksContract.getPriceTolerance();
+        maxImprovementBps = stonksContract.getMaxImprovementBps();
 
         GPv2Order.Data memory order = GPv2Order.Data({
             sellToken: tokenFromErc,
@@ -290,13 +298,13 @@ contract Order is IERC1271, AssetRecoverer {
         }
 
         if (currentExecutionPrice > originalLimitPrice) {
-            uint256 maxImprovementBps = stonksContract.getMaxImprovementBps();
+            uint256 maxImprovementBpsLocal = maxImprovementBps;
 
-            if (maxImprovementBps == type(uint256).max) {
+            if (maxImprovementBpsLocal == type(uint256).max) {
                 return ERC1271_MAGIC_VALUE;
             }
 
-            if (maxImprovementBps == 0) {
+            if (maxImprovementBpsLocal == 0) {
                 revert PriceImprovementRejectedInStrictMode(
                     baselineBuyAmount,
                     currentEstimatedBuyAmount
@@ -311,10 +319,10 @@ contract Order is IERC1271, AssetRecoverer {
                     originalLimitPrice
                 );
 
-                if (improvementBps > maxImprovementBps) {
+                if (improvementBps > maxImprovementBpsLocal) {
                     uint256 maxAllowedBuyAmount = Math.mulDiv(
                         baselineBuyAmount,
-                        MAX_BASIS_POINTS + maxImprovementBps,
+                        MAX_BASIS_POINTS + maxImprovementBpsLocal,
                         MAX_BASIS_POINTS
                     );
                     revert PriceImprovementExceedsLimit(
@@ -326,13 +334,13 @@ contract Order is IERC1271, AssetRecoverer {
 
             return ERC1271_MAGIC_VALUE;
         } else {
-            uint256 priceToleranceBps = stonksContract.getPriceTolerance();
+            uint256 priceToleranceBpsLocal = priceToleranceBps;
 
-            if (priceToleranceBps == 0) {
+            if (priceToleranceBpsLocal == 0) {
                 revert PriceShortfallExceedsTolerance(baselineBuyAmount, currentEstimatedBuyAmount);
             }
 
-            if (priceToleranceBps > MAX_BASIS_POINTS) {
+            if (priceToleranceBpsLocal > MAX_BASIS_POINTS) {
                 revert PriceShortfallExceedsTolerance(baselineBuyAmount, currentEstimatedBuyAmount);
             }
 
@@ -344,10 +352,10 @@ contract Order is IERC1271, AssetRecoverer {
                     originalLimitPrice
                 );
 
-                if (shortfallBps > priceToleranceBps) {
+                if (shortfallBps > priceToleranceBpsLocal) {
                     uint256 maxToleratedShortfall = Math.mulDiv(
                         baselineBuyAmount,
-                        priceToleranceBps,
+                        priceToleranceBpsLocal,
                         MAX_BASIS_POINTS
                     );
                     uint256 minAcceptableBuyAmount = baselineBuyAmount - maxToleratedShortfall;
