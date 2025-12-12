@@ -46,7 +46,6 @@ contract AmountConverter is IAmountConverter {
     error SellTokenNotAllowed(address tokenFrom);
     error BuyTokenNotAllowed(address tokenTo);
     error TokensCannotBeSame();
-    error InvalidDecimalsDifference(uint8 diff);
     error ScaledAmountFromTooLarge(uint256 amount);
     error ScaledPriceOverflow();
     error PriceFromUsdZero();

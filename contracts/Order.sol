@@ -325,10 +325,15 @@ contract Order is IERC1271, AssetRecoverer {
                         MAX_BASIS_POINTS + maxImprovementBpsLocal,
                         MAX_BASIS_POINTS
                     );
-                    revert PriceImprovementExceedsLimit(
-                        maxAllowedBuyAmount,
-                        currentEstimatedBuyAmount
-                    );
+
+                    if (
+                        currentEstimatedBuyAmount > maxAllowedBuyAmount + AMOUNT_EQUALITY_TOLERANCE
+                    ) {
+                        revert PriceImprovementExceedsLimit(
+                            maxAllowedBuyAmount,
+                            currentEstimatedBuyAmount
+                        );
+                    }
                 }
             }
 
@@ -359,10 +364,16 @@ contract Order is IERC1271, AssetRecoverer {
                         MAX_BASIS_POINTS
                     );
                     uint256 minAcceptableBuyAmount = baselineBuyAmount - maxToleratedShortfall;
-                    revert PriceShortfallExceedsTolerance(
-                        minAcceptableBuyAmount,
-                        currentEstimatedBuyAmount
-                    );
+
+                    if (
+                        minAcceptableBuyAmount >
+                        currentEstimatedBuyAmount + AMOUNT_EQUALITY_TOLERANCE
+                    ) {
+                        revert PriceShortfallExceedsTolerance(
+                            minAcceptableBuyAmount,
+                            currentEstimatedBuyAmount
+                        );
+                    }
                 }
             }
 
