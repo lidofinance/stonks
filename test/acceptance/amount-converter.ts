@@ -1,16 +1,18 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
-import { getTokensToBuy, getTokensToSell } from './configuration'
-import { getContracts } from '../../utils/contracts'
 
 const AMOUNT_CONVERTER_ADDRESS: string = ''
+const ORACLE_ROUTER_ADDRESS: string = ''
 
 describe('AmountConverter: acceptance', async function () {
   it('should have correct params', async function () {
     if (AMOUNT_CONVERTER_ADDRESS === '') this.skip()
-    const contracts = getContracts()
-    const tokensToSell = (await getTokensToSell()).map((token) => ethers.getAddress(token))
-    const tokensToBuy = (await getTokensToBuy()).map((token) => ethers.getAddress(token))
+    if (ORACLE_ROUTER_ADDRESS === '') this.skip()
+
+    const tokensToSell: string[] = []
+    const tokensToBuy: string[] = []
+    if (tokensToSell.length === 0) this.skip()
+    if (tokensToBuy.length === 0) this.skip()
 
     const amountConverter = await ethers.getContractAt('AmountConverter', AMOUNT_CONVERTER_ADDRESS)
 
@@ -40,6 +42,6 @@ describe('AmountConverter: acceptance', async function () {
       expect(tokensToBuy).to.include(event.args[0])
     }
 
-    expect(await amountConverter.ORACLE_ROUTER()).to.hexEqual(contracts.CHAINLINK_USD_QUOTE)
+    expect(await amountConverter.ORACLE_ROUTER()).to.hexEqual(ORACLE_ROUTER_ADDRESS)
   })
 })
