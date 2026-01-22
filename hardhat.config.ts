@@ -6,9 +6,9 @@ import * as dotenv from 'dotenv'
 dotenv.config()
 
 const MAINNET_RPC_URL = process.env.RPC_URL
-const HOLESKY_RPC_URL = process.env.HOLESKY_RPC_URL
+const HOODI_RPC_URL = process.env.HOODI_RPC_URL
 
-if (!MAINNET_RPC_URL && !HOLESKY_RPC_URL) {
+if (!MAINNET_RPC_URL && !HOODI_RPC_URL) {
   throw new Error(`RPC url was not provided. Please, ensure the .env file is filled correctly.`)
 }
 
@@ -40,11 +40,11 @@ const config: HardhatUserConfig = {
     apiKey: ETHERSCAN_API_KEY,
     customChains: [
       {
-        network: 'holesky',
+        network: 'hoodi',
         chainId: 17000,
         urls: {
-          apiURL: 'https://api-holesky.etherscan.io/api',
-          browserURL: 'https://holesky.etherscan.io',
+          apiURL: 'https://api-hoodi.etherscan.io/v2/api',
+          browserURL: 'https://hoodi.etherscan.io',
         },
       },
     ],
@@ -64,9 +64,9 @@ if (MAINNET_RPC_URL) {
   }
 }
 
-if (HOLESKY_RPC_URL) {
+if (HOODI_RPC_URL) {
   config.networks!.holesky = {
-    url: HOLESKY_RPC_URL,
+    url: HOODI_RPC_URL,
     accounts: WALLET_PRIVATE_KEY ? [WALLET_PRIVATE_KEY] : undefined,
   }
 }
