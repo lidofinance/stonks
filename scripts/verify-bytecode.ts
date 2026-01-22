@@ -192,7 +192,8 @@ async function loadEtherscanSourceCode(
 ): Promise<ContractSourceCode> {
   const apiDomain = network === 'mainnet' ? 'api' : `api-${network}`
   const url = [
-    `https://${apiDomain}.etherscan.io/api?`,
+    `https://${apiDomain}.etherscan.io/v2/api?`,
+    'chainid=1',
     'module=contract',
     'action=getsourcecode',
     `address=${address}`,
