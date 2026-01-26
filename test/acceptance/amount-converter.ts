@@ -4,13 +4,14 @@ import { expect } from 'chai'
 const AMOUNT_CONVERTER_ADDRESS: string = ''
 const ORACLE_ROUTER_ADDRESS: string = ''
 
+const tokensToSell: string[] = []
+const tokensToBuy: string[] = []
+
 describe('AmountConverter: acceptance', async function () {
   it('should have correct params', async function () {
     if (AMOUNT_CONVERTER_ADDRESS === '') this.skip()
     if (ORACLE_ROUTER_ADDRESS === '') this.skip()
 
-    const tokensToSell: string[] = []
-    const tokensToBuy: string[] = []
     if (tokensToSell.length === 0) this.skip()
     if (tokensToBuy.length === 0) this.skip()
 

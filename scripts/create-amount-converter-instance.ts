@@ -72,7 +72,7 @@ async function main() {
   if (!['localhost', 'hardhat'].includes(network.name)) {
     await verify(
       amountConverterAddress,
-      [ORACLE_ROUTER, ALLOWED_TOKENS_TO_SELL, ALLOWED_TOKENS_TO_BUY],
+      [ORACLE_ROUTER, ALLOWED_TOKENS_TO_SELL, ALLOWED_TOKENS_TO_BUY, USE_ETH_ANCHOR],
       receipt
     )
   } else {

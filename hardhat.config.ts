@@ -41,9 +41,9 @@ const config: HardhatUserConfig = {
     customChains: [
       {
         network: 'hoodi',
-        chainId: 17000,
+        chainId: 560048,
         urls: {
-          apiURL: 'https://api-hoodi.etherscan.io/v2/api',
+          apiURL: 'https://api.etherscan.io/v2/api',
           browserURL: 'https://hoodi.etherscan.io',
         },
       },
@@ -65,7 +65,7 @@ if (MAINNET_RPC_URL) {
 }
 
 if (HOODI_RPC_URL) {
-  config.networks!.holesky = {
+  config.networks!.hoodi = {
     url: HOODI_RPC_URL,
     accounts: WALLET_PRIVATE_KEY ? [WALLET_PRIVATE_KEY] : undefined,
   }

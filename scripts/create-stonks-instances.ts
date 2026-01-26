@@ -6,6 +6,7 @@ import { confirmOrAbort } from '../utils/prompt'
 import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
 import { StonksFactory__factory } from '../typechain-types'
 import { StonksDeployedEvent } from '../typechain-types/contracts/factories/StonksFactory'
+import { setTimeout } from 'timers/promises'
 
 interface StonksConfig {
   tokenFrom: string
@@ -105,6 +106,11 @@ async function main() {
         `was deployed successfully: ${fmt.address(stonksAddress)}\n`,
       ].join(' ')
     )
+
+    console.log('Waiting for 15 seconds to let Etherscan index the new contract...')
+
+    await setTimeout(15000)
+
     if (!['localhost', 'hardhat'].includes(network.name)) {
       await verify(
         stonksAddress,
