@@ -32,6 +32,16 @@ abstract contract RevenueSource is Pausable {
         return (_lastRevenueUsd, _lastReportTimestamp);
     }
 
+    /// @notice Pauses the contract, blocking getRevenue and any whenNotPaused functions.
+    function pause() external {
+        _pause();
+    }
+
+    /// @notice Unpauses the contract.
+    function unpause() external {
+        _unpause();
+    }
+
     // ==================== Internal Functions ====================
 
     function _updateRevenue(uint256 revenueUsd_, uint256 reportTimestamp_) internal {
