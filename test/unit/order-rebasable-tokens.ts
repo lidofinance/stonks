@@ -175,8 +175,8 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
       const token = await ethers.getContractAt('IERC20', tokenFrom)
       const orderDetailsPartial = await orderPartial.getOrderDetails()
       const orderDetailsNoPartial = await orderNoPartial.getOrderDetails()
-      const sellAmountPartial = orderDetailsPartial[3]
-      const sellAmountNoPartial = orderDetailsNoPartial[3]
+      const sellAmountPartial = orderDetailsPartial[4]
+      const sellAmountNoPartial = orderDetailsNoPartial[4]
       const orderPartialAddress = await orderPartial.getAddress()
       const orderNoPartialAddress = await orderNoPartial.getAddress()
       const [, recipient] = await ethers.getSigners()
@@ -245,7 +245,7 @@ describe('Order - Rebasable Tokens (stETH -> LDO)', async function () {
       const [tokenFrom] = await stonksNoPartialFill.getOrderParameters()
       const orderDetails = await orderNoPartial.getOrderDetails()
       const orderAddress = await orderNoPartial.getAddress()
-      const sellAmount = orderDetails[3]
+      const sellAmount = orderDetails[4]
 
       // Get initial balance
       const token = await ethers.getContractAt('IERC20', tokenFrom)

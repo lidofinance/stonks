@@ -111,13 +111,13 @@ describe('Multi-order scenarios', function () {
 
     it('should maintain independent state across orders', async function () {
       const order1 = await placeOrder(parseEther('1000'))
-      const [, , , sellAmount1, buyAmount1] = await order1.getOrderDetails()
+      const [, , , , sellAmount1, buyAmount1] = await order1.getOrderDetails()
 
       const orderDuration = await stonks.ORDER_DURATION_IN_SECONDS()
       await time.increase(orderDuration + 1n)
 
       const order2 = await placeOrder(parseEther('500'))
-      const [, , , sellAmount2, buyAmount2] = await order2.getOrderDetails()
+      const [, , , , sellAmount2, buyAmount2] = await order2.getOrderDetails()
 
       expect(sellAmount1).to.not.equal(sellAmount2)
       expect(buyAmount1).to.not.equal(buyAmount2)
@@ -211,11 +211,11 @@ describe('Multi-order scenarios', function () {
       const orderData = await getPlaceOrderData(receipt)
       const order = await ethers.getContractAt('Order', orderData.address)
 
-      const [, , , sellAmount] = await order.getOrderDetails()
+      const [, , , , sellAmount] = await order.getOrderDetails()
       expect(sellAmount).to.be.closeTo(balanceAfter, REBASE_TOLERANCE)
     })
 
-    it('should place order with correct amount after negative "rebase" in Stonks', async function () {
+    it('should place order with correct amount after negative rebase in Stonks', async function () {
       const treasurySigner = await ethers.provider.getSigner(contracts.AGENT)
       await impersonateAccount(contracts.AGENT)
       await tokenFrom
@@ -244,7 +244,7 @@ describe('Multi-order scenarios', function () {
       const orderData = await getPlaceOrderData(receipt)
       const order = await ethers.getContractAt('Order', orderData.address)
 
-      const [, , , sellAmount] = await order.getOrderDetails()
+      const [, , , , sellAmount] = await order.getOrderDetails()
       expect(sellAmount).to.be.closeTo(balanceAfter, REBASE_TOLERANCE)
     })
   })

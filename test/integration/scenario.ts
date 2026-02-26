@@ -144,7 +144,7 @@ describe('Scenario test multi-pair', function () {
           const orderDetails = await order.getOrderDetails()
           await expect(order.recoverTokenFrom())
             .to.be.revertedWithCustomError(order, 'OrderNotExpired')
-            .withArgs(orderDetails[5], anyValue)
+            .withArgs(orderDetails[6], anyValue)
         })
         it('should be possible to recover tokenFrom after expiration time', async function () {
           await network.provider.send('evm_increaseTime', [
@@ -155,7 +155,7 @@ describe('Scenario test multi-pair', function () {
           expect(await tokenFrom.balanceOf(order)).to.be.closeTo(BigInt(0), 1n)
         })
         it('should be invalid after order expiration', async function () {
-          const [currentHash, , , , , validTo] = await order.getOrderDetails()
+          const [currentHash, , , , , , validTo] = await order.getOrderDetails()
           await expect(order.isValidSignature(currentHash, '0x'))
             .to.be.revertedWithCustomError(order, 'OrderExpired')
             .withArgs(validTo)
@@ -303,6 +303,7 @@ describe('Scenario test multi-pair', function () {
             priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
             maxImprovementInBasisPoints: 100n, // maxImprovement = 100 bps (1%)
             allowPartialFill: await stonks.ALLOW_PARTIAL_FILL(),
+            receiver: contracts.AGENT,
           })
           await stonksWithCap.waitForDeployment()
 
@@ -354,6 +355,7 @@ describe('Scenario test multi-pair', function () {
             priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
             maxImprovementInBasisPoints: 0n, // maxImprovement = 0 (strict mode)
             allowPartialFill: await stonks.ALLOW_PARTIAL_FILL(),
+            receiver: contracts.AGENT,
           })
           await stonksStrict.waitForDeployment()
 
@@ -405,6 +407,7 @@ describe('Scenario test multi-pair', function () {
             priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
             maxImprovementInBasisPoints: 100n, // maxImprovement = 100 bps (1%)
             allowPartialFill: await stonks.ALLOW_PARTIAL_FILL(),
+            receiver: contracts.AGENT,
           })
           await stonksWithCap.waitForDeployment()
 

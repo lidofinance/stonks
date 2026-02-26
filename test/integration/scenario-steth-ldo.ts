@@ -291,7 +291,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const orderDetails = await order.getOrderDetails()
       await expect(order.recoverTokenFrom())
         .to.be.revertedWithCustomError(order, 'OrderNotExpired')
-        .withArgs(orderDetails[5], anyValue)
+        .withArgs(orderDetails[6], anyValue)
     })
 
     it('should recover remaining tokens after expiration', async function () {
@@ -309,7 +309,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     it('order should be invalid after expiration', async function () {
       await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
 
-      const [currentHash, , , , , validTo] = await order.getOrderDetails()
+      const [currentHash, , , , , , validTo] = await order.getOrderDetails()
       await expect(order.isValidSignature(currentHash, '0x'))
         .to.be.revertedWithCustomError(order, 'OrderExpired')
         .withArgs(validTo)
@@ -582,7 +582,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       await simulateRebase(tokenFrom, orderAddress, rebaseAmount, true)
 
       // Order expired, rebase doesn't matter
-      const [hash, , , , , validTo] = await order.getOrderDetails()
+      const [hash, , , , , , validTo] = await order.getOrderDetails()
       await expect(order.isValidSignature(hash, '0x'))
         .to.be.revertedWithCustomError(order, 'OrderExpired')
         .withArgs(validTo)
@@ -732,7 +732,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
 
     it('should revert with InsufficientSellBalance after significant negative rebase', async function () {
       const orderAddress = await orderNoPartial.getAddress()
-      const [hash, , , sellAmount] = await orderNoPartial.getOrderDetails()
+      const [hash, , , , sellAmount] = await orderNoPartial.getOrderDetails()
 
       // Apply 30% negative rebase
       const rebaseAmount = ((await tokenFrom.balanceOf(orderAddress)) * 30n) / 100n
@@ -757,7 +757,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         currentBalance = await tokenFrom.balanceOf(orderAddress)
       }
 
-      const [hash, , , sellAmount] = await orderNoPartial.getOrderDetails()
+      const [hash, , , , sellAmount] = await orderNoPartial.getOrderDetails()
       await expect(orderNoPartial.isValidSignature(hash, '0x'))
         .to.be.revertedWithCustomError(orderNoPartial, 'InsufficientSellBalance')
         .withArgs(sellAmount, currentBalance)
@@ -771,7 +771,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const rebaseAmount = (currentBalance * 99n) / 100n
       await simulateRebase(tokenFrom, orderAddress, rebaseAmount, false)
 
-      const [hash, , , sellAmount] = await orderNoPartial.getOrderDetails()
+      const [hash, , , , sellAmount] = await orderNoPartial.getOrderDetails()
       const balanceAfter = await tokenFrom.balanceOf(orderAddress)
 
       await expect(orderNoPartial.isValidSignature(hash, '0x'))
@@ -858,7 +858,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     })
 
     it('should revert when trying to recover before expiration', async function () {
-      const [, , , , , validTo] = await order.getOrderDetails()
+      const [, , , , , , validTo] = await order.getOrderDetails()
 
       await expect(order.recoverTokenFrom())
         .to.be.revertedWithCustomError(order, 'OrderNotExpired')
@@ -869,7 +869,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const duration = await stonks.ORDER_DURATION_IN_SECONDS()
       await time.increase((duration * 99n) / 100n)
 
-      const [, , , , , validTo] = await order.getOrderDetails()
+      const [, , , , , , validTo] = await order.getOrderDetails()
 
       await expect(order.recoverTokenFrom())
         .to.be.revertedWithCustomError(order, 'OrderNotExpired')
@@ -909,7 +909,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
     it('should revert signature validation after expiration', async function () {
       await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
 
-      const [hash, , , , , validTo] = await order.getOrderDetails()
+      const [hash, , , , , , validTo] = await order.getOrderDetails()
 
       await expect(order.isValidSignature(hash, '0x'))
         .to.be.revertedWithCustomError(order, 'OrderExpired')
@@ -925,7 +925,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       // Wait for expiration
       await time.increase((await stonks.ORDER_DURATION_IN_SECONDS()) + 1n)
 
-      const [hash, , , , , validTo] = await order.getOrderDetails()
+      const [hash, , , , , , validTo] = await order.getOrderDetails()
 
       await expect(order.isValidSignature(hash, '0x'))
         .to.be.revertedWithCustomError(order, 'OrderExpired')
@@ -1053,13 +1053,13 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
       const { address } = await getPlaceOrderData(receipt)
       const testOrder = await ethers.getContractAt('Order', address)
 
-      const [hashBefore, , , sellAmountBefore, buyAmountBefore, validToBefore] =
+      const [hashBefore, , , , sellAmountBefore, buyAmountBefore, validToBefore] =
         await testOrder.getOrderDetails()
 
       // Apply rebase
       await simulateRebase(tokenFrom, address, (value * 10n) / 100n, true)
 
-      const [hashAfter, , , sellAmountAfter, buyAmountAfter, validToAfter] =
+      const [hashAfter, , , , sellAmountAfter, buyAmountAfter, validToAfter] =
         await testOrder.getOrderDetails()
 
       // Order parameters should remain unchanged

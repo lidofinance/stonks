@@ -93,6 +93,7 @@ contract Order is IERC1271, AssetRecoverer {
     error InvalidAmountToRecover(uint256 amount);
     error CannotRecoverTokenFrom(address token);
     error InvalidOrderHash(bytes32 expected, bytes32 actual);
+    error InvalidReceiverAddress(address receiver);
     error OrderNotExpired(uint256 validTo, uint256 currentTimestamp);
     error PriceImprovementExceedsLimit(uint256 maxAllowedBuyAmount, uint256 actualBuyAmount);
     error PriceImprovementRejectedInStrictMode(uint256 expectedBuyAmount, uint256 actualBuyAmount);
@@ -137,11 +138,16 @@ contract Order is IERC1271, AssetRecoverer {
      * @notice Initializes the contract for trading by defining order parameters and approving tokens.
      * @param minBuyAmount_ The minimum accepted trade outcome.
      * @param manager_ The manager's address to be set for the contract.
+     * @param receiver_ The settlement destination for the buy token (must not be zero address).
      * @dev Pulls pair params from Stonks, asserts a quotable price path up front, computes amounts, and arms allowance.
      */
-    function initialize(uint256 minBuyAmount_, address manager_) external {
+    function initialize(uint256 minBuyAmount_, address manager_, address receiver_) external {
         if (initialized) {
             revert OrderAlreadyInitialized();
+        }
+
+        if (receiver_ == address(0)) {
+            revert InvalidReceiverAddress(receiver_);
         }
 
         initialized = true;
@@ -184,7 +190,7 @@ contract Order is IERC1271, AssetRecoverer {
         GPv2Order.Data memory order = GPv2Order.Data({
             sellToken: tokenFromErc,
             buyToken: tokenToErc,
-            receiver: AGENT,
+            receiver: receiver_,
             sellAmount: sellAmount,
             buyAmount: buyAmount,
             validTo: validTo,
@@ -386,6 +392,7 @@ contract Order is IERC1271, AssetRecoverer {
      * @return hash_ The hash of the order.
      * @return tokenFrom_ The address of the token being sold.
      * @return tokenTo_ The address of the token being bought.
+     * @return receiver_ The settlement destination for the buy token.
      * @return sellAmount_ The amount of `tokenFrom_` that is being sold.
      * @return buyAmount_ The amount of `tokenTo_` that is expected to be bought.
      * @return validTo_ The timestamp until which the order remains valid.
@@ -397,12 +404,21 @@ contract Order is IERC1271, AssetRecoverer {
             bytes32 hash_,
             address tokenFrom_,
             address tokenTo_,
+            address receiver_,
             uint256 sellAmount_,
             uint256 buyAmount_,
             uint32 validTo_
         )
     {
-        return (orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo);
+        return (
+            orderHash,
+            tokenFrom,
+            tokenTo,
+            IStonks(stonks).RECEIVER(),
+            sellAmount,
+            buyAmount,
+            validTo
+        );
     }
 
     /**

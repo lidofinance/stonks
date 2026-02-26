@@ -39,7 +39,8 @@ contract StonksFactory {
         uint256 marginInBasisPoints,
         uint256 priceToleranceInBasisPoints,
         uint256 maxImprovementInBasisPoints,
-        bool allowPartialFill
+        bool allowPartialFill,
+        address receiver
     );
 
     // ==================== Errors ====================
@@ -103,6 +104,7 @@ contract StonksFactory {
      * @param priceToleranceInBasisPoints_ Price tolerance in basis points
      * @param maxImprovementInBasisPoints_ Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode)
      * @param allowPartialFill_ Whether orders should allow partial fills (useful for rebasable tokens)
+     * @param receiver_ Settlement destination for all orders; address(0) defaults to AGENT
      * @return stonks The address of the newly deployed Stonks contract
      */
     function deployStonks(
@@ -114,7 +116,8 @@ contract StonksFactory {
         uint256 marginInBasisPoints_,
         uint256 priceToleranceInBasisPoints_,
         uint256 maxImprovementInBasisPoints_,
-        bool allowPartialFill_
+        bool allowPartialFill_,
+        address receiver_
     ) external returns (address stonks) {
         stonks = address(
             new Stonks(
@@ -130,7 +133,8 @@ contract StonksFactory {
                     marginInBasisPoints_,
                     priceToleranceInBasisPoints_,
                     maxImprovementInBasisPoints_,
-                    allowPartialFill_
+                    allowPartialFill_,
+                    receiver_
                 )
             )
         );
@@ -148,7 +152,8 @@ contract StonksFactory {
             marginInBasisPoints_,
             priceToleranceInBasisPoints_,
             maxImprovementInBasisPoints_,
-            allowPartialFill_
+            allowPartialFill_,
+            receiver_
         );
     }
 }

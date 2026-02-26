@@ -8,6 +8,7 @@ interface IStonks {
     function getMaxImprovementBps() external view returns (uint256);
     function estimateTradeOutput(uint256 amount_) external view returns (uint256);
     function ALLOW_PARTIAL_FILL() external view returns (bool);
+    function RECEIVER() external view returns (address);
     function areSignaturesPaused() external view returns (bool);
     function isCreationPaused() external view returns (bool);
     function isKilled() external view returns (bool);

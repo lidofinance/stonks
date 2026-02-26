@@ -137,7 +137,8 @@ describe('StonksFactory', function () {
           marginInBP,
           toleranceInBP,
           maxImprovementInBP,
-          allowPartialFill
+          allowPartialFill,
+          ethers.ZeroAddress // receiver: defaults to AGENT
         )
       )
         .to.emit(subject, 'StonksDeployed')
@@ -154,7 +155,8 @@ describe('StonksFactory', function () {
           marginInBP,
           toleranceInBP,
           maxImprovementInBP,
-          allowPartialFill
+          allowPartialFill,
+          ethers.ZeroAddress // receiver_ passed as address(0)
         )
     })
   })

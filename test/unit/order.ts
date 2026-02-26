@@ -158,7 +158,7 @@ describe('Order', async function () {
     it('sample instance should be initialized by default', async function () {
       const subject = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
       await expect(
-        subject.initialize(expectedBuyAmount, ethers.ZeroAddress)
+        subject.initialize(expectedBuyAmount, ethers.ZeroAddress, contracts.AGENT)
       ).to.be.revertedWithCustomError(subject, 'OrderAlreadyInitialized')
     })
   })
@@ -191,15 +191,119 @@ describe('Order', async function () {
     it('should return correct params from getOrderDetails', async function () {
       const [tokenFromParam, tokenToParam, orderDurationInSeconds] =
         await stonks.getOrderParameters()
-      const [orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo] =
+      const [orderHash, tokenFrom, tokenTo, receiver, sellAmount, buyAmount, validTo] =
         await subject.getOrderDetails()
 
       expect(orderHash).to.equal(orderData.hash)
       expect(tokenFrom).to.equal(tokenFromParam)
       expect(tokenTo).to.equal(tokenToParam)
+      expect(receiver).to.equal(contracts.AGENT)
       expect(sellAmount).to.equal(orderData.order.sellAmount)
       expect(buyAmount).to.equal(orderData.order.buyAmount)
       expect(validTo).to.equal(BigInt(orderData.timestamp) + BigInt(orderDurationInSeconds))
+    })
+  })
+
+  describe('receiver:', function () {
+    it('default receiver (address(0) in InitParams) should be AGENT', async function () {
+      expect(await stonks.RECEIVER()).to.equal(contracts.AGENT)
+    })
+
+    it('order receiver in GPv2Order data should equal Stonks RECEIVER (AGENT by default)', async function () {
+      expect(orderData.order.receiver).to.equal(contracts.AGENT)
+    })
+
+    it('getOrderDetails should return AGENT as receiver when default', async function () {
+      const [, , , receiver] = await subject.getOrderDetails()
+      expect(receiver).to.equal(contracts.AGENT)
+    })
+
+    it('should revert initialize when receiver is zero address', async function () {
+      const localSnapshot = await takeSnapshot()
+
+      // Deploy an uninitialized EIP-1167 clone of the ORDER_SAMPLE directly so we can
+      // call initialize ourselves (the sample contract marks itself initialized in its
+      // constructor, so we must go through a fresh clone).
+      const implAddr = await stonks.ORDER_SAMPLE()
+      const eip1167Code =
+        '0x3d602d80600a3d3981f3363d3d373d3d3d363d73' +
+        implAddr.slice(2).toLowerCase() +
+        '5af43d82803e903d91602b57fd5bf3'
+
+      const [deployer] = await ethers.getSigners()
+      const deployTx = await deployer.sendTransaction({ data: eip1167Code })
+      const deployReceipt = await deployTx.wait()
+      if (!deployReceipt?.contractAddress) throw new Error('Clone deploy failed')
+
+      const clone = await ethers.getContractAt('Order', deployReceipt.contractAddress)
+
+      // Impersonate an arbitrary address as msg.sender so stonks = msg.sender is valid
+      const fakeStonksAddr = await stonks.getAddress()
+      const fakeStonksSigner = await ethers.getImpersonatedSigner(fakeStonksAddr)
+      await ethers.provider.send('hardhat_setBalance', [fakeStonksAddr, '0x1000000000000000000'])
+
+      await expect(
+        clone.connect(fakeStonksSigner).initialize(1n, contracts.AGENT, ethers.ZeroAddress)
+      )
+        .to.be.revertedWithCustomError(clone, 'InvalidReceiverAddress')
+        .withArgs(ethers.ZeroAddress)
+
+      await localSnapshot.restore()
+    })
+
+    it('Stonks with custom receiver should pass it to placed orders', async function () {
+      const localSnapshot = await takeSnapshot()
+      const [deployer] = await ethers.getSigners()
+      const customReceiver = await deployer.getAddress()
+
+      const { stonks: stonksCustom } = await deployStonks({
+        factoryParams: {
+          admin: contracts.ADMIN,
+          agent: contracts.AGENT,
+          relayer: contracts.VAULT_RELAYER,
+          settlement: contracts.SETTLEMENT,
+          priceFeedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+          oracleRouterAddress: await oracleRouter.getAddress(),
+        },
+        stonksParams: {
+          tokenFrom: contracts.STETH,
+          tokenTo: contracts.DAI,
+          manager: await manager.getAddress(),
+          marginInBps: 500,
+          orderDuration: 3600,
+          priceToleranceInBps: PRICE_TOLERANCE_IN_BP,
+          amountConverterAddress: await amountConverterTest.getAddress(),
+          receiver: customReceiver,
+        },
+        amountConverterParams: {
+          oracleRouter: await oracleRouter.getAddress(),
+          allowedTokensToSell: [contracts.STETH],
+          allowedTokensToBuy: [contracts.DAI],
+        },
+        skipRouterConfiguration: true,
+      })
+
+      expect(await stonksCustom.RECEIVER()).to.equal(customReceiver)
+
+      await fillUpERC20FromTreasury({
+        token: contracts.STETH,
+        amount: ethers.parseEther('1'),
+        address: await stonksCustom.getAddress(),
+      })
+
+      const buyAmount = await stonksCustom.estimateTradeOutputFromCurrentBalance()
+      const tx = await stonksCustom.placeOrder(buyAmount)
+      const rc = await tx.wait()
+      if (!rc) throw new Error('No receipt')
+
+      const data = await getPlaceOrderData(rc)
+      expect(data.order.receiver).to.equal(customReceiver)
+
+      const orderContract = await ethers.getContractAt('Order', data.address)
+      const [, , , receiverFromDetails] = await orderContract.getOrderDetails()
+      expect(receiverFromDetails).to.equal(customReceiver)
+
+      await localSnapshot.restore()
     })
   })
 
@@ -236,8 +340,8 @@ describe('Order', async function () {
     })
     it('should revert if there was a price spike', async function () {
       const orderDetails = await subject.getOrderDetails()
-      const sellAmount = orderDetails[3]
-      const buyAmount = orderDetails[4]
+      const sellAmount = orderDetails[4]
+      const buyAmount = orderDetails[5]
       const toleratedShortfall = (buyAmount * BigInt(PRICE_TOLERANCE_IN_BP)) / 10000n
       const minAcceptable = buyAmount - toleratedShortfall
 
@@ -289,7 +393,7 @@ describe('Order', async function () {
 
       await expect(subject.recoverTokenFrom())
         .to.be.revertedWithCustomError(subject, 'OrderNotExpired')
-        .withArgs(orderDetails[5], timestamp + 1)
+        .withArgs(orderDetails[6], timestamp + 1)
     })
     it('should revert if nothing to recover', async function () {
       await time.increase(60 * 60 + 1)

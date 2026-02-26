@@ -56,6 +56,9 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         uint256 maxImprovementInBasisPoints;
         /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
         bool allowPartialFill;
+        /// @notice Settlement destination for all orders created by this Stonks instance.
+        ///         If set to address(0), defaults to AGENT (backward-compatible behavior).
+        address receiver;
     }
 
     // ==================== Immutables ====================
@@ -80,6 +83,8 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     uint256 public immutable MAX_IMPROVEMENT_IN_BASIS_POINTS;
     /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
     bool public immutable ALLOW_PARTIAL_FILL;
+    /// @notice Settlement destination for all orders created by this Stonks instance.
+    address public immutable RECEIVER;
 
     // ==================== Constants ====================
 
@@ -105,6 +110,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     event PriceToleranceInBasisPointsSet(uint256 priceToleranceInBasisPoints);
     event MaxImprovementInBasisPointsSet(uint256 maxImprovementInBasisPoints);
     event AllowPartialFillSet(bool allowPartialFill);
+    event ReceiverSet(address receiver);
     event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
     event SignaturesPaused(address indexed by);
     event SignaturesUnpaused(address indexed by);
@@ -188,8 +194,10 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         PRICE_TOLERANCE_IN_BASIS_POINTS = initParams_.priceToleranceInBasisPoints;
         MAX_IMPROVEMENT_IN_BASIS_POINTS = initParams_.maxImprovementInBasisPoints;
         ALLOW_PARTIAL_FILL = initParams_.allowPartialFill;
+        RECEIVER = initParams_.receiver == address(0) ? AGENT : initParams_.receiver;
 
         emit ManagerSet(initParams_.manager);
+        emit ReceiverSet(RECEIVER);
         emit AmountConverterSet(initParams_.amountConverter);
         emit OrderSampleSet(initParams_.orderSample);
         emit TokenFromSet(initParams_.tokenFrom);
@@ -411,7 +419,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         Order orderCopy = Order(Clones.clone(ORDER_SAMPLE));
 
         IERC20(TOKEN_FROM).safeTransfer(address(orderCopy), sellAmount_);
-        orderCopy.initialize(minBuyAmount_, manager);
+        orderCopy.initialize(minBuyAmount_, manager, RECEIVER);
 
         emit OrderContractCreated(address(orderCopy), minBuyAmount_);
 

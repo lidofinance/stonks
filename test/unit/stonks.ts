@@ -91,6 +91,7 @@ describe('Stonks', function () {
       priceToleranceInBasisPoints: number
       maxImprovementInBasisPoints: bigint
       allowPartialFill: boolean
+      receiver: string
     }
 
     before(async function () {
@@ -107,6 +108,7 @@ describe('Stonks', function () {
         priceToleranceInBasisPoints: 999,
         maxImprovementInBasisPoints: 0n,
         allowPartialFill: false,
+        receiver: ethers.ZeroAddress,
       } as const
     })
 
@@ -122,6 +124,8 @@ describe('Stonks', function () {
       expect(tokenTo).to.be.equal(validParams.tokenTo)
       expect(orderDurationInSeconds).to.be.equal(validParams.orderDurationInSeconds)
       expect(priceToleranceInBasisPoints).to.be.equal(validParams.priceToleranceInBasisPoints)
+      // receiver == address(0) in params → defaults to AGENT
+      expect(await stonks.RECEIVER()).to.be.equal(validParams.agent)
     })
 
     it('should emit events for every parameter', async function () {
@@ -130,6 +134,8 @@ describe('Stonks', function () {
       await expect(stonksLocal.deploymentTransaction())
         .to.emit(stonksLocal, 'ManagerSet')
         .withArgs(validParams.manager)
+        .and.to.emit(stonksLocal, 'ReceiverSet')
+        .withArgs(validParams.agent) // address(0) → defaults to AGENT
         .and.to.emit(stonksLocal, 'AmountConverterSet')
         .withArgs(validParams.amountConverter)
         .and.to.emit(stonksLocal, 'OrderSampleSet')
@@ -391,6 +397,46 @@ describe('Stonks', function () {
         .withArgs(contracts.USDC)
 
       await localSnapshot.restore()
+    })
+
+    it('should default RECEIVER to AGENT when receiver is address(0)', async function () {
+      const stonksLocal = await ContractFactory.deploy({
+        ...validParams,
+        receiver: ethers.ZeroAddress,
+      })
+      await stonksLocal.waitForDeployment()
+      expect(await stonksLocal.RECEIVER()).to.equal(validParams.agent)
+    })
+
+    it('should store explicit receiver when receiver is non-zero', async function () {
+      const customReceiver = '0x0000000000000000000000000000000000000042'
+      const stonksLocal = await ContractFactory.deploy({
+        ...validParams,
+        receiver: customReceiver,
+      })
+      await stonksLocal.waitForDeployment()
+      expect(await stonksLocal.RECEIVER()).to.equal(customReceiver)
+    })
+
+    it('should emit ReceiverSet with AGENT when receiver is address(0)', async function () {
+      const stonksLocal = await ContractFactory.deploy({
+        ...validParams,
+        receiver: ethers.ZeroAddress,
+      })
+      await expect(stonksLocal.deploymentTransaction())
+        .to.emit(stonksLocal, 'ReceiverSet')
+        .withArgs(validParams.agent)
+    })
+
+    it('should emit ReceiverSet with custom receiver when non-zero', async function () {
+      const customReceiver = '0x0000000000000000000000000000000000000042'
+      const stonksLocal = await ContractFactory.deploy({
+        ...validParams,
+        receiver: customReceiver,
+      })
+      await expect(stonksLocal.deploymentTransaction())
+        .to.emit(stonksLocal, 'ReceiverSet')
+        .withArgs(customReceiver)
     })
   })
 

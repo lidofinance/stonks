@@ -79,7 +79,7 @@ describe('Partial fills with rebasable tokens', function () {
       order = await ethers.getContractAt('Order', orderData.address)
       orderAddress = orderData.address
 
-      const [, , , sellAmount, buyAmount] = await order.getOrderDetails()
+      const [, , , , sellAmount, buyAmount] = await order.getOrderDetails()
       initialSellAmount = sellAmount
       initialBuyAmount = buyAmount
 
@@ -115,7 +115,7 @@ describe('Partial fills with rebasable tokens', function () {
       const [currentHash] = await order.getOrderDetails()
       expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
 
-      const [, , , sellAmount, buyAmount] = await order.getOrderDetails()
+      const [, , , , sellAmount, buyAmount] = await order.getOrderDetails()
       expect(sellAmount).to.equal(initialSellAmount)
       expect(buyAmount).to.equal(initialBuyAmount)
     })
@@ -126,7 +126,7 @@ describe('Partial fills with rebasable tokens', function () {
       const rebaseAmount = parseEther('5')
       await simulateRebase(tokenFrom, orderAddress, rebaseAmount, true)
 
-      const [, , , sellAmount, buyAmount] = await order.getOrderDetails()
+      const [, , , , sellAmount, buyAmount] = await order.getOrderDetails()
 
       expect(sellAmount).to.equal(initialSellAmount)
 
@@ -156,7 +156,7 @@ describe('Partial fills with rebasable tokens', function () {
       order = await ethers.getContractAt('Order', orderData.address)
       orderAddress = orderData.address
 
-      const [, , , sellAmount, buyAmount] = await order.getOrderDetails()
+      const [, , , , sellAmount, buyAmount] = await order.getOrderDetails()
       initialSellAmount = sellAmount
       initialBuyAmount = buyAmount
     })
@@ -186,7 +186,7 @@ describe('Partial fills with rebasable tokens', function () {
       const [currentHash] = await order.getOrderDetails()
       expect(await order.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
 
-      const [, , , sellAmount, buyAmount] = await order.getOrderDetails()
+      const [, , , , sellAmount, buyAmount] = await order.getOrderDetails()
       expect(sellAmount).to.equal(initialSellAmount)
       expect(buyAmount).to.equal(initialBuyAmount)
     })

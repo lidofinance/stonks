@@ -72,7 +72,8 @@ async function main() {
       config.marginBasisPoints,
       config.priceToleranceInBasisPoints,
       config.maxImprovementInBasisPoints,
-      config.allowPartialFill
+      config.allowPartialFill,
+      ethers.ZeroAddress // receiver: defaults to AGENT
     )
     const receipt = await waitForDeployment(tx)
 

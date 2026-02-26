@@ -233,8 +233,8 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
       const [currentHash] = await subject.getOrderDetails()
       const orderDetails = await subject.getOrderDetails()
-      const sellAmount = orderDetails[3]
-      const buyAmount = orderDetails[4]
+      const sellAmount = orderDetails[4]
+      const buyAmount = orderDetails[5]
 
       // For FOK orders: basisSellAmount == sellAmount, so baselineBuyAmount == buyAmount
       const baselineBuyAmount = buyAmount
@@ -289,6 +289,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         priceToleranceInBasisPoints: PRICE_TOLERANCE_IN_BP,
         maxImprovementInBasisPoints: ethers.MaxUint256, // Pass as bigint directly
         allowPartialFill: false,
+        receiver: contracts.AGENT,
       })
       await stonksNoCap.waitForDeployment()
 
@@ -378,8 +379,8 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
       const [currentHash] = await orderStrict.getOrderDetails()
       const orderDetails = await orderStrict.getOrderDetails()
-      const buyAmount = orderDetails[4]
-      const currentEstimatedBuyAmount = await stonksStrict.estimateTradeOutput(orderDetails[3])
+      const buyAmount = orderDetails[5]
+      const currentEstimatedBuyAmount = await stonksStrict.estimateTradeOutput(orderDetails[4])
 
       await expect(orderStrict.isValidSignature(currentHash, '0x'))
         .to.be.revertedWithCustomError(orderStrict, 'PriceImprovementRejectedInStrictMode')
@@ -420,10 +421,10 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
       const [currentHash] = await subject.getOrderDetails()
       const orderDetails = await subject.getOrderDetails()
-      const buyAmount = orderDetails[4]
+      const buyAmount = orderDetails[5]
       const maxToleratedShortfall = (buyAmount * BigInt(PRICE_TOLERANCE_IN_BP)) / MAX_BASIS_POINTS
       const minAcceptableBuyAmount = buyAmount - maxToleratedShortfall
-      const currentEstimatedBuyAmount = await stonks.estimateTradeOutput(orderDetails[3])
+      const currentEstimatedBuyAmount = await stonks.estimateTradeOutput(orderDetails[4])
 
       await expect(subject.isValidSignature(currentHash, '0x'))
         .to.be.revertedWithCustomError(subject, 'PriceShortfallExceedsTolerance')
@@ -498,9 +499,9 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
       const [currentHash] = await orderZeroTolerance.getOrderDetails()
       const orderDetails = await orderZeroTolerance.getOrderDetails()
-      const buyAmount = orderDetails[4]
+      const buyAmount = orderDetails[5]
       const currentEstimatedBuyAmount = await stonksZeroTolerance.estimateTradeOutput(
-        orderDetails[3]
+        orderDetails[4]
       )
 
       await expect(orderZeroTolerance.isValidSignature(currentHash, '0x'))
@@ -533,7 +534,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
       const [tokenFrom] = await stonksNoPartial.getOrderParameters()
       const orderDetails = await orderNoPartial.getOrderDetails()
-      const sellAmount = orderDetails[3]
+      const sellAmount = orderDetails[4]
 
       // Transfer most of the tokens out of the order contract
       const orderAddress = await orderNoPartial.getAddress()
@@ -597,7 +598,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       const stonksContract = await ethers.getContractAt('Stonks', await orderNoPartial.stonks())
       const [tokenFrom] = await stonksContract.getOrderParameters()
       const orderDetails = await orderNoPartial.getOrderDetails()
-      const sellAmount = orderDetails[3]
+      const sellAmount = orderDetails[4]
       const orderAddress = await orderNoPartial.getAddress()
 
       // Get current balance
@@ -641,8 +642,8 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       // Note: 10101 gives exactly 100 bps (at cap, accepted), 10102 gives 101 bps (rejected)
       // This is due to Math.mulDiv rounding down in the improvement calculation
       const orderDetails = await subject.getOrderDetails()
-      const sellAmount = orderDetails[3]
-      const buyAmount = orderDetails[4]
+      const sellAmount = orderDetails[4]
+      const buyAmount = orderDetails[5]
 
       // For FOK orders: basisSellAmount == sellAmount, so baselineBuyAmount == buyAmount
       const baselineBuyAmount = buyAmount
@@ -662,7 +663,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
     it('should handle shortfall at exactly minAcceptableBuyAmount - 1 wei', async function () {
       const orderDetails = await subject.getOrderDetails()
-      const buyAmount = orderDetails[4]
+      const buyAmount = orderDetails[5]
       const maxToleratedShortfall = (buyAmount * BigInt(PRICE_TOLERANCE_IN_BP)) / MAX_BASIS_POINTS
       const minAcceptableBuyAmount = buyAmount - maxToleratedShortfall
 
@@ -670,7 +671,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       await amountConverterTest.multiplyAnswer(8999)
 
       const [currentHash] = await subject.getOrderDetails()
-      const currentEstimatedBuyAmount = await stonks.estimateTradeOutput(orderDetails[3])
+      const currentEstimatedBuyAmount = await stonks.estimateTradeOutput(orderDetails[4])
 
       // Should revert since it's below minimum
       await expect(subject.isValidSignature(currentHash, '0x'))
@@ -694,8 +695,8 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       // When currentEstimatedBuyAmount == baselineBuyAmount, should return immediately
       // This happens when prices match exactly
       const orderDetails = await subject.getOrderDetails()
-      const sellAmount = orderDetails[3]
-      const buyAmount = orderDetails[4]
+      const sellAmount = orderDetails[4]
+      const buyAmount = orderDetails[5]
 
       // Get current estimated output (should match buyAmount for unmodified prices)
       const currentEstimatedBuyAmount = await stonks.estimateTradeOutput(sellAmount)
@@ -801,7 +802,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
       const [tokenFrom] = await stonksPartial.getOrderParameters()
       const orderDetails = await orderPartial.getOrderDetails()
-      const sellAmount = orderDetails[3]
+      const sellAmount = orderDetails[4]
       const orderAddress = await orderPartial.getAddress()
 
       const token = await ethers.getContractAt('IERC20', tokenFrom)
@@ -837,8 +838,8 @@ describe('Order - Price Improvement & Partial Fills', async function () {
 
       const [tokenFrom, tokenTo] = await stonksPartial.getOrderParameters()
       const orderDetails = await orderPartial.getOrderDetails()
-      const sellAmount = orderDetails[3]
-      const buyAmount = orderDetails[4]
+      const sellAmount = orderDetails[4]
+      const buyAmount = orderDetails[5]
       const orderAddress = await orderPartial.getAddress()
 
       const token = await ethers.getContractAt('IERC20', tokenFrom)
@@ -960,8 +961,8 @@ describe('Order - Price Improvement & Partial Fills', async function () {
       // In practice, this can't happen with valid orders (buyAmount would be 0, which is invalid)
       // But we test the guard exists
       const orderDetails = await subject.getOrderDetails()
-      const sellAmount = orderDetails[3]
-      const buyAmount = orderDetails[4]
+      const sellAmount = orderDetails[4]
+      const buyAmount = orderDetails[5]
 
       // Verify buyAmount > 0 (required for valid order)
       expect(buyAmount).to.not.equal(0n)

@@ -19,7 +19,7 @@ interface IOrder {
     function getOrderDetails()
         external
         view
-        returns (bytes32, address, address, uint256, uint256, uint32);
+        returns (bytes32, address, address, address, uint256, uint256, uint32);
 }
 
 error InvalidSignature();
@@ -50,7 +50,7 @@ contract CoWSwapVaultRelayerStub is ManageableStub {
      * @param order The order contract to fill.
      */
     function fill(IOrder order) external onlyManager {
-        (bytes32 hash, address tokenFrom, , uint256 sellAmount, , ) = order.getOrderDetails();
+        (bytes32 hash, address tokenFrom, , , uint256 sellAmount, , ) = order.getOrderDetails();
 
         if (order.isValidSignature(hash, new bytes(0)) != ERC1271_MAGIC_VALUE) {
             revert InvalidSignature();
