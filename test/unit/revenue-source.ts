@@ -80,6 +80,10 @@ describe('RevenueSource', async function () {
       await expect(harness.updateRevenue(42_000n, 1_700_000_000n))
         .to.emit(harness, 'RevenueUpdated')
         .withArgs(42_000n, 1_700_000_000n)
+
+      const [revenueUsd, reportTimestamp] = await harness.getRevenue()
+      expect(revenueUsd).to.equal(42_000n)
+      expect(reportTimestamp).to.equal(1_700_000_000n)
     })
 
     it('stores values durably — second call overwrites first with no bleed-through', async function () {

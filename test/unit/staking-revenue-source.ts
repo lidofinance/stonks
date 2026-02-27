@@ -227,39 +227,25 @@ describe('StakingRevenueSource', async function () {
       expect(reportTimestamp).to.equal(0n)
     })
 
-    it('returns correct revenue and timestamp after pushTokenRate', async function () {
-      const newRate = SEED_RATE + TOKEN_RATE_SCALE / 10n
-      await wstEthStub.setRate(newRate)
-      await setStEthFeedPrice(STETH_FEED_PRICE)
-      await accountingOracleStub.setLastProcessingRefSlot(DEFAULT_REF_SLOT)
-      await subject.pushTokenRate()
-
-      const rateDelta = newRate - SEED_RATE
-      const expectedRevenueStEth = (rateDelta * DEFAULT_TOTAL_SUPPLY) / TOKEN_RATE_SCALE
-      const expectedRevenueUsd = (expectedRevenueStEth * STETH_ORACLE_PRICE) / PRICE_SCALE
-      const expectedTimestamp = GENESIS_TIME + SECONDS_PER_SLOT * DEFAULT_REF_SLOT
-
-      const [revenueUsd, reportTimestamp] = await subject.getRevenue()
-      expect(revenueUsd).to.equal(expectedRevenueUsd)
-      expect(reportTimestamp).to.equal(expectedTimestamp)
-    })
-
     it('returns the latest values after multiple pushTokenRate calls', async function () {
       await setStEthFeedPrice(STETH_FEED_PRICE)
 
       const rate1 = SEED_RATE + TOKEN_RATE_SCALE / 10n
       await wstEthStub.setRate(rate1)
-      await subject.pushTokenRate()
+      await expect(subject.pushTokenRate()).to.emit(subject, 'RevenueUpdated')
 
       const rate2 = rate1 + TOKEN_RATE_SCALE / 10n
       await wstEthStub.setRate(rate2)
       await accountingOracleStub.setLastProcessingRefSlot(2000n)
-      await subject.pushTokenRate()
 
       const rateDelta2 = rate2 - rate1
       const expectedRevenueStEth2 = (rateDelta2 * DEFAULT_TOTAL_SUPPLY) / TOKEN_RATE_SCALE
       const expectedRevenueUsd2 = (expectedRevenueStEth2 * STETH_ORACLE_PRICE) / PRICE_SCALE
       const expectedTimestamp2 = GENESIS_TIME + SECONDS_PER_SLOT * 2000n
+
+      await expect(subject.pushTokenRate())
+        .to.emit(subject, 'RevenueUpdated')
+        .withArgs(expectedRevenueUsd2, expectedTimestamp2)
 
       const [revenueUsd, reportTimestamp] = await subject.getRevenue()
       expect(revenueUsd).to.equal(expectedRevenueUsd2)
@@ -283,7 +269,7 @@ describe('StakingRevenueSource', async function () {
       await localSnapshot.restore()
     })
 
-    it('emits RevenueUpdated with correctly computed revenue and timestamp', async function () {
+    it('computes and stores correct revenue and timestamp after a rate increase', async function () {
       const newRate = SEED_RATE + TOKEN_RATE_SCALE / 10n
       await wstEthStub.setRate(newRate)
       await setStEthFeedPrice(STETH_FEED_PRICE)
@@ -297,12 +283,16 @@ describe('StakingRevenueSource', async function () {
       await expect(subject.pushTokenRate())
         .to.emit(subject, 'RevenueUpdated')
         .withArgs(expectedRevenueUsd, expectedTimestamp)
+
+      const [revenueUsd, reportTimestamp] = await subject.getRevenue()
+      expect(revenueUsd).to.equal(expectedRevenueUsd)
+      expect(reportTimestamp).to.equal(expectedTimestamp)
     })
 
     it('updates _lastStEthPerToken — second call with same rate reverts with ZeroRateDelta', async function () {
       await setStEthFeedPrice(STETH_FEED_PRICE)
       await wstEthStub.setRate(SEED_RATE + TOKEN_RATE_SCALE / 10n)
-      await subject.pushTokenRate()
+      await expect(subject.pushTokenRate()).to.emit(subject, 'RevenueUpdated')
       await expect(subject.pushTokenRate()).to.be.revertedWithCustomError(subject, 'ZeroRateDelta')
     })
 
@@ -355,16 +345,28 @@ describe('StakingRevenueSource', async function () {
       await expect(subject.pushTokenRate())
         .to.emit(subject, 'RevenueUpdated')
         .withArgs(0n, expectedTimestamp)
+
+      const [revenueUsd, reportTimestamp] = await subject.getRevenue()
+      expect(revenueUsd).to.equal(0n)
+      expect(reportTimestamp).to.equal(expectedTimestamp)
     })
 
     it('timestamp is correct when refSlot is 0 (genesis slot)', async function () {
-      await wstEthStub.setRate(SEED_RATE + TOKEN_RATE_SCALE / 10n)
+      const newRate = SEED_RATE + TOKEN_RATE_SCALE / 10n
+      await wstEthStub.setRate(newRate)
       await setStEthFeedPrice(STETH_FEED_PRICE)
       await accountingOracleStub.setLastProcessingRefSlot(0n)
 
-      await subject.pushTokenRate()
+      const rateDelta = newRate - SEED_RATE
+      const expectedRevenueStEth = (rateDelta * DEFAULT_TOTAL_SUPPLY) / TOKEN_RATE_SCALE
+      const expectedRevenueUsd = (expectedRevenueStEth * STETH_ORACLE_PRICE) / PRICE_SCALE
 
-      const [, reportTimestamp] = await subject.getRevenue()
+      await expect(subject.pushTokenRate())
+        .to.emit(subject, 'RevenueUpdated')
+        .withArgs(expectedRevenueUsd, GENESIS_TIME)
+
+      const [revenueUsd, reportTimestamp] = await subject.getRevenue()
+      expect(revenueUsd).to.equal(expectedRevenueUsd)
       expect(reportTimestamp).to.equal(GENESIS_TIME)
     })
   })
@@ -487,6 +489,10 @@ describe('StakingRevenueSource', async function () {
       await expect(subject.pushTokenRate())
         .to.emit(subject, 'RevenueUpdated')
         .withArgs(expectedRevenueUsd, expectedTimestamp)
+
+      const [revenueUsd, reportTimestamp] = await subject.getRevenue()
+      expect(revenueUsd).to.equal(expectedRevenueUsd)
+      expect(reportTimestamp).to.equal(expectedTimestamp)
     })
 
     it('minimal delta (delta = 1 scale unit) with matching supply produces 1 wei revenueUsd', async function () {
@@ -505,6 +511,10 @@ describe('StakingRevenueSource', async function () {
       await expect(subject.pushTokenRate())
         .to.emit(subject, 'RevenueUpdated')
         .withArgs(1n, expectedTimestamp)
+
+      const [revenueUsd, reportTimestamp] = await subject.getRevenue()
+      expect(revenueUsd).to.equal(1n)
+      expect(reportTimestamp).to.equal(expectedTimestamp)
     })
   })
 })
