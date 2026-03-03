@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -17,7 +19,7 @@ import {RevenueSource} from "../revenue/RevenueSource.sol";
 /**
  * @title NESTController
  */
-contract NESTController is Ownable, Pausable, AssetRecoverer {
+contract NESTController is Ownable, Pausable, AssetRecoverer, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ============================== Types ==============================
@@ -188,6 +190,11 @@ contract NESTController is Ownable, Pausable, AssetRecoverer {
 
     // =========================== Constructor ===========================
 
+    /**
+     * @notice Deploys the controller, sets all immutable references and initial configurable
+     *         parameters, and registers the initial revenue source addresses.
+     * @param initParams_ Struct containing all initialization parameters.
+     */
     constructor(
         InitParams memory initParams_
     ) AssetRecoverer(initParams_.admin, initParams_.agent) {
@@ -231,7 +238,283 @@ contract NESTController is Ownable, Pausable, AssetRecoverer {
         emit PoolSlippageToleranceBpsSet(initParams_.poolSlippageToleranceBps);
     }
 
+    // ========================= External Functions =========================
+
+    /**
+     * @notice Evaluates all eligibility conditions and, if they pass, creates a CoW Swap order
+     *         to buy LDO with stETH and reserves an equal amount of stETH for wstETH wrapping during
+     *         liquidity provisioning. Callable by anyone when conditions permit.
+     * @dev Reverts if the trigger interval has not elapsed, the ETH price is below the configured
+     *      floor, price feeds are unavailable, revenue surplus is insufficient, or the constrained
+     *      budget falls below the minimum order size.
+     * @return order Address of the newly created Order contract.
+     */
+    function triggerExecution() external nonReentrant whenNotPaused returns (address order) {
+        (uint256 budget, uint256 stEthUsdPrice) = _evaluateGates();
+
+        uint256 totalStEth = Math.mulDiv(budget, PRICE_SCALE, stEthUsdPrice);
+        uint256 sellAmountStEth = totalStEth / 2;
+        uint256 reserveAmountStEth = totalStEth - sellAmountStEth;
+
+        STETH.safeTransfer(address(stonks), sellAmountStEth);
+
+        uint256 minBuyAmount = stonks.estimateTradeOutput(sellAmountStEth);
+        order = stonks.placeOrderWithAmount(sellAmountStEth, minBuyAmount);
+
+        stEthReservedForWrapping += reserveAmountStEth;
+        lastTriggerTimestamp = block.timestamp;
+
+        emit ExecutionTriggered(msg.sender, order, budget, sellAmountStEth, reserveAmountStEth);
+    }
+
+    /**
+     * @notice Sets the minimum ETH/USD price below which execution is blocked.
+     * @param ethPriceFloorUsd_ New floor price in USD, scaled to 1e18. Must be greater than zero.
+     */
+    function setEthPriceFloorUSD(uint256 ethPriceFloorUsd_) external onlyAdmin {
+        if (ethPriceFloorUsd_ == 0) {
+            revert InvalidEthPriceFloor(ethPriceFloorUsd_);
+        }
+
+        ethPriceFloorUsd = ethPriceFloorUsd_;
+
+        emit EthPriceFloorUsdSet(ethPriceFloorUsd_);
+    }
+
+    /**
+     * @notice Sets the minimum daily protocol revenue required before any surplus is recognized.
+     * @param dailyRevenueThresholdUsd_ New threshold in USD, scaled to 1e18. Must be greater than zero.
+     */
+    function setDailyRevenueThresholdUSD(uint256 dailyRevenueThresholdUsd_) external onlyAdmin {
+        if (dailyRevenueThresholdUsd_ == 0) {
+            revert InvalidDailyRevenueThreshold(dailyRevenueThresholdUsd_);
+        }
+
+        dailyRevenueThresholdUsd = dailyRevenueThresholdUsd_;
+
+        emit DailyRevenueThresholdUsdSet(dailyRevenueThresholdUsd_);
+    }
+
+    /**
+     * @notice Sets the fraction of the revenue surplus allocated to each execution budget.
+     * @param surplusShareBps_ Share in basis points. Must be in the range (0, MAX_BASIS_POINTS].
+     */
+    function setRevenueSurplusShare(uint256 surplusShareBps_) external onlyAdmin {
+        if (surplusShareBps_ == 0 || surplusShareBps_ > MAX_BASIS_POINTS) {
+            revert InvalidRevenueSurplusShare(surplusShareBps_);
+        }
+
+        surplusShareBps = surplusShareBps_;
+
+        emit RevenueSurplusShareSet(surplusShareBps_);
+    }
+
+    /**
+     * @notice Sets the maximum USD budget that a single execution can deploy.
+     * @param dailyCapUsd_ New cap in USD, scaled to 1e18. Must be greater than zero.
+     */
+    function setDailyCapUSD(uint256 dailyCapUsd_) external onlyAdmin {
+        if (dailyCapUsd_ == 0) {
+            revert InvalidDailyCap(dailyCapUsd_);
+        }
+
+        dailyCapUsd = dailyCapUsd_;
+
+        emit DailyCapUsdSet(dailyCapUsd_);
+    }
+
+    /**
+     * @notice Sets the minimum budget floor. Execution reverts if the constrained budget falls below this value.
+     * @param minOrderSizeUsd_ Minimum order size in USD, scaled to 1e18. Must be greater than zero.
+     */
+    function setMinOrderSizeUSD(uint256 minOrderSizeUsd_) external onlyAdmin {
+        if (minOrderSizeUsd_ == 0) {
+            revert InvalidMinOrderSize(minOrderSizeUsd_);
+        }
+
+        minOrderSizeUsd = minOrderSizeUsd_;
+
+        emit MinOrderSizeUsdSet(minOrderSizeUsd_);
+    }
+
+    /**
+     * @notice Sets the maximum acceptable slippage for Curve liquidity deposits.
+     * @param poolSlippageToleranceBps_ Slippage tolerance in basis points. Must not exceed 10000.
+     */
+    function setPoolSlippageToleranceBps(uint256 poolSlippageToleranceBps_) external onlyAdmin {
+        if (poolSlippageToleranceBps_ == 0 || poolSlippageToleranceBps_ > MAX_BASIS_POINTS) {
+            revert InvalidPoolSlippageTolerance(poolSlippageToleranceBps_);
+        }
+
+        poolSlippageToleranceBps = poolSlippageToleranceBps_;
+
+        emit PoolSlippageToleranceBpsSet(poolSlippageToleranceBps_);
+    }
+
+    /**
+     * @notice Points the controller at a new Stonks instance and re-caches its order duration.
+     *         The controller must already be set as manager on the new Stonks contract before
+     *         order placement will succeed.
+     * @param stonks_ Address of the new Stonks contract. Must not be the zero address.
+     */
+    function setStonks(address stonks_) external onlyAdmin {
+        if (stonks_ == address(0)) {
+            revert InvalidStonksAddress(stonks_);
+        }
+
+        stonks = IStonks(stonks_);
+        orderDurationSeconds = stonks.ORDER_DURATION_IN_SECONDS();
+
+        emit StonksSet(stonks_);
+    }
+
+    /**
+     * @notice Registers a new revenue source in the aggregation array.
+     * @param source_ Address of the RevenueSource contract. Must not be zero or already registered.
+     */
+    function addRevenueSource(address source_) external onlyAdmin {
+        _addRevenueSource(source_);
+    }
+
+    /**
+     * @notice Removes a previously registered revenue source from the aggregation array.
+     * @param source_ Address of the RevenueSource contract to remove. Must be currently registered.
+     */
+    function removeRevenueSource(address source_) external onlyAdmin {
+        if (!_isRevenueSourceRegistered[source_]) {
+            revert RevenueSourceNotRegistered(source_);
+        }
+
+        uint256 length = revenueSources.length;
+        for (uint256 i; i < length; ) {
+            if (address(revenueSources[i]) == source_) {
+                // Skip the write when removing the tail element to avoid a redundant self-assignment storage write.
+                if (i != length - 1) {
+                    revenueSources[i] = revenueSources[length - 1];
+                }
+
+                revenueSources.pop();
+
+                break;
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+
+        delete _isRevenueSourceRegistered[source_];
+        emit RevenueSourceRemoved(source_);
+    }
+
+    /**
+     * @notice Recovers ERC-20 tokens to the Aragon Agent treasury. When recovering stETH, the
+     *         wrapping reservation is clamped to the contract's remaining balance after the transfer
+     *         so that the reservation never exceeds available funds.
+     * @param token_ Token contract address to recover.
+     * @param amount_ Amount of tokens to transfer to the treasury.
+     */
+    function recoverERC20(address token_, uint256 amount_) public override onlyAdminOrManager {
+        super.recoverERC20(token_, amount_);
+
+        if (token_ == address(STETH)) {
+            // Adjust stETH reservation if necessary after recovery to ensure it does not exceed the current balance.
+            uint256 remaining = STETH.balanceOf(address(this));
+
+            if (stEthReservedForWrapping > remaining) {
+                stEthReservedForWrapping = remaining;
+            }
+        }
+    }
+
     // ======================== Private Functions ========================
+
+    function _checkCooldownElapsed() internal view {
+        uint256 cooldownEnd = lastTriggerTimestamp + orderDurationSeconds;
+
+        if (block.timestamp < cooldownEnd) {
+            revert CooldownNotElapsed(lastTriggerTimestamp, cooldownEnd);
+        }
+    }
+
+    function _aggregateRevenue() internal view returns (uint256 totalRevenueUsd) {
+        uint256 length = revenueSources.length;
+
+        for (uint256 i; i < length; ) {
+            RevenueSource source = revenueSources[i];
+            // Skip paused sources
+            if (!source.paused()) {
+                (uint256 revenueUsd, uint256 reportTimestamp) = source.getRevenue();
+
+                // Check if the revenue report is stale based on the configured staleness window. If the report is too old, revert the transaction to prevent using outdated revenue data for swap execution decisions.
+                if (block.timestamp - reportTimestamp > STALENESS_WINDOW_SECONDS) {
+                    revert RevenueSourceStale(
+                        address(source),
+                        reportTimestamp,
+                        STALENESS_WINDOW_SECONDS
+                    );
+                }
+
+                totalRevenueUsd += revenueUsd;
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _computeAndCheckConstrainedBudget(
+        uint256 totalRevenueUsd,
+        uint256 stEthUsdPrice
+    ) internal view returns (uint256 budget) {
+        if (totalRevenueUsd <= dailyRevenueThresholdUsd) {
+            revert InsufficientRevenueSurplus(totalRevenueUsd, dailyRevenueThresholdUsd);
+        }
+
+        // Surplus is the amount of revenue above the threshold, and a limit to prevent possible overspend
+        uint256 surplus = totalRevenueUsd - dailyRevenueThresholdUsd;
+        budget = (surplus * surplusShareBps) / MAX_BASIS_POINTS;
+
+        if (budget > dailyCapUsd) {
+            budget = dailyCapUsd;
+        }
+
+        // Calculate the available budget based on the stETH balance and the amount of stETH reserved for future wrapping in the liquidity provision step.
+        uint256 stEthBalance = STETH.balanceOf(address(this));
+        uint256 availableStEth = stEthBalance > stEthReservedForWrapping
+            ? stEthBalance - stEthReservedForWrapping
+            : 0;
+        uint256 availableUsd = Math.mulDiv(availableStEth, stEthUsdPrice, PRICE_SCALE);
+
+        if (budget > availableUsd) {
+            if (availableUsd < minOrderSizeUsd) {
+                revert InsufficientStEthBalance(availableUsd, minOrderSizeUsd);
+            }
+            budget = availableUsd;
+        }
+
+        if (budget < minOrderSizeUsd) {
+            revert BudgetBelowMinOrderSize(budget, minOrderSizeUsd);
+        }
+    }
+
+    function _evaluateGates() internal view returns (uint256 budget, uint256 stEthUsdPrice) {
+        // Ensure that the required cooldown period has elapsed since the last execution trigger
+        uint256 nextAllowed = lastTriggerTimestamp + TRIGGER_INTERVAL_SECONDS;
+        if (block.timestamp < nextAllowed) {
+            revert TriggerIntervalNotElapsed(lastTriggerTimestamp, nextAllowed);
+        }
+
+        // validates both stETH and LDO feeds are live before proceeding
+        (stEthUsdPrice, ) = ORACLE_ROUTER.getUsdPrices(address(STETH), address(LDO));
+
+        if (stEthUsdPrice < ethPriceFloorUsd) {
+            revert EthPriceBelowFloor(stEthUsdPrice, ethPriceFloorUsd);
+        }
+
+        budget = _computeAndCheckConstrainedBudget(_aggregateRevenue(), stEthUsdPrice);
+    }
 
     function _addRevenueSource(address source) internal {
         if (source == address(0)) {
@@ -275,7 +558,7 @@ contract NESTController is Ownable, Pausable, AssetRecoverer {
         if (params.dailyRevenueThresholdUsd == 0) {
             revert InvalidDailyRevenueThreshold(params.dailyRevenueThresholdUsd);
         }
-        if (params.surplusShareBps > MAX_BASIS_POINTS) {
+        if (params.surplusShareBps == 0 || params.surplusShareBps > MAX_BASIS_POINTS) {
             revert InvalidRevenueSurplusShare(params.surplusShareBps);
         }
         if (params.dailyCapUsd == 0) {
@@ -287,7 +570,10 @@ contract NESTController is Ownable, Pausable, AssetRecoverer {
         if (params.stalenessWindowSeconds == 0) {
             revert InvalidStalenessWindow(params.stalenessWindowSeconds);
         }
-        if (params.poolSlippageToleranceBps > MAX_BASIS_POINTS) {
+        if (
+            params.poolSlippageToleranceBps == 0 ||
+            params.poolSlippageToleranceBps > MAX_BASIS_POINTS
+        ) {
             revert InvalidPoolSlippageTolerance(params.poolSlippageToleranceBps);
         }
         if (params.triggerIntervalSeconds < ONE_DAY) {

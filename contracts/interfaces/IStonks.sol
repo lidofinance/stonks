@@ -16,4 +16,6 @@ interface IStonks {
     function areSignaturesPaused() external view returns (bool);
     function isCreationPaused() external view returns (bool);
     function isKilled() external view returns (bool);
+    function placeOrder(uint256 minBuyAmount_) external returns (address);
+    function placeOrderWithAmount(uint256 sellAmount_, uint256 minBuyAmount_) external returns (address);
 }
