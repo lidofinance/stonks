@@ -98,7 +98,9 @@ describe('StonksFactory', function () {
     })
   })
   describe('stonks deployment:', async function () {
-    it('should deploy stonks with correct params', async function () {
+    const customReceiver = '0x000000000000000000000000000000000000bEEF'
+
+    const getBaseArgs = async () => {
       const oracleRouter = await getTestOracleRouter({
         tokens: getAllTestTokens(),
         useRealPrices: true,
@@ -116,28 +118,35 @@ describe('StonksFactory', function () {
       await amountConverterTest.waitForDeployment()
 
       const signers = await ethers.getSigners()
-      const manager = await signers[0].getAddress()
-      const tokenFrom = contracts.STETH
-      const tokenTo = contracts.DAI
-      const amountConverter = await amountConverterTest.getAddress()
-      const orderSample = await subject.ORDER_SAMPLE()
-      const orderDuration = 3600
-      const marginInBP = 100
-      const toleranceInBP = 200
-      const maxImprovementInBP = 0
-      const allowPartialFill = false
+      return {
+        manager: await signers[0].getAddress(),
+        tokenFrom: contracts.STETH,
+        tokenTo: contracts.DAI,
+        amountConverter: await amountConverterTest.getAddress(),
+        orderSample: await subject.ORDER_SAMPLE(),
+        orderDuration: 3600,
+        marginInBP: 100,
+        toleranceInBP: 200,
+        maxImprovementInBP: 0,
+        allowPartialFill: false,
+      }
+    }
+
+    it('should deploy stonks with correct params (AGENT-receiver fallback)', async function () {
+      const args = await getBaseArgs()
 
       await expect(
         subject.deployStonks(
-          manager,
-          tokenFrom,
-          tokenTo,
-          amountConverter,
-          orderDuration,
-          marginInBP,
-          toleranceInBP,
-          maxImprovementInBP,
-          allowPartialFill
+          args.manager,
+          args.tokenFrom,
+          args.tokenTo,
+          args.amountConverter,
+          args.orderDuration,
+          args.marginInBP,
+          args.toleranceInBP,
+          args.maxImprovementInBP,
+          args.allowPartialFill,
+          ethers.ZeroAddress
         )
       )
         .to.emit(subject, 'StonksDeployed')
@@ -145,17 +154,86 @@ describe('StonksFactory', function () {
           anyValue,
           contracts.AGENT,
           contracts.ADMIN,
-          manager,
-          tokenFrom,
-          tokenTo,
-          amountConverter,
-          orderSample,
-          orderDuration,
-          marginInBP,
-          toleranceInBP,
-          maxImprovementInBP,
-          allowPartialFill
+          args.manager,
+          args.tokenFrom,
+          args.tokenTo,
+          args.amountConverter,
+          args.orderSample,
+          args.orderDuration,
+          args.marginInBP,
+          args.toleranceInBP,
+          args.maxImprovementInBP,
+          args.allowPartialFill,
+          ethers.ZeroAddress
         )
+    })
+
+    it('should forward a zero receiver so the deployed Stonks defaults RECEIVER to AGENT', async function () {
+      const args = await getBaseArgs()
+
+      const tx = await subject.deployStonks(
+        args.manager,
+        args.tokenFrom,
+        args.tokenTo,
+        args.amountConverter,
+        args.orderDuration,
+        args.marginInBP,
+        args.toleranceInBP,
+        args.maxImprovementInBP,
+        args.allowPartialFill,
+        ethers.ZeroAddress
+      )
+      const receipt = await tx.wait()
+      if (!receipt) throw new Error('No transaction receipt')
+
+      const deployedEvent = receipt.logs
+        .map((log) => {
+          try {
+            return subject.interface.parseLog(log as any)
+          } catch {
+            return null
+          }
+        })
+        .find((parsed) => parsed?.name === 'StonksDeployed')
+
+      const stonksAddress = deployedEvent!.args[0] as string
+      const stonks = await ethers.getContractAt('Stonks', stonksAddress)
+      expect(await stonks.RECEIVER()).to.equal(contracts.AGENT)
+    })
+
+    it('should forward an explicit receiver into the deployed Stonks RECEIVER', async function () {
+      const args = await getBaseArgs()
+
+      const tx = await subject.deployStonks(
+        args.manager,
+        args.tokenFrom,
+        args.tokenTo,
+        args.amountConverter,
+        args.orderDuration,
+        args.marginInBP,
+        args.toleranceInBP,
+        args.maxImprovementInBP,
+        args.allowPartialFill,
+        customReceiver
+      )
+      const receipt = await tx.wait()
+      if (!receipt) throw new Error('No transaction receipt')
+
+      const deployedEvent = receipt.logs
+        .map((log) => {
+          try {
+            return subject.interface.parseLog(log as any)
+          } catch {
+            return null
+          }
+        })
+        .find((parsed) => parsed?.name === 'StonksDeployed')
+
+      expect(deployedEvent!.args.receiver).to.equal(customReceiver)
+
+      const stonksAddress = deployedEvent!.args[0] as string
+      const stonks = await ethers.getContractAt('Stonks', stonksAddress)
+      expect(await stonks.RECEIVER()).to.equal(customReceiver)
     })
   })
 

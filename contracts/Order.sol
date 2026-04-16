@@ -70,6 +70,9 @@ contract Order is IERC1271, AssetRecoverer {
     address private tokenFrom;
     /// @notice token to address (cached from Stonks to avoid external calls).
     address private tokenTo;
+    /// @notice Settlement destination for this order. Supplied by Stonks at `initialize` time so
+    ///         the same Order template can serve treasury-direct and NEST LP flows.
+    address private receiver;
     /// @notice Internal flag indicating whether the contract has been initialized.
     bool private initialized;
     /// @notice Whether this order allows partial fills (cached from Stonks to avoid external calls).
@@ -89,6 +92,7 @@ contract Order is IERC1271, AssetRecoverer {
     // ==================== Errors ====================
 
     error OrderAlreadyInitialized();
+    error InvalidReceiverAddress(address receiver);
     error OrderExpired(uint256 validTo);
     error InvalidAmountToRecover(uint256 amount);
     error CannotRecoverTokenFrom(address token);
@@ -137,16 +141,22 @@ contract Order is IERC1271, AssetRecoverer {
      * @notice Initializes the contract for trading by defining order parameters and approving tokens.
      * @param minBuyAmount_ The minimum accepted trade outcome.
      * @param manager_ The manager's address to be set for the contract.
+     * @param receiver_ Settlement destination baked into the CoW order. Must be non-zero; Stonks
+     *                  resolves the `address(0)` default to `AGENT` before calling `initialize`.
      * @dev Pulls pair params from Stonks, asserts a quotable price path up front, computes amounts, and arms allowance.
      */
-    function initialize(uint256 minBuyAmount_, address manager_) external {
+    function initialize(uint256 minBuyAmount_, address manager_, address receiver_) external {
         if (initialized) {
             revert OrderAlreadyInitialized();
+        }
+        if (receiver_ == address(0)) {
+            revert InvalidReceiverAddress(receiver_);
         }
 
         initialized = true;
         stonks = msg.sender;
         manager = manager_;
+        receiver = receiver_;
 
         emit ManagerSet(manager_);
 
@@ -184,7 +194,7 @@ contract Order is IERC1271, AssetRecoverer {
         GPv2Order.Data memory order = GPv2Order.Data({
             sellToken: tokenFromErc,
             buyToken: tokenToErc,
-            receiver: AGENT,
+            receiver: receiver_,
             sellAmount: sellAmount,
             buyAmount: buyAmount,
             validTo: validTo,
@@ -389,6 +399,7 @@ contract Order is IERC1271, AssetRecoverer {
      * @return sellAmount_ The amount of `tokenFrom_` that is being sold.
      * @return buyAmount_ The amount of `tokenTo_` that is expected to be bought.
      * @return validTo_ The timestamp until which the order remains valid.
+     * @return receiver_ Settlement destination baked into the CoW order.
      */
     function getOrderDetails()
         external
@@ -399,10 +410,11 @@ contract Order is IERC1271, AssetRecoverer {
             address tokenTo_,
             uint256 sellAmount_,
             uint256 buyAmount_,
-            uint32 validTo_
+            uint32 validTo_,
+            address receiver_
         )
     {
-        return (orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo);
+        return (orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo, receiver);
     }
 
     /**

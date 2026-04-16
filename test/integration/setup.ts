@@ -13,6 +13,7 @@ export type TokenPair = {
   priceFeedHeartbeatTimeout: number
   useEthBridge?: boolean
   allowPartialFill?: boolean
+  receiver?: string
 }
 export type Setup = {
   manager: Signer
@@ -188,6 +189,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
       priceToleranceInBps: 100,
       maxImprovementInBps: 100,
       allowPartialFill: pair.allowPartialFill ?? false,
+      receiver: pair.receiver ?? ethers.ZeroAddress,
     },
     amountConverterParams: {
       oracleRouter: await oracleRouter.getAddress(),

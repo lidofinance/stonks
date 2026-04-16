@@ -158,7 +158,7 @@ describe('Order', async function () {
     it('sample instance should be initialized by default', async function () {
       const subject = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
       await expect(
-        subject.initialize(expectedBuyAmount, ethers.ZeroAddress)
+        subject.initialize(expectedBuyAmount, ethers.ZeroAddress, contracts.AGENT)
       ).to.be.revertedWithCustomError(subject, 'OrderAlreadyInitialized')
     })
   })
@@ -191,7 +191,7 @@ describe('Order', async function () {
     it('should return correct params from getOrderDetails', async function () {
       const [tokenFromParam, tokenToParam, orderDurationInSeconds] =
         await stonks.getOrderParameters()
-      const [orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo] =
+      const [orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo, receiver] =
         await subject.getOrderDetails()
 
       expect(orderHash).to.equal(orderData.hash)
@@ -200,6 +200,68 @@ describe('Order', async function () {
       expect(sellAmount).to.equal(orderData.order.sellAmount)
       expect(buyAmount).to.equal(orderData.order.buyAmount)
       expect(validTo).to.equal(BigInt(orderData.timestamp) + BigInt(orderDurationInSeconds))
+      expect(receiver).to.equal(await stonks.RECEIVER())
+    })
+  })
+
+  describe('receiver parameter:', function () {
+    // Deploys a raw EIP-1167 minimal proxy pointing at `implementation_`. Mirrors what
+    // `OpenZeppelin.Clones.clone()` does on-chain, used here to exercise the independent
+    // clone-and-initialize path — the only call site where the receiver-zero guard is
+    // reachable. Stonks-placed clones never forward a zero receiver, and a fresh Order
+    // sample traps on `OrderAlreadyInitialized` because its constructor pre-sets the flag.
+    async function deployOrderClone(implementation_: string): Promise<Order> {
+      const implBytes = implementation_.toLowerCase().replace('0x', '').padStart(40, '0')
+      const bytecode = `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${implBytes}5af43d82803e903d91602b57fd5bf3`
+
+      const [deployer] = await ethers.getSigners()
+      const tx = await deployer.sendTransaction({ data: bytecode })
+      const receipt = await tx.wait()
+      if (!receipt || !receipt.contractAddress) throw new Error('Clone deployment failed')
+
+      return ethers.getContractAt('Order', receipt.contractAddress)
+    }
+
+    it('should reject a zero receiver when initializing a fresh clone', async function () {
+      const clone = await deployOrderClone(await stonks.ORDER_SAMPLE())
+
+      await expect(clone.initialize(1n, await manager.getAddress(), ethers.ZeroAddress))
+        .to.be.revertedWithCustomError(clone, 'InvalidReceiverAddress')
+        .withArgs(ethers.ZeroAddress)
+    })
+
+    it('should short-circuit on OrderAlreadyInitialized for a fresh Order deployment', async function () {
+      const orderFactory = await ethers.getContractFactory('Order')
+      const fresh = await orderFactory.deploy(
+        contracts.ADMIN,
+        contracts.AGENT,
+        contracts.VAULT_RELAYER,
+        contracts.DOMAIN_SEPARATOR
+      )
+      await fresh.waitForDeployment()
+
+      // Sanity: a fresh non-cloned Order locks itself in the constructor, so even a
+      // zero-receiver attempt trips the initialization guard first. Documents the
+      // deliberate ordering of the two checks inside `initialize`.
+      await expect(fresh.initialize(1n, ethers.ZeroAddress, ethers.ZeroAddress))
+        .to.be.revertedWithCustomError(fresh, 'OrderAlreadyInitialized')
+    })
+
+    it('should keep manager and receiver as independent fields after Stonks placement', async function () {
+      expect(await subject.manager()).to.equal(await manager.getAddress())
+      expect(await stonks.RECEIVER()).to.equal(contracts.AGENT)
+
+      const [, , , , , , receiver] = await subject.getOrderDetails()
+      expect(receiver).to.equal(contracts.AGENT)
+    })
+
+    it('should expose the stored receiver through getOrderDetails', async function () {
+      const [, , , , , , receiver] = await subject.getOrderDetails()
+      expect(receiver).to.equal(contracts.AGENT)
+    })
+
+    it('should expose the stored receiver through the emitted OrderCreated event', async function () {
+      expect(orderData.order.receiver).to.equal(contracts.AGENT)
     })
   })
 

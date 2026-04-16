@@ -24,6 +24,7 @@ export type DeployStonksParams = {
     maxImprovementInBps?: number
     allowPartialFill?: boolean
     amountConverterAddress?: string
+    receiver?: string
   }
   amountConverterParams: {
     oracleRouter?: string
@@ -50,6 +51,7 @@ export async function deployStonks({
     priceToleranceInBps,
     maxImprovementInBps = 0,
     allowPartialFill = false,
+    receiver = ethers.ZeroAddress,
   },
   amountConverterParams,
   skipRouterConfiguration = false,
@@ -142,7 +144,8 @@ export async function deployStonks({
     marginInBps,
     priceToleranceInBps,
     maxImprovementInBps,
-    allowPartialFill
+    allowPartialFill,
+    receiver
   )
   const receipt = await deployStonksTx.wait()
 

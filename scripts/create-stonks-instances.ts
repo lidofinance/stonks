@@ -16,6 +16,7 @@ interface StonksConfig {
   priceToleranceInBasisPoints: bigint
   maxImprovementInBasisPoints: bigint
   allowPartialFill: boolean
+  receiver: string
 }
 
 const ADMIN = ''
@@ -52,6 +53,7 @@ async function main() {
     console.log(`  * price tolerance (bps): ${fmt.value(config.priceToleranceInBasisPoints)}`)
     console.log(`  * max improvement (bps): ${fmt.value(config.maxImprovementInBasisPoints)}`)
     console.log(`  * allow partial fill: ${fmt.value(config.allowPartialFill)}`)
+    console.log(`  * receiver: ${fmt.value(config.receiver)}`)
     console.log()
   }
 
@@ -72,7 +74,8 @@ async function main() {
       config.marginBasisPoints,
       config.priceToleranceInBasisPoints,
       config.maxImprovementInBasisPoints,
-      config.allowPartialFill
+      config.allowPartialFill,
+      config.receiver
     )
     const receipt = await waitForDeployment(tx)
 
@@ -98,6 +101,7 @@ async function main() {
       priceToleranceInBasisPoints,
       maxImprovementInBasisPoints,
       allowPartialFill,
+      receiver,
     } = stonksDeployedLog.args
 
     console.log(
@@ -128,6 +132,7 @@ async function main() {
             priceToleranceInBasisPoints,
             maxImprovementInBasisPoints,
             allowPartialFill,
+            receiver,
           },
         ],
         receipt
