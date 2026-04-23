@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
-import {RevenueSource} from "../nest/revenue/RevenueSource.sol";
+import {RevenueSource} from "../automated-buybacks/revenue/RevenueSource.sol";
 
 /**
  * @title RevenueSourceHarness
