@@ -62,15 +62,6 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         address[] revenueSources;
     }
 
-    /// @notice Revenue source data snapshot returned by `getRevenueSourcesWithStatus`.
-    struct RevenueSourceStatus {
-        address source;
-        uint256 lastRevenueUSD;
-        uint256 reportTimestamp;
-        bool isPaused;
-        bool isStale;
-    }
-
     /// @notice Reason codes emitted with `ExecutionSkipped` when eligibility gates fail.
     enum SkipReason {
         NoSurplus,
@@ -264,6 +255,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     error NoActiveRevenueSources();
     error CooldownNotElapsed(uint256 lastOrderTimestamp, uint256 cooldownEnd);
     error ZeroStEthInStonks();
+    error QuotabilityFailed();
     error ExecutionCurrentlyPaused();
     error NoRevenueSourcesRegistered();
     error RevenueSourceHasNoData(address source);
@@ -411,6 +403,192 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Runs daily accounting and, if eligibility gates pass, creates a CoW Swap order via
+     *         Stonks. In LP mode, additionally wraps the matching stETH half to wstETH and
+     *         transfers it to the LiquidityProvisioner. In treasury-only mode, sells the full
+     *         budget amount via Stonks. Returns `address(0)` when accounting runs but no order is
+     *         created (skip path).
+     * @dev    Permissionless. Accounting updates state at most once per day; the order-creation
+     *         gate ensures at most one order per accounting cycle. The eligibility cascade is
+     *         non-reverting — a failed gate emits `ExecutionSkipped` and returns `address(0)`,
+     *         preserving the daily accounting cadence even when no order is placed.
+     * @return order Address of the newly placed Order contract, or `address(0)` on skip.
+     */
+    function triggerExecution()
+        external
+        nonReentrant
+        whenExecutionNotPaused
+        returns (address order)
+    {
+        if (_revenueSources.length == 0) {
+            revert NoRevenueSourcesRegistered();
+        }
+
+        (int256 preAccountingUnrealizedUSD, int256 dailyAllocationUSD) = _runAccountingIfDue();
+
+        uint256 cachedLastTrigger = _lastTriggerOrderTimestamp;
+        uint256 cachedLastAccounting = _lastAccountingTimestamp;
+        if (cachedLastTrigger >= cachedLastAccounting) {
+            revert OrderAlreadyCreatedInCycle(
+                cachedLastTrigger,
+                cachedLastAccounting + TRIGGER_INTERVAL_SECONDS
+            );
+        }
+
+        (
+            bool isEligible,
+            SkipReason reason,
+            uint256 budgetUSD,
+            uint256 stEthUsdPrice
+        ) = _evaluateEligibilityGates(preAccountingUnrealizedUSD, dailyAllocationUSD);
+
+        if (!isEligible) {
+            emit ExecutionSkipped(msg.sender, uint8(reason));
+            return address(0);
+        }
+
+        uint256 totalStEth = (budgetUSD * PRICE_SCALE) / stEthUsdPrice;
+        address cachedProvisioner = liquidityProvisioner;
+        bool isLpMode = cachedProvisioner != address(0);
+        uint256 sellAmountStEth = isLpMode ? totalStEth / 2 : totalStEth;
+
+        order = _placeOrderViaStonks(sellAmountStEth);
+
+        uint256 wrappedWstEthAmount;
+        if (isLpMode) {
+            IERC20(address(STETH)).forceApprove(address(WSTETH), sellAmountStEth);
+            wrappedWstEthAmount = WSTETH.wrap(sellAmountStEth);
+            IERC20(address(WSTETH)).safeTransfer(cachedProvisioner, wrappedWstEthAmount);
+        }
+
+        _lastTriggerOrderTimestamp = uint64(block.timestamp);
+        _lastOrderTimestamp = uint96(block.timestamp);
+        lastOrderAddress = order;
+        annualSpendAccumulatorUSD += budgetUSD;
+        uint256 newCumulative = cumulativeBuybacksUSD + budgetUSD;
+        cumulativeBuybacksUSD = newCumulative;
+
+        int256 cachedAllocated = allocatedForBuybacksUSD;
+        emit ExecutionTriggered(
+            msg.sender,
+            order,
+            budgetUSD,
+            sellAmountStEth,
+            wrappedWstEthAmount,
+            cachedAllocated,
+            cachedAllocated - int256(newCumulative)
+        );
+    }
+
+    /**
+     * @notice Creates a new order from stETH sitting idle in the Stonks contract after a previous
+     *         order expired. Auto-recovers stETH from the expired Order back to Stonks if needed.
+     * @dev    Bypasses the trigger-execution budget and revenue gates because the stETH was already
+     *         committed; only ETH-price, quotability, and cooldown safety gates apply. Updates
+     *         `lastOrderTimestamp` but not `lastTriggerOrderTimestamp` so the trigger cadence is
+     *         unaffected. Reverts (rather than skips) on gate failures because retry is a manual
+     *         catch-up path — silent skips would leave stranded stETH without a clear signal.
+     * @return order Address of the newly placed Order contract.
+     */
+    function retryFromStonks()
+        external
+        nonReentrant
+        whenExecutionNotPaused
+        returns (address order)
+    {
+        _assertOrderCooldownElapsed();
+
+        (uint256 stEthUsdPrice, uint256 ldoPrice) = ORACLE_ROUTER.getUsdPrices(
+            address(STETH),
+            address(LDO)
+        );
+        uint256 cachedEthFloor = ethPriceFloorUSD;
+        if (stEthUsdPrice == 0 || (cachedEthFloor != 0 && stEthUsdPrice < cachedEthFloor)) {
+            revert EthPriceBelowFloor(stEthUsdPrice, cachedEthFloor);
+        }
+        if (ldoPrice == 0) {
+            revert QuotabilityFailed();
+        }
+
+        address cachedStonks = stonks;
+        uint256 stonksBalance = IERC20(address(STETH)).balanceOf(cachedStonks);
+
+        if (stonksBalance == 0) {
+            address cachedLastOrderAddress = lastOrderAddress;
+            if (cachedLastOrderAddress != address(0)) {
+                uint256 orderBalance = IERC20(address(STETH)).balanceOf(cachedLastOrderAddress);
+                if (orderBalance > 0) {
+                    IOrder(cachedLastOrderAddress).recoverTokenFrom();
+                }
+                stonksBalance = IERC20(address(STETH)).balanceOf(cachedStonks);
+            }
+            if (stonksBalance == 0) {
+                revert ZeroStEthInStonks();
+            }
+        }
+
+        uint256 minBuyAmount = IStonks(cachedStonks).estimateTradeOutput(stonksBalance);
+        uint256 adjustedMinBuyAmount = (minBuyAmount *
+            (MAX_BASIS_POINTS - orderPriceProtectionBps)) / MAX_BASIS_POINTS;
+
+        order = IStonks(cachedStonks).placeOrder(adjustedMinBuyAmount);
+        _lastOrderTimestamp = uint96(block.timestamp);
+        lastOrderAddress = order;
+
+        emit RetryFromStonksExecuted(order, stonksBalance);
+    }
+
+    /**
+     * @notice Decrements the annual spend accumulator and cumulative buybacks tracker when excess
+     *         stETH is returned from the LiquidityProvisioner. Called by the provisioner after
+     *         `unwrapExcessWstEth` transfers stETH back to the controller. Ensures recycled funds
+     *         from partial or unfilled orders are not double-counted against caps.
+     * @dev    Restricted to the current `liquidityProvisioner`. Not role-gated — this is a
+     *         single-purpose callback between two specific contracts. Both decrements clamp to zero
+     *         to handle (1) annual period resets between commitment and return and (2) oracle price
+     *         increases that make the returned USD value exceed the original commitment.
+     * @param  stEthAmount_ Amount of stETH transferred back to the controller. Must be non-zero.
+     */
+    function accountForReturnedExcess(uint256 stEthAmount_) external nonReentrant {
+        if (msg.sender != liquidityProvisioner) {
+            revert CallerNotLiquidityProvisioner(msg.sender);
+        }
+        if (stEthAmount_ == 0) {
+            revert ZeroReturnedAmount();
+        }
+
+        (uint256 stEthUsdPrice, ) = ORACLE_ROUTER.getUsdPrices(address(STETH), address(LDO));
+        if (stEthUsdPrice == 0) {
+            revert QuotabilityFailed();
+        }
+        uint256 returnedUsdValue = (stEthAmount_ * stEthUsdPrice) / PRICE_SCALE;
+
+        uint256 cachedAccumulator = annualSpendAccumulatorUSD;
+        uint256 newAccumulator;
+        if (cachedAccumulator > returnedUsdValue) {
+            unchecked {
+                newAccumulator = cachedAccumulator - returnedUsdValue;
+            }
+            annualSpendAccumulatorUSD = newAccumulator;
+        } else if (cachedAccumulator != 0) {
+            annualSpendAccumulatorUSD = 0;
+        }
+
+        uint256 cachedCumulative = cumulativeBuybacksUSD;
+        uint256 newCumulative;
+        if (cachedCumulative > returnedUsdValue) {
+            unchecked {
+                newCumulative = cachedCumulative - returnedUsdValue;
+            }
+            cumulativeBuybacksUSD = newCumulative;
+        } else if (cachedCumulative != 0) {
+            cumulativeBuybacksUSD = 0;
+        }
+
+        emit SpendAdjustedForReturn(stEthAmount_, returnedUsdValue, newAccumulator, newCumulative);
+    }
 
     /**
      * @notice Updates the ETH/USD price threshold for the ETH price gate.
@@ -584,11 +762,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     function setLiquidityProvisioner(
         address liquidityProvisioner_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        uint256 cachedLastOrder = _lastOrderTimestamp;
-        uint256 cooldownEnd = cachedLastOrder + _orderDurationSeconds;
-        if (block.timestamp < cooldownEnd) {
-            revert CooldownNotElapsed(cachedLastOrder, cooldownEnd);
-        }
+        _assertOrderCooldownElapsed();
 
         liquidityProvisioner = liquidityProvisioner_;
 
@@ -608,11 +782,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             revert InvalidStonksAddress(stonks_);
         }
 
-        uint256 cachedLastOrder = _lastOrderTimestamp;
-        uint256 cooldownEnd = cachedLastOrder + _orderDurationSeconds;
-        if (block.timestamp < cooldownEnd) {
-            revert CooldownNotElapsed(cachedLastOrder, cooldownEnd);
-        }
+        _assertOrderCooldownElapsed();
 
         address cachedProvisioner = liquidityProvisioner;
         address expectedReceiver = cachedProvisioner != address(0) ? cachedProvisioner : AGENT;
@@ -621,7 +791,6 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             revert StonksReceiverMismatch(actualReceiver, expectedReceiver);
         }
 
-        // Auto-recover stETH from the last Order back to old Stonks
         address oldStonks = stonks;
         address cachedLastOrderAddress = lastOrderAddress;
         if (cachedLastOrderAddress != address(0)) {
@@ -631,7 +800,6 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             }
         }
 
-        // Auto-recover stETH from old Stonks to AGENT
         uint256 stonksBalance = IERC20(address(STETH)).balanceOf(oldStonks);
         if (stonksBalance > 0) {
             IStonksRecoverable(oldStonks).recoverERC20(address(STETH), stonksBalance);
@@ -643,7 +811,6 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
         emit StonksSet(stonks_);
 
-        // Trigger LP cleanup; silently catch reverts to avoid blocking the migration
         if (cachedProvisioner != address(0)) {
             try ILiquidityProvisioner(cachedProvisioner).unwrapExcessWstEth() {} catch {}
         }
@@ -837,6 +1004,240 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         return _lastOrderTimestamp;
     }
 
+    /**
+     * @notice Returns whether `triggerExecution` would succeed at the current block and produce an
+     *         order. Mirrors all `triggerExecution` preconditions as read-only checks against current
+     *         state, simulating accounting without writes when due. Never reverts: any unexpected
+     *         revert from oracle or revenue source calls is treated as `false`.
+     * @return ok `true` if the execution path would place an order; `false` if any gate fails or any
+     *         underlying call reverts.
+     */
+    function canTriggerExecution() external view returns (bool ok) {
+        if (_executionPaused) {
+            return false;
+        }
+        if (_revenueSources.length == 0) {
+            return false;
+        }
+
+        int256 cachedAllocated = allocatedForBuybacksUSD;
+        int256 cachedCumulativeSigned = int256(cumulativeBuybacksUSD);
+        int256 preAccountingUnrealizedUSD;
+        int256 dailyAllocationUSD;
+
+        if (block.timestamp >= uint256(_lastAccountingTimestamp) + TRIGGER_INTERVAL_SECONDS) {
+            (uint256 totalRevenueUSD, bool aggregationOk) = _trySimulateAggregateRevenue();
+            if (!aggregationOk) {
+                return false;
+            }
+            int256 surplusUSD = int256(totalRevenueUSD) - int256(dailyRevenueThresholdUSD);
+            dailyAllocationUSD =
+                (surplusUSD * int256(surplusShareBps)) /
+                int256(MAX_BASIS_POINTS);
+            preAccountingUnrealizedUSD = cachedAllocated - cachedCumulativeSigned;
+        } else {
+            if (uint256(_lastTriggerOrderTimestamp) >= uint256(_lastAccountingTimestamp)) {
+                return false;
+            }
+            int256 cachedLastDaily = lastDailyAllocationUSD;
+            preAccountingUnrealizedUSD =
+                cachedAllocated -
+                cachedLastDaily -
+                cachedCumulativeSigned;
+            dailyAllocationUSD = cachedLastDaily;
+        }
+
+        if (dailyAllocationUSD <= 0) {
+            return false;
+        }
+        if (preAccountingUnrealizedUSD < 0) {
+            return false;
+        }
+
+        uint256 stEthUsdPrice;
+        try ORACLE_ROUTER.getUsdPrices(address(STETH), address(LDO)) returns (
+            uint256 stEthPrice,
+            uint256 ldoPrice
+        ) {
+            if (stEthPrice == 0 || ldoPrice == 0) {
+                return false;
+            }
+            stEthUsdPrice = stEthPrice;
+        } catch {
+            return false;
+        }
+
+        uint256 cachedEthFloor = ethPriceFloorUSD;
+        if (cachedEthFloor != 0 && stEthUsdPrice < cachedEthFloor) {
+            return false;
+        }
+
+        uint256 dailyAllocationAbsUSD = uint256(dailyAllocationUSD);
+        uint256 cachedDailyCap = dailyCapUSD;
+        uint256 budgetUSD = dailyAllocationAbsUSD < cachedDailyCap
+            ? dailyAllocationAbsUSD
+            : cachedDailyCap;
+
+        uint256 cachedAnnualAccumulator = annualSpendAccumulatorUSD;
+        if (block.timestamp >= uint256(_annualPeriodStart) + ONE_YEAR) {
+            cachedAnnualAccumulator = 0;
+        }
+        uint256 cachedAnnualCap = annualCapUSD;
+        if (cachedAnnualAccumulator >= cachedAnnualCap) {
+            return false;
+        }
+        uint256 remainingAnnualBudget = cachedAnnualCap - cachedAnnualAccumulator;
+        if (budgetUSD > remainingAnnualBudget) {
+            budgetUSD = remainingAnnualBudget;
+        }
+
+        uint256 availableStEth = IERC20(address(STETH)).balanceOf(address(this));
+        if (availableStEth == 0) {
+            return false;
+        }
+        uint256 availableStEthUSD = (availableStEth * stEthUsdPrice) / PRICE_SCALE;
+        if (budgetUSD > availableStEthUSD) {
+            budgetUSD = availableStEthUSD;
+        }
+
+        if (budgetUSD < minOrderSizeUSD) {
+            return false;
+        }
+
+        ok = true;
+    }
+
+    /**
+     * @notice Returns whether `retryFromStonks` would succeed at the current block. Mirrors all
+     *         `retryFromStonks` preconditions as read-only checks. Never reverts.
+     * @return ok `true` if all gates pass and stETH is available either in Stonks or the last Order;
+     *         `false` otherwise.
+     */
+    function canRetryFromStonks() external view returns (bool ok) {
+        if (_executionPaused) {
+            return false;
+        }
+
+        if (block.timestamp < uint256(_lastOrderTimestamp) + uint256(_orderDurationSeconds)) {
+            return false;
+        }
+
+        uint256 stEthUsdPrice;
+        try ORACLE_ROUTER.getUsdPrices(address(STETH), address(LDO)) returns (
+            uint256 stEthPrice,
+            uint256 ldoPrice
+        ) {
+            if (stEthPrice == 0 || ldoPrice == 0) {
+                return false;
+            }
+            stEthUsdPrice = stEthPrice;
+        } catch {
+            return false;
+        }
+
+        uint256 cachedEthFloor = ethPriceFloorUSD;
+        if (cachedEthFloor != 0 && stEthUsdPrice < cachedEthFloor) {
+            return false;
+        }
+
+        if (IERC20(address(STETH)).balanceOf(stonks) > 0) {
+            return true;
+        }
+
+        address cachedLastOrderAddress = lastOrderAddress;
+        if (cachedLastOrderAddress == address(0)) {
+            return false;
+        }
+        ok = IERC20(address(STETH)).balanceOf(cachedLastOrderAddress) > 0;
+    }
+
+    /**
+     * @notice Aggregated pipeline and annual spend state. Single read entry point for keepers,
+     *         monitors, and the LiquidityProvisioner's excess-wstETH computation.
+     */
+    function getSpendingState() external view returns (INESTController.SpendingState memory state) {
+        state = INESTController.SpendingState({
+            lastTriggerOrderTimestamp: _lastTriggerOrderTimestamp,
+            lastAccountingTimestamp: _lastAccountingTimestamp,
+            lastOrderTimestamp: _lastOrderTimestamp,
+            lastOrderAddress: lastOrderAddress,
+            orderDurationSeconds: _orderDurationSeconds,
+            annualCapUSD: annualCapUSD,
+            annualSpendAccumulatorUSD: annualSpendAccumulatorUSD,
+            annualPeriodStart: _annualPeriodStart,
+            allocatedForBuybacksUSD: allocatedForBuybacksUSD,
+            cumulativeBuybacksUSD: cumulativeBuybacksUSD,
+            lastDailyAllocationUSD: lastDailyAllocationUSD
+        });
+    }
+
+    /**
+     * @notice Snapshot of every registered revenue source with its latest report data, pause state,
+     *         and self-reported staleness flag.
+     * @dev    Reverts if any source's `getRevenue` or `paused` external call reverts. Use
+     *         `canTriggerExecution` for a non-reverting eligibility view.
+     */
+    function getRevenueSourcesWithStatus()
+        external
+        view
+        returns (INESTController.RevenueSourceStatus[] memory statuses)
+    {
+        uint256 sourceCount = _revenueSources.length;
+        statuses = new INESTController.RevenueSourceStatus[](sourceCount);
+
+        for (uint256 i; i < sourceCount; ) {
+            IRevenueSource source = IRevenueSource(_revenueSources[i]);
+            (uint256 revenueUSD, uint256 reportTimestamp, bool isStale) = source.getRevenue();
+            statuses[i] = INESTController.RevenueSourceStatus({
+                source: address(source),
+                lastRevenueUSD: revenueUSD,
+                reportTimestamp: reportTimestamp,
+                isPaused: source.paused(),
+                isStale: isStale
+            });
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /**
+     * @notice Current ETH/USD price reported by the oracle router via the stETH/USD feed.
+     * @dev    Reverts if the oracle router itself reverts.
+     */
+    function getEthPriceUSD() external view returns (uint256 ethPriceUSD) {
+        (ethPriceUSD, ) = ORACLE_ROUTER.getUsdPrices(address(STETH), address(LDO));
+    }
+
+    /**
+     * @notice Current daily revenue surplus without executing or mutating state. Negative values
+     *         indicate the threshold was not met.
+     * @dev    Reverts on stale revenue sources or when no active sources are available, mirroring
+     *         the conditions under which `triggerExecution` would revert.
+     */
+    function getDailySurplus()
+        external
+        view
+        returns (uint256 totalRevenueUSD, int256 surplusUSD)
+    {
+        totalRevenueUSD = _aggregateRevenue();
+        surplusUSD = int256(totalRevenueUSD) - int256(dailyRevenueThresholdUSD);
+    }
+
+    /**
+     * @notice stETH balance held by the controller and available for new trade execution.
+     */
+    function getAvailableStEthBalance() external view returns (uint256) {
+        return IERC20(address(STETH)).balanceOf(address(this));
+    }
+
+    /**
+     * @notice Returns whether `triggerExecution` and `retryFromStonks` are paused.
+     */
+    function isExecutionPaused() external view returns (bool) {
+        return _executionPaused;
+    }
+
     /*//////////////////////////////////////////////////////////////
                      INTERNAL STATE-CHANGING FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -974,6 +1375,14 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
                          INTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
+    function _assertOrderCooldownElapsed() internal view {
+        uint256 cachedLastOrder = _lastOrderTimestamp;
+        uint256 cooldownEnd = cachedLastOrder + _orderDurationSeconds;
+        if (block.timestamp < cooldownEnd) {
+            revert CooldownNotElapsed(cachedLastOrder, cooldownEnd);
+        }
+    }
+
     function _aggregateRevenue() internal view returns (uint256 totalDailyRevenueUSD) {
         uint256 sourceCount = _revenueSources.length;
         uint256 activeSourceCount;
@@ -999,5 +1408,45 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         if (activeSourceCount == 0) {
             revert NoActiveRevenueSources();
         }
+    }
+
+    function _trySimulateAggregateRevenue()
+        internal
+        view
+        returns (uint256 totalRevenueUSD, bool ok)
+    {
+        uint256 sourceCount = _revenueSources.length;
+        uint256 activeSourceCount;
+
+        for (uint256 i; i < sourceCount; ) {
+            IRevenueSource source = IRevenueSource(_revenueSources[i]);
+            bool isPaused;
+            try source.paused() returns (bool paused) {
+                isPaused = paused;
+            } catch {
+                return (0, false);
+            }
+            if (!isPaused) {
+                try source.getRevenue() returns (uint256 revenueUSD, uint256, bool isStale) {
+                    if (isStale) {
+                        return (0, false);
+                    }
+                    totalRevenueUSD += revenueUSD;
+                    unchecked {
+                        ++activeSourceCount;
+                    }
+                } catch {
+                    return (0, false);
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+
+        if (activeSourceCount == 0) {
+            return (0, false);
+        }
+        ok = true;
     }
 }

@@ -9,6 +9,30 @@ import {IWstETH} from "./IWstETH.sol";
 import {IOracleRouter} from "./IOracleRouter.sol";
 
 interface INESTController {
+    /// @notice Aggregated pipeline and annual spend state, returned by `getSpendingState`.
+    struct SpendingState {
+        uint256 lastTriggerOrderTimestamp;
+        uint256 lastAccountingTimestamp;
+        uint256 lastOrderTimestamp;
+        address lastOrderAddress;
+        uint256 orderDurationSeconds;
+        uint256 annualCapUSD;
+        uint256 annualSpendAccumulatorUSD;
+        uint256 annualPeriodStart;
+        int256 allocatedForBuybacksUSD;
+        uint256 cumulativeBuybacksUSD;
+        int256 lastDailyAllocationUSD;
+    }
+
+    /// @notice Per-source snapshot returned by `getRevenueSourcesWithStatus`.
+    struct RevenueSourceStatus {
+        address source;
+        uint256 lastRevenueUSD;
+        uint256 reportTimestamp;
+        bool isPaused;
+        bool isStale;
+    }
+
     function MAX_BASIS_POINTS() external view returns (uint256);
 
     function TRIGGER_INTERVAL_SECONDS() external view returns (uint256);
@@ -60,6 +84,28 @@ interface INESTController {
     function lastDailyAllocationUSD() external view returns (int256);
 
     function annualSpendAccumulatorUSD() external view returns (uint256);
+
+    function isExecutionPaused() external view returns (bool);
+
+    function canTriggerExecution() external view returns (bool);
+
+    function canRetryFromStonks() external view returns (bool);
+
+    function getSpendingState() external view returns (SpendingState memory);
+
+    function getRevenueSourcesWithStatus() external view returns (RevenueSourceStatus[] memory);
+
+    function getEthPriceUSD() external view returns (uint256);
+
+    function getDailySurplus() external view returns (uint256 totalRevenueUSD, int256 surplusUSD);
+
+    function getAvailableStEthBalance() external view returns (uint256);
+
+    function triggerExecution() external returns (address order);
+
+    function retryFromStonks() external returns (address order);
+
+    function accountForReturnedExcess(uint256 stEthAmount_) external;
 
     function setEthPriceFloorUSD(uint256 ethPriceFloorUSD_) external;
 
