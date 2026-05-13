@@ -8,6 +8,13 @@ import {IStETH} from "./IStETH.sol";
 import {IWstETH} from "./IWstETH.sol";
 import {IOracleRouter} from "./IOracleRouter.sol";
 
+/**
+ * @title INESTController
+ * @notice Public surface of the NEST automated-buyback controller. Covers configuration,
+ *         execution entry points, pipeline state reads, pass-throughs to Stonks and Order, and
+ *         the `accountForReturnedExcess` callback consumed by the LiquidityProvisioner. See
+ *         `NESTController` for per-function semantics and constraints.
+ */
 interface INESTController {
     /// @notice Aggregated pipeline and annual spend state, returned by `getSpendingState`.
     struct SpendingState {
@@ -92,6 +99,16 @@ interface INESTController {
     function canRetryFromStonks() external view returns (bool);
 
     function getSpendingState() external view returns (SpendingState memory);
+
+    function getOrderState()
+        external
+        view
+        returns (
+            uint256 lastOrderTimestamp,
+            uint256 orderDurationSeconds,
+            address lastOrderAddress,
+            address stonksAddress
+        );
 
     function getRevenueSourcesWithStatus() external view returns (RevenueSourceStatus[] memory);
 

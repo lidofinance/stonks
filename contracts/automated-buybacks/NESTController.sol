@@ -16,24 +16,24 @@ import {IRevenueSource} from "../interfaces/IRevenueSource.sol";
 import {ILiquidityProvisioner} from "../interfaces/ILiquidityProvisioner.sol";
 import {INESTController} from "../interfaces/INESTController.sol";
 
-/// @dev Minimal interface for calling `recoverERC20` on Stonks. The full `IStonks` interface omits
-///      this method because its `public virtual` visibility in `AssetRecoverer` conflicts with an
-///      `external` interface declaration.
+/**
+ * @dev Minimal interface for calling `recoverERC20` on Stonks. `IStonks` cannot expose it
+ *      because `AssetRecoverer.recoverERC20` is `public virtual` rather than `external`.
+ */
 interface IStonksRecoverable {
     function recoverERC20(address token_, uint256 amount_) external;
 }
 
 /**
  * @title NESTController
- * @notice Central coordinator for the NEST automated buyback system. Evaluates on-chain eligibility
- *         gates, creates CoW Swap orders via Stonks v2, and in LP mode wraps stETH to wstETH for the
- *         LiquidityProvisioner. All execution functions are permissionless and gated solely by
- *         on-chain state. Configuration is controlled by `DEFAULT_ADMIN_ROLE` holders. Emergency
- *         pause controls are accessible by `EMERGENCY_ROLE` holders.
- * @dev    Inherits `AssetRecovererACL` for role-based access and asset recovery, and `ReentrancyGuard`
- *         for execution-path safety. As the Stonks Ownable `manager`, the controller mediates all
- *         trading activity on the Stonks instance and exposes pass-through functions so `MANAGER_ROLE`
- *         and `EMERGENCY_ROLE` holders can invoke Stonks and Order operations without direct access.
+ * @author swissarmytowel <info@lido.fi>
+ * @notice Central coordinator for the NEST automated buyback system. Evaluates eligibility gates,
+ *         creates CoW Swap orders via Stonks v2, and in LP mode wraps stETH to wstETH for the
+ *         LiquidityProvisioner. Execution paths are permissionless. Configuration is gated by
+ *         `DEFAULT_ADMIN_ROLE`, emergency controls by `EMERGENCY_ROLE`.
+ * @dev    As the Stonks Ownable `manager`, the controller mediates every trading action on the
+ *         Stonks instance. Pass-through functions let `MANAGER_ROLE` and `EMERGENCY_ROLE` holders
+ *         invoke Stonks and Order operations without direct access.
  */
 contract NESTController is AssetRecovererACL, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -284,7 +284,9 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
                               MODIFIERS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Reverts if execution is paused.
+    /**
+     * @dev Reverts if execution is paused.
+     */
     modifier whenExecutionNotPaused() {
         if (_executionPaused) {
             revert ExecutionCurrentlyPaused();
@@ -297,10 +299,11 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Initializes immutable references, configurable parameters, and registers the initial
-     *         set of revenue sources. Validates all inputs per the spec constraints.
+     * @notice Initializes immutables, configurable parameters, and registers the initial revenue
+     *         sources. Validates every input before any storage write.
      * @dev    `AssetRecovererACL` grants `DEFAULT_ADMIN_ROLE`, `MANAGER_ROLE`, and `EMERGENCY_ROLE`
-     *         to `initParams_.admin`. `ReentrancyGuard` self-initializes.
+     *         to `initParams_.admin`.
+     * @param  initParams_ Packed constructor inputs. See `InitParams`.
      */
     constructor(
         InitParams memory initParams_
@@ -406,15 +409,13 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
     /**
      * @notice Runs daily accounting and, if eligibility gates pass, creates a CoW Swap order via
-     *         Stonks. In LP mode, additionally wraps the matching stETH half to wstETH and
-     *         transfers it to the LiquidityProvisioner. In treasury-only mode, sells the full
-     *         budget amount via Stonks. Returns `address(0)` when accounting runs but no order is
-     *         created (skip path).
-     * @dev    Permissionless. Accounting updates state at most once per day; the order-creation
-     *         gate ensures at most one order per accounting cycle. The eligibility cascade is
-     *         non-reverting — a failed gate emits `ExecutionSkipped` and returns `address(0)`,
-     *         preserving the daily accounting cadence even when no order is placed.
-     * @return order Address of the newly placed Order contract, or `address(0)` on skip.
+     *         Stonks. In LP mode, also wraps the matching stETH half to wstETH and transfers it
+     *         to the LiquidityProvisioner. In treasury-only mode, sells the full budget via
+     *         Stonks.
+     * @dev    Permissionless. At most one accounting update per day and one order per accounting
+     *         cycle. Failed gates emit `ExecutionSkipped` and return `address(0)`, leaving the
+     *         daily cadence intact.
+     * @return order Address of the newly placed Order, or `address(0)` on skip.
      */
     function triggerExecution()
         external
@@ -483,14 +484,13 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice Creates a new order from stETH sitting idle in the Stonks contract after a previous
-     *         order expired. Auto-recovers stETH from the expired Order back to Stonks if needed.
-     * @dev    Bypasses the trigger-execution budget and revenue gates because the stETH was already
-     *         committed; only ETH-price, quotability, and cooldown safety gates apply. Updates
-     *         `lastOrderTimestamp` but not `lastTriggerOrderTimestamp` so the trigger cadence is
-     *         unaffected. Reverts (rather than skips) on gate failures because retry is a manual
-     *         catch-up path — silent skips would leave stranded stETH without a clear signal.
-     * @return order Address of the newly placed Order contract.
+     * @notice Creates a new order from stETH left in Stonks after a previous order expired.
+     *         Auto-recovers stETH from the expired Order back to Stonks if needed.
+     * @dev    Bypasses the budget and revenue gates because the stETH was already committed. Only
+     *         the ETH-price, quotability, and cooldown gates apply. Updates `lastOrderTimestamp`
+     *         but not `lastTriggerOrderTimestamp`, leaving the trigger cadence intact. Reverts on
+     *         gate failures rather than skipping, since retry is a manual catch-up path.
+     * @return order Address of the newly placed Order.
      */
     function retryFromStonks()
         external
@@ -541,15 +541,13 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice Decrements the annual spend accumulator and cumulative buybacks tracker when excess
-     *         stETH is returned from the LiquidityProvisioner. Called by the provisioner after
-     *         `unwrapExcessWstEth` transfers stETH back to the controller. Ensures recycled funds
-     *         from partial or unfilled orders are not double-counted against caps.
-     * @dev    Restricted to the current `liquidityProvisioner`. Not role-gated — this is a
-     *         single-purpose callback between two specific contracts. Both decrements clamp to zero
-     *         to handle (1) annual period resets between commitment and return and (2) oracle price
-     *         increases that make the returned USD value exceed the original commitment.
-     * @param  stEthAmount_ Amount of stETH transferred back to the controller. Must be non-zero.
+     * @notice Decrements the annual spend accumulator and cumulative buybacks tracker when the
+     *         LiquidityProvisioner returns excess stETH. Recycled funds are not double-counted
+     *         against caps.
+     * @dev    Restricted to the current `liquidityProvisioner`. Both decrements clamp to zero to
+     *         tolerate annual period resets and oracle price increases between commitment and
+     *         return.
+     * @param  stEthAmount_ stETH transferred back to the controller. Must be non-zero.
      */
     function accountForReturnedExcess(uint256 stEthAmount_) external nonReentrant {
         if (msg.sender != liquidityProvisioner) {
@@ -591,8 +589,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice Updates the ETH/USD price threshold for the ETH price gate.
-     * @dev    Accepts zero, which disables the ETH price gate entirely.
+     * @notice Updates the ETH/USD price threshold for the ETH price gate. Zero disables the gate.
      * @param  ethPriceFloorUSD_ New ETH/USD price floor.
      */
     function setEthPriceFloorUSD(uint256 ethPriceFloorUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -649,8 +646,8 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
     /**
      * @notice Updates the maximum cumulative USD budget within a single annual period.
-     * @dev    Does not reset the accumulator or period start. If the cap is lowered below the current
-     *         accumulator value, the annual cap gate clamps the budget to zero until the period resets.
+     * @dev    Does not reset the accumulator or period start. Lowering the cap below the current
+     *         accumulator clamps the gate budget to zero until the period rolls over.
      * @param  annualCapUSD_ New annual cap in USD. Must be strictly greater than `dailyCapUSD`.
      */
     function setAnnualCapUSD(uint256 annualCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -771,10 +768,9 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
     /**
      * @notice Updates the Stonks v2 contract address with migration safety guardrails.
-     * @dev    Auto-recovers stETH from the last Order and the old Stonks to the Aragon Agent,
+     * @dev    Auto-recovers stETH from `lastOrderAddress` and the old Stonks to the Aragon Agent,
      *         re-caches `orderDurationSeconds` from the new Stonks, and triggers LP cleanup.
-     *         Governance must verify all prior Orders have been recovered before calling — only
-     *         `lastOrderAddress` is auto-recovered.
+     *         Governance must recover any earlier prior Orders before calling.
      * @param  stonks_ Address of the new Stonks contract. Must not be zero.
      */
     function setStonks(address stonks_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -818,9 +814,8 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
     /**
      * @notice Resets the cumulative buyback accounting state to zero.
-     * @dev    Intended for exceptional scenarios such as prolonged slashing recovery where the
-     *         accumulated deficit would prevent buybacks indefinitely. Does not reset annual
-     *         spending caps or trigger cadence.
+     * @dev    Escape hatch for prolonged slashing recovery where an accumulated deficit would
+     *         block buybacks. Does not reset annual caps or the trigger cadence.
      */
     function resetBuybackAccounting() external onlyRole(DEFAULT_ADMIN_ROLE) {
         int256 previousAllocated = allocatedForBuybacksUSD;
@@ -835,7 +830,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
     /**
      * @notice Pauses order creation via `triggerExecution` and `retryFromStonks`.
-     * @dev    Idempotent — calling when already paused has no effect.
+     * @dev    Idempotent.
      */
     function pauseExecution() external onlyRole(EMERGENCY_ROLE) {
         _executionPaused = true;
@@ -845,7 +840,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
     /**
      * @notice Resumes order creation via `triggerExecution` and `retryFromStonks`.
-     * @dev    Idempotent — calling when already unpaused has no effect.
+     * @dev    Idempotent.
      */
     function unpauseExecution() external onlyRole(EMERGENCY_ROLE) {
         _executionPaused = false;
@@ -1005,12 +1000,11 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice Returns whether `triggerExecution` would succeed at the current block and produce an
-     *         order. Mirrors all `triggerExecution` preconditions as read-only checks against current
-     *         state, simulating accounting without writes when due. Never reverts: any unexpected
-     *         revert from oracle or revenue source calls is treated as `false`.
-     * @return ok `true` if the execution path would place an order; `false` if any gate fails or any
-     *         underlying call reverts.
+     * @notice Whether `triggerExecution` would place an order at the current block. Mirrors every
+     *         `triggerExecution` precondition as a read-only check and simulates accounting
+     *         without writes. Never reverts.
+     * @return ok `true` if every gate passes. `false` if any gate fails or any underlying call
+     *         reverts.
      */
     function canTriggerExecution() external view returns (bool ok) {
         if (_executionPaused) {
@@ -1031,19 +1025,14 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
                 return false;
             }
             int256 surplusUSD = int256(totalRevenueUSD) - int256(dailyRevenueThresholdUSD);
-            dailyAllocationUSD =
-                (surplusUSD * int256(surplusShareBps)) /
-                int256(MAX_BASIS_POINTS);
+            dailyAllocationUSD = (surplusUSD * int256(surplusShareBps)) / int256(MAX_BASIS_POINTS);
             preAccountingUnrealizedUSD = cachedAllocated - cachedCumulativeSigned;
         } else {
             if (uint256(_lastTriggerOrderTimestamp) >= uint256(_lastAccountingTimestamp)) {
                 return false;
             }
             int256 cachedLastDaily = lastDailyAllocationUSD;
-            preAccountingUnrealizedUSD =
-                cachedAllocated -
-                cachedLastDaily -
-                cachedCumulativeSigned;
+            preAccountingUnrealizedUSD = cachedAllocated - cachedLastDaily - cachedCumulativeSigned;
             dailyAllocationUSD = cachedLastDaily;
         }
 
@@ -1066,7 +1055,6 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         } catch {
             return false;
         }
-
         uint256 cachedEthFloor = ethPriceFloorUSD;
         if (cachedEthFloor != 0 && stEthUsdPrice < cachedEthFloor) {
             return false;
@@ -1110,8 +1098,8 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice Returns whether `retryFromStonks` would succeed at the current block. Mirrors all
      *         `retryFromStonks` preconditions as read-only checks. Never reverts.
-     * @return ok `true` if all gates pass and stETH is available either in Stonks or the last Order;
-     *         `false` otherwise.
+     * @return ok `true` if all gates pass and stETH is available either in Stonks or the last
+     *         Order. `false` otherwise.
      */
     function canRetryFromStonks() external view returns (bool ok) {
         if (_executionPaused) {
@@ -1134,7 +1122,6 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         } catch {
             return false;
         }
-
         uint256 cachedEthFloor = ethPriceFloorUSD;
         if (cachedEthFloor != 0 && stEthUsdPrice < cachedEthFloor) {
             return false;
@@ -1154,6 +1141,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice Aggregated pipeline and annual spend state. Single read entry point for keepers,
      *         monitors, and the LiquidityProvisioner's excess-wstETH computation.
+     * @return state Current `SpendingState`. See `INESTController.SpendingState` for the field list.
      */
     function getSpendingState() external view returns (INESTController.SpendingState memory state) {
         state = INESTController.SpendingState({
@@ -1172,10 +1160,36 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
+     * @notice Order-state tuple consumed by `LiquidityProvisioner.unwrapExcessWstEth` and its
+     *         view counterparts. Returns only the fields needed for the cooldown gate and the
+     *         clamp lookup, including `stonks` so the clamp can be computed in a single call.
+     * @return lastOrderTimestamp_ Timestamp of the most recent order creation.
+     * @return orderDurationSeconds_ Cached `Stonks.ORDER_DURATION_IN_SECONDS` value.
+     * @return lastOrderAddress_ Address of the most recent Order. Zero when no Order is tracked.
+     * @return stonksAddress_ Currently configured Stonks address.
+     */
+    function getOrderState()
+        external
+        view
+        returns (
+            uint256 lastOrderTimestamp_,
+            uint256 orderDurationSeconds_,
+            address lastOrderAddress_,
+            address stonksAddress_
+        )
+    {
+        lastOrderTimestamp_ = _lastOrderTimestamp;
+        orderDurationSeconds_ = _orderDurationSeconds;
+        lastOrderAddress_ = lastOrderAddress;
+        stonksAddress_ = stonks;
+    }
+
+    /**
      * @notice Snapshot of every registered revenue source with its latest report data, pause state,
      *         and self-reported staleness flag.
      * @dev    Reverts if any source's `getRevenue` or `paused` external call reverts. Use
      *         `canTriggerExecution` for a non-reverting eligibility view.
+     * @return statuses One `RevenueSourceStatus` entry per registered source, in registration order.
      */
     function getRevenueSourcesWithStatus()
         external
@@ -1195,6 +1209,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
                 isPaused: source.paused(),
                 isStale: isStale
             });
+
             unchecked {
                 ++i;
             }
@@ -1204,6 +1219,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice Current ETH/USD price reported by the oracle router via the stETH/USD feed.
      * @dev    Reverts if the oracle router itself reverts.
+     * @return ethPriceUSD stETH/USD price scaled by `PRICE_SCALE`.
      */
     function getEthPriceUSD() external view returns (uint256 ethPriceUSD) {
         (ethPriceUSD, ) = ORACLE_ROUTER.getUsdPrices(address(STETH), address(LDO));
@@ -1214,12 +1230,10 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
      *         indicate the threshold was not met.
      * @dev    Reverts on stale revenue sources or when no active sources are available, mirroring
      *         the conditions under which `triggerExecution` would revert.
+     * @return totalRevenueUSD Aggregated revenue across active sources, 1e18-scaled USD.
+     * @return surplusUSD `totalRevenueUSD - dailyRevenueThresholdUSD`.
      */
-    function getDailySurplus()
-        external
-        view
-        returns (uint256 totalRevenueUSD, int256 surplusUSD)
-    {
+    function getDailySurplus() external view returns (uint256 totalRevenueUSD, int256 surplusUSD) {
         totalRevenueUSD = _aggregateRevenue();
         surplusUSD = int256(totalRevenueUSD) - int256(dailyRevenueThresholdUSD);
     }
@@ -1242,6 +1256,15 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
                      INTERNAL STATE-CHANGING FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Runs the daily accounting cycle if the trigger interval has elapsed, otherwise
+     *         returns the cached same-cycle figures used by the eligibility gates.
+     * @return preAccountingUnrealizedUSD Unrealized buybacks before today's allocation. Fresh
+     *         cycle: `allocated - cumulative`. Same-cycle reuse subtracts
+     *         `lastDailyAllocationUSD` to avoid double-counting.
+     * @return dailyAllocationUSD Today's allocation. Freshly computed on a new cycle, otherwise
+     *         the cached `lastDailyAllocationUSD`.
+     */
     function _runAccountingIfDue()
         internal
         returns (int256 preAccountingUnrealizedUSD, int256 dailyAllocationUSD)
@@ -1271,6 +1294,19 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         emit AccountingUpdated(surplusUSD, newAllocated, newAllocated - cachedCumulativeSigned);
     }
 
+    /**
+     * @notice Runs the eligibility-gate cascade and budget computation. Non-reverting. Failed
+     *         gates return `(false, reason, 0, ...)` so `triggerExecution` can emit
+     *         `ExecutionSkipped` and preserve the daily cadence.
+     * @dev    The only state write is the annual period reset, needed before the cap is
+     *         re-evaluated.
+     * @param  preAccountingUnrealizedUSD_ Unrealized buybacks from `_runAccountingIfDue`.
+     * @param  dailyAllocationUSD_ Today's allocation from `_runAccountingIfDue`.
+     * @return isEligible `true` when every gate passes.
+     * @return reason     Skip reason on failure. `SkipReason.NoSurplus` when `isEligible == true`.
+     * @return budgetUSD  Final clamped budget. Zero on every skip path.
+     * @return stEthUsdPrice stETH/USD price from the quotability gate. Zero on pre-quotability skips.
+     */
     function _evaluateEligibilityGates(
         int256 preAccountingUnrealizedUSD_,
         int256 dailyAllocationUSD_
@@ -1278,21 +1314,19 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         internal
         returns (bool isEligible, SkipReason reason, uint256 budgetUSD, uint256 stEthUsdPrice)
     {
-        // Surplus gate: revenue did not exceed the daily threshold, so there is nothing to buy back today.
+        // Surplus gate.
         if (dailyAllocationUSD_ <= 0) {
             return (false, SkipReason.NoSurplus, 0, 0);
         }
 
-        // Cumulative capacity gate: past buybacks already overshot the running allocation; wait for the
-        // allocation to catch up before committing more spend.
+        // Cumulative capacity gate. Past buybacks already overshot the running allocation.
         if (preAccountingUnrealizedUSD_ < 0) {
             return (false, SkipReason.NegativeUnrealizedBuybacks, 0, 0);
         }
 
-        // Quotability gate: fresh stETH/LDO prices must be available for Stonks' `estimateTradeOutput`.
-        // The stETH/USD leg is reused as the ETH/USD proxy by the next gate and by sell-amount math.
-        // A zero on either leg is treated as a quotability failure to defend against the oracle
-        // router's bridged-price path where `Math.mulDiv` can quantize to zero without reverting.
+        // Quotability gate. The stETH/USD leg doubles as the ETH/USD proxy below. A zero on
+        // either leg counts as a failure, guarding against the router's bridged-price path that
+        // can quantize to zero without reverting.
         try ORACLE_ROUTER.getUsdPrices(address(STETH), address(LDO)) returns (
             uint256 stEthPrice,
             uint256 ldoPrice
@@ -1304,20 +1338,19 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         } catch {
             return (false, SkipReason.QuotabilityFailed, 0, 0);
         }
-        // ETH price gate: avoid selling stETH when ETH is undervalued relative to the configured floor.
-        // A zero floor disables the gate entirely.
+
+        // ETH price gate. Zero floor disables the gate.
         uint256 cachedEthFloor = ethPriceFloorUSD;
         if (cachedEthFloor != 0 && stEthUsdPrice < cachedEthFloor) {
             return (false, SkipReason.EthPriceBelowFloor, 0, stEthUsdPrice);
         }
 
-        // Budget computation: start from the smaller of today's allocation and the per-trigger daily cap.
+        // Budget computation. Start from the smaller of today's allocation and the daily cap.
         uint256 dailyAllocationAbsUSD = uint256(dailyAllocationUSD_);
         uint256 cachedDailyCap = dailyCapUSD;
         budgetUSD = dailyAllocationAbsUSD < cachedDailyCap ? dailyAllocationAbsUSD : cachedDailyCap;
 
-        // Annual cap gate: roll the period if a full year has elapsed, then skip if the cap is spent or
-        // clamp the budget to the remaining annual allowance.
+        // Annual cap gate. Roll the period when a year has elapsed, then skip or clamp.
         uint256 cachedAnnualAccumulator = annualSpendAccumulatorUSD;
         if (block.timestamp >= uint256(_annualPeriodStart) + ONE_YEAR) {
             _annualPeriodStart = uint64(block.timestamp);
@@ -1337,8 +1370,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             budgetUSD = remainingAnnualBudget;
         }
 
-        // stETH balance gate: skip if the controller holds no stETH; otherwise clamp the budget to the
-        // USD value of the available balance so the sell amount is always affordable.
+        // stETH balance gate. Skip on empty, otherwise clamp the budget to the available balance.
         uint256 availableStEth = IERC20(address(STETH)).balanceOf(address(this));
         if (availableStEth == 0) {
             return (false, SkipReason.InsufficientStEthBalance, 0, stEthUsdPrice);
@@ -1348,7 +1380,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             budgetUSD = availableStEthUSD;
         }
 
-        // Minimum size check: after all clamping, the budget must still justify an order.
+        // Minimum size check.
         if (budgetUSD < minOrderSizeUSD) {
             return (false, SkipReason.BudgetBelowMinOrderSize, 0, stEthUsdPrice);
         }
@@ -1356,6 +1388,14 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         isEligible = true;
     }
 
+    /**
+     * @notice Transfers stETH to Stonks and places an order with a price-protection-adjusted
+     *         `minBuyAmount`. The transfer is unbuffered. Only the sell argument passed to
+     *         Stonks subtracts `STETH_TRANSFER_BUFFER` to absorb share-rounding loss.
+     * @param  sellAmountStEth_ stETH transferred to Stonks. Also the basis for the buy estimate
+     *         before the protection discount.
+     * @return order Address of the newly placed Order.
+     */
     function _placeOrderViaStonks(uint256 sellAmountStEth_) internal returns (address order) {
         address cachedStonks = stonks;
 
@@ -1375,6 +1415,10 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
                          INTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Reverts with `CooldownNotElapsed` when the previous order's cooldown has not yet
+     *         elapsed at the current block timestamp.
+     */
     function _assertOrderCooldownElapsed() internal view {
         uint256 cachedLastOrder = _lastOrderTimestamp;
         uint256 cooldownEnd = cachedLastOrder + _orderDurationSeconds;
@@ -1383,6 +1427,13 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         }
     }
 
+    /**
+     * @notice Sums revenue from every non-paused registered source. Reverts with
+     *         `RevenueSourceStale` on the first stale source, or with `NoActiveRevenueSources`
+     *         when nothing is active. Used by `triggerExecution` and `getDailySurplus`. The
+     *         non-reverting counterpart is `_trySimulateAggregateRevenue`.
+     * @return totalDailyRevenueUSD Aggregated 1e18-scaled USD revenue across active sources.
+     */
     function _aggregateRevenue() internal view returns (uint256 totalDailyRevenueUSD) {
         uint256 sourceCount = _revenueSources.length;
         uint256 activeSourceCount;
@@ -1410,6 +1461,13 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         }
     }
 
+    /**
+     * @notice Non-reverting variant of `_aggregateRevenue` used by `canTriggerExecution`. Wraps
+     *         every external call in try/catch and signals failure via `ok = false`.
+     * @return totalRevenueUSD Aggregated 1e18-scaled USD revenue. Zero on failure.
+     * @return ok `true` when every active source returned fresh data. `false` on any revert,
+     *         any stale source, or when no source is active.
+     */
     function _trySimulateAggregateRevenue()
         internal
         view

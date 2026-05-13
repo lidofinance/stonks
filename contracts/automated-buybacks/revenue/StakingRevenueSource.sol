@@ -11,13 +11,13 @@ import {IStakingRouter} from "../../interfaces/IStakingRouter.sol";
 
 /**
  * @title StakingRevenueSource
- * @notice Revenue source that back-derives DAO treasury staking revenue from the stETH/wstETH rate
- *         delta reported by `TokenRateNotifier` after each Lido rebase. External (vault) shares are
- *         excluded — vault revenue is tracked by a dedicated source. The derived stETH amount is
- *         converted to USD via `OracleRouter` and forwarded to the base class for daily-rate
- *         normalization.
- * @dev    Must be registered as an observer on `TokenRateNotifier`; `REPORTER_ROLE` is granted to
- *         the notifier at construction so `pushTokenRate` is restricted to the canonical rebase
+ * @author swissarmytowel <info@lido.fi>
+ * @notice Revenue source that back-derives DAO treasury staking revenue from the stETH/wstETH
+ *         rate delta reported by `TokenRateNotifier` after each Lido rebase. Vault shares are
+ *         excluded. The derived stETH is converted to USD via `OracleRouter` and forwarded to
+ *         the base class for daily-rate normalization.
+ * @dev    Must be registered as an observer on `TokenRateNotifier`. `REPORTER_ROLE` is granted
+ *         to the notifier at construction so `pushTokenRate` is restricted to the rebase
  *         callback path. ERC165 support for `ITokenRatePusher.interfaceId` is required for
  *         registration.
  */
@@ -26,15 +26,15 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
                                CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Role that authorizes `pushTokenRate`. Granted solely to the `TokenRateNotifier`
-    ///         address at construction to block out-of-order calls between rebases.
+    /// @notice Role authorizing `pushTokenRate`. Granted at construction to the
+    ///         `TokenRateNotifier` only, blocking out-of-order calls between rebases.
     bytes32 public constant REPORTER_ROLE = keccak256("REPORTER_ROLE");
 
     /// @notice Scale factor for stETH/wstETH rate arithmetic, matching Lido's
     ///         `TokenRateAndUpdateTimestampProvider` convention.
     uint256 internal constant TOKEN_RATE_SCALE = 1e27;
 
-    /// @notice Scale factor for USD amount precision alignment with `OracleRouter` output.
+    /// @notice USD amount precision alignment with `OracleRouter` output.
     uint256 internal constant PRICE_SCALE = 1e18;
 
     /*//////////////////////////////////////////////////////////////
@@ -44,14 +44,14 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     /// @notice `OracleRouter` used for stETH → USD conversion on positive rate deltas.
     IOracleRouter public immutable ORACLE_ROUTER;
 
-    /// @notice stETH token — queried for internal/external share counts and as both base and quote
+    /// @notice stETH token. Queried for internal/external share counts and as both base and quote
     ///         of the USD price lookup.
     IStETH public immutable STETH;
 
-    /// @notice wstETH token — queried for the current `stETH-per-wstETH` rate at `TOKEN_RATE_SCALE`.
+    /// @notice wstETH token. Queried for the current `stETH-per-wstETH` rate at `TOKEN_RATE_SCALE`.
     IWstETH public immutable WSTETH;
 
-    /// @notice Lido `StakingRouter` — queried at call time for the treasury fee share of gross
+    /// @notice Lido `StakingRouter`. Queried at call time for the treasury fee share of gross
     ///         staking rewards.
     IStakingRouter public immutable STAKING_ROUTER;
 
@@ -60,7 +60,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Rate snapshot from the previous `pushTokenRate` call, scaled to `TOKEN_RATE_SCALE`.
-    ///         Advances only on positive deltas; frozen on zero/negative deltas so the pre-event
+    ///         Advances only on positive deltas. Frozen on zero or negative deltas so the pre-event
     ///         rate remains the high-water-mark baseline across slashing and recovery.
     uint256 private _lastStEthPerToken;
 
@@ -79,10 +79,18 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Wires the external dependencies, seeds the rate baseline from live wstETH, and grants
-     *         `REPORTER_ROLE` to `tokenRateNotifier_` so the notifier can drive the source.
-     * @dev    Seeding against the live rate guarantees that the first `pushTokenRate` computes a
-     *         genuine delta rather than the full cumulative staking rate since wstETH deployment.
+     * @notice Wires external dependencies, seeds the rate baseline from the live wstETH rate, and
+     *         grants `REPORTER_ROLE` to `tokenRateNotifier_`.
+     * @dev    Seeding against the live rate ensures the first `pushTokenRate` measures a genuine
+     *         delta rather than the cumulative staking rate since wstETH deployment.
+     * @param  admin_ Initial admin. Non-zero. Forwarded to `RevenueSource`.
+     * @param  stalenessWindowSeconds_ Strictly positive. Forwarded to `RevenueSource`.
+     * @param  oracleRouter_ `OracleRouter` for stETH → USD conversion. Non-zero.
+     * @param  stEth_ stETH token. Non-zero.
+     * @param  wstEth_ wstETH token. Non-zero.
+     * @param  stakingRouter_ Lido `StakingRouter` for fee distribution lookups. Non-zero.
+     * @param  tokenRateNotifier_ Authorized caller of `pushTokenRate`. Non-zero. Granted
+     *         `REPORTER_ROLE`.
      */
     constructor(
         address admin_,
@@ -124,14 +132,14 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice `ITokenRatePusher` callback invoked by `TokenRateNotifier` after each rebase. Derives
-     *         the DAO's share of gross staking rewards from the rate delta, converts to USD, and
-     *         forwards to `_updateRevenue` for daily-rate normalization.
+     * @notice `ITokenRatePusher` callback invoked by `TokenRateNotifier` after each rebase.
+     *         Derives the DAO's share of gross staking rewards from the rate delta, converts to
+     *         USD, and forwards to `_updateRevenue`.
      * @dev    The notifier wraps this call in try/catch, so reverts here are non-blocking and
      *         surface as `PushTokenRateFailed` on the notifier. Zero- and negative-delta reports
-     *         still fire `_updateRevenue(0, block.timestamp)` to reset the staleness timer and
-     *         propagate the cost burden to the controller. Negative deltas intentionally preserve
-     *         the pre-event baseline so the deficit accumulates across the full recovery period.
+     *         fire `_updateRevenue(0, block.timestamp)` to refresh the staleness timer. Negative
+     *         deltas preserve the pre-event baseline so the deficit accumulates across the full
+     *         recovery period.
      */
     function pushTokenRate() external onlyRole(REPORTER_ROLE) whenNotPaused {
         uint256 rate = WSTETH.getStETHByWstETH(TOKEN_RATE_SCALE);
@@ -148,11 +156,8 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
             .getStakingFeeAggregateDistribution();
         uint256 internalShares = STETH.getTotalShares() - STETH.getExternalShares();
 
-        // Back-derives the treasury's share of gross staking rewards from the rate delta, which
-        // already has fees extracted via share dilution. `internalShares` is post-rebase — fee
-        // shares are already minted by the time this fires, producing a negligible overestimation.
-        // Reverts with a division-by-zero panic if `totalFee >= basePrecision`, which is the
-        // intended fail-safe for a malformed `StakingRouter` configuration.
+        // Back-derives the treasury share of gross rewards from a post-fee rate delta. A
+        // malformed `StakingRouter` where `totalFee >= basePrecision` divbyzero-panics here.
         uint256 revenueStEth = (rateDelta * internalShares * treasuryFee) /
             (TOKEN_RATE_SCALE * (basePrecision - (modulesFee + treasuryFee)));
 
@@ -168,10 +173,12 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
                             PUBLIC FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice ERC165 entry point. `TokenRateNotifier.addObserver` queries this during registration.
-    function supportsInterface(
-        bytes4 interfaceId_
-    ) public view override returns (bool) {
+    /**
+     * @notice ERC165 entry point. Queried by `TokenRateNotifier.addObserver` during registration.
+     * @param  interfaceId_ Interface identifier to probe.
+     * @return `true` for `ITokenRatePusher` and any interface accepted by the inheritance chain.
+     */
+    function supportsInterface(bytes4 interfaceId_) public view override returns (bool) {
         return
             interfaceId_ == type(ITokenRatePusher).interfaceId ||
             super.supportsInterface(interfaceId_);

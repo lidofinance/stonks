@@ -7,32 +7,30 @@ import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
 
 /**
  * @title RevenueSource
- * @notice Base contract for revenue data providers consumed by `NESTController`. Owns the shared
- *         `_lastRevenueUSD` / `_lastReportTimestamp` storage, the daily-rate normalization in
- *         `_updateRevenue`, and the staleness check exposed via `getRevenue`. Concrete sources
- *         only supply the revenue computation and call `_updateRevenue` with the raw figure.
- * @dev    Does not inherit `AssetRecovererACL` because revenue sources hold no recoverable
- *         assets. `EMERGENCY_ROLE` is defined locally and shares the `keccak256("EMERGENCY_ROLE")`
- *         hash with the ACL variant, so the same operators can pause every NEST component.
+ * @author swissarmytowel <info@lido.fi>
+ * @notice Base contract for revenue data providers consumed by `NESTController`. Holds the
+ *         shared report storage, the daily-rate normalization, and the staleness check.
+ * @dev    Revenue sources hold no recoverable assets, so `AssetRecovererACL` is not inherited.
+ *         `EMERGENCY_ROLE` is defined locally with the same `keccak256("EMERGENCY_ROLE")` hash
+ *         as the ACL variant, so the same operators can pause every NEST component.
  */
 abstract contract RevenueSource is AccessControlEnumerable, Pausable {
     /*//////////////////////////////////////////////////////////////
                                CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Role gating `pause` / `unpause`. Not granted at construction — the admin assigns it
+    /// @notice Role gating `pause` / `unpause`. Withheld at construction. The admin delegates it
     ///         post-deployment to the Emergency Committee via `grantRole`.
     bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
 
-    /// @notice Seconds in a day, used by `_updateRevenue` to normalize raw revenue to a daily rate.
+    /// @notice Seconds in one day. Used by `_updateRevenue` to normalize raw revenue to a daily rate.
     uint256 internal constant ONE_DAY = 86400;
 
     /*//////////////////////////////////////////////////////////////
                               IMMUTABLES
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Maximum age of a revenue report before `getRevenue` flags it as stale. Set at
-    ///         construction and never updated.
+    /// @notice Maximum age of a revenue report before `getRevenue` flags it as stale.
     uint256 public immutable STALENESS_WINDOW_SECONDS;
 
     /*//////////////////////////////////////////////////////////////
@@ -65,8 +63,11 @@ abstract contract RevenueSource is AccessControlEnumerable, Pausable {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Grants `DEFAULT_ADMIN_ROLE` to `admin_`. `EMERGENCY_ROLE` is intentionally withheld
-     *         so pause authority can be delegated to the Emergency Committee post-deployment.
+     * @notice Grants `DEFAULT_ADMIN_ROLE` to `admin_`. `EMERGENCY_ROLE` is withheld so pause
+     *         authority can be delegated to the Emergency Committee post-deployment.
+     * @param  admin_ Initial admin and role manager. Non-zero.
+     * @param  stalenessWindowSeconds_ Maximum age before `getRevenue` flags a report stale.
+     *         Strictly positive.
      */
     constructor(address admin_, uint256 stalenessWindowSeconds_) {
         if (admin_ == address(0)) {
@@ -85,12 +86,16 @@ abstract contract RevenueSource is AccessControlEnumerable, Pausable {
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Halts new revenue reports. Aggregation on `NESTController` skips paused sources.
+    /**
+     * @notice Halts new revenue reports. The NESTController aggregator skips paused sources.
+     */
     function pause() external onlyRole(EMERGENCY_ROLE) {
         _pause();
     }
 
-    /// @notice Resumes revenue reporting.
+    /**
+     * @notice Resumes revenue reporting.
+     */
     function unpause() external onlyRole(EMERGENCY_ROLE) {
         _unpause();
     }
@@ -100,11 +105,10 @@ abstract contract RevenueSource is AccessControlEnumerable, Pausable {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Returns the latest reported revenue along with its recording timestamp and a
-     *         staleness flag. Reported as a daily rate regardless of the source's actual cadence.
+     * @notice Latest revenue report, normalized to a daily rate independent of the source's cadence.
      * @return revenueUSD      Normalized daily revenue in 1e18-scaled USD.
      * @return reportTimestamp Timestamp of the last successful update.
-     * @return isStale         `true` before the first report, or once the staleness window elapses.
+     * @return isStale         `true` before the first report or once the staleness window elapses.
      */
     function getRevenue()
         external
@@ -124,11 +128,10 @@ abstract contract RevenueSource is AccessControlEnumerable, Pausable {
 
     /**
      * @notice Writes a new revenue figure, normalizing to a daily rate over the elapsed period.
-     *         Called by concrete sources after computing the raw revenue for the current window.
-     * @dev    The first report (or any zero-length period) is stored raw — there is no prior
-     *         baseline to scale against. Subsequent reports scale as
-     *         `revenueUSD_ * ONE_DAY / (reportTimestamp_ - _lastReportTimestamp)`. A decreasing
-     *         `reportTimestamp_` underflows intentionally, so callers must guarantee monotonicity.
+     * @dev    The first report and any zero-length period are stored raw. Callers must pass
+     *         monotonically non-decreasing timestamps. A decreasing value underflows.
+     * @param  revenueUSD_ Raw revenue accrued since `_lastReportTimestamp`, 1e18-scaled USD.
+     * @param  reportTimestamp_ Timestamp of the new report. Must be `>= _lastReportTimestamp`.
      */
     function _updateRevenue(uint256 revenueUSD_, uint256 reportTimestamp_) internal {
         uint256 periodSeconds = reportTimestamp_ - _lastReportTimestamp;

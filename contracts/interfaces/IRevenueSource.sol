@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
+/**
+ * @title IRevenueSource
+ * @notice Read surface every revenue contributor exposes to the NESTController aggregator.
+ *         Concrete sources extend the abstract `RevenueSource`, which implements both methods.
+ */
 interface IRevenueSource {
     function getRevenue()
         external

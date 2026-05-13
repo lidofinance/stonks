@@ -11,11 +11,10 @@ import {AccessControlEnumerable} from "@openzeppelin/contracts/access/AccessCont
 
 /**
  * @title AssetRecovererACL
- * @notice Role-based asset-recovery base for NEST contracts. Mirrors the responsibilities of the
- *         Ownable-based `AssetRecoverer` used by Stonks/Order, but swaps the access model for
- *         OpenZeppelin `AccessControlEnumerable` so NEST contracts can share role identifiers
- *         (`DEFAULT_ADMIN_ROLE`, `MANAGER_ROLE`, `EMERGENCY_ROLE`) with the broader role model.
- * @dev    Assets are always sent to the immutable `AGENT` address (Aragon Agent treasury).
+ * @author swissarmytowel <info@lido.fi>
+ * @notice Role-based asset-recovery base for NEST contracts. Uses `AccessControlEnumerable`
+ *         to align its role identifiers with the broader NEST role model.
+ * @dev    Assets are always sent to the immutable `AGENT` address.
  */
 abstract contract AssetRecovererACL is AccessControlEnumerable {
     using Address for address payable;
@@ -25,20 +24,19 @@ abstract contract AssetRecovererACL is AccessControlEnumerable {
                                CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Role gating asset recovery and day-to-day operational actions across NEST.
-    ///         Held by the admin and, post-deployment, by the Treasury Management Committee.
+    /// @notice Role gating asset recovery and operational actions. Granted to the admin at
+    ///         construction. Delegated to the Treasury Management Committee post-deployment.
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
 
-    /// @notice Role gating pause/cancellation paths across NEST. Held by the admin, the TMC,
-    ///         and the Emergency Committee after post-deployment `grantRole` calls.
+    /// @notice Role gating pause/cancellation paths. Granted to the admin at construction.
+    ///         Delegated to the Emergency Committee post-deployment.
     bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
 
     /*//////////////////////////////////////////////////////////////
                               IMMUTABLES
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Aragon Agent treasury address. Sole destination for every recovery path on this
-    ///         contract; set once at construction and never updated.
+    /// @notice Aragon Agent treasury address. Sole destination for every recovery path.
     address public immutable AGENT;
 
     /*//////////////////////////////////////////////////////////////
@@ -67,9 +65,10 @@ abstract contract AssetRecovererACL is AccessControlEnumerable {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Grants `DEFAULT_ADMIN_ROLE`, `MANAGER_ROLE`, and `EMERGENCY_ROLE` to `admin_` so it
-     *         can immediately operate the contract and delegate roles post-deployment via
-     *         `grantRole`. TMC and Emergency Committee assignments happen via governance.
+     * @notice Grants `DEFAULT_ADMIN_ROLE`, `MANAGER_ROLE`, and `EMERGENCY_ROLE` to `admin_`.
+     *         Subsequent role assignments happen post-deployment via governance.
+     * @param  admin_ Initial role holder. Non-zero.
+     * @param  agent_ Aragon Agent treasury address. Non-zero. Stored as immutable `AGENT`.
      */
     constructor(address admin_, address agent_) {
         if (admin_ == address(0)) {
@@ -89,7 +88,9 @@ abstract contract AssetRecovererACL is AccessControlEnumerable {
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Sweeps the contract's entire ETH balance to the Aragon Agent.
+    /**
+     * @notice Sweeps the contract's entire ETH balance to the Aragon Agent.
+     */
     function recoverEther() external onlyRole(MANAGER_ROLE) {
         uint256 amount = address(this).balance;
 
@@ -100,8 +101,9 @@ abstract contract AssetRecovererACL is AccessControlEnumerable {
 
     /**
      * @notice Recovers an ERC-20 balance to the Aragon Agent.
-     * @dev    Virtual so subclasses can override (e.g. the LiquidityProvisioner unwraps wstETH
-     *         to stETH before forwarding, keeping treasury accounting in stETH terms).
+     * @dev    `LiquidityProvisioner` overrides this to auto-unwrap wstETH to stETH.
+     * @param  token_ ERC-20 token to recover.
+     * @param  amount_ Token amount transferred to `AGENT`.
      */
     function recoverERC20(address token_, uint256 amount_) external virtual onlyRole(MANAGER_ROLE) {
         emit ERC20Recovered(token_, AGENT, amount_);
@@ -109,14 +111,22 @@ abstract contract AssetRecovererACL is AccessControlEnumerable {
         IERC20(token_).safeTransfer(AGENT, amount_);
     }
 
-    /// @notice Recovers a single ERC-721 token to the Aragon Agent.
+    /**
+     * @notice Recovers a single ERC-721 token to the Aragon Agent.
+     * @param  token_ ERC-721 token contract.
+     * @param  tokenId_ Token id to transfer to `AGENT`.
+     */
     function recoverERC721(address token_, uint256 tokenId_) external onlyRole(MANAGER_ROLE) {
         emit ERC721Recovered(token_, tokenId_, AGENT);
 
         IERC721(token_).safeTransferFrom(address(this), AGENT, tokenId_);
     }
 
-    /// @notice Recovers the full ERC-1155 balance of `tokenId_` to the Aragon Agent.
+    /**
+     * @notice Recovers the full ERC-1155 balance of `tokenId_` to the Aragon Agent.
+     * @param  token_ ERC-1155 token contract.
+     * @param  tokenId_ Token id whose full balance is transferred to `AGENT`.
+     */
     function recoverERC1155(address token_, uint256 tokenId_) external onlyRole(MANAGER_ROLE) {
         uint256 amount = IERC1155(token_).balanceOf(address(this), tokenId_);
 
