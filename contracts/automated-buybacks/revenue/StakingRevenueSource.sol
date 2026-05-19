@@ -65,6 +65,12 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     uint256 private _lastStEthPerToken;
 
     /*//////////////////////////////////////////////////////////////
+                                EVENTS
+    //////////////////////////////////////////////////////////////*/
+
+    event BaselineReset(uint256 oldRate, uint256 newRate);
+
+    /*//////////////////////////////////////////////////////////////
                                 ERRORS
     //////////////////////////////////////////////////////////////*/
 
@@ -139,7 +145,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
      *         surface as `PushTokenRateFailed` on the notifier. Zero- and negative-delta reports
      *         fire `_updateRevenue(0, block.timestamp)` to refresh the staleness timer. Negative
      *         deltas preserve the pre-event baseline so the deficit accumulates across the full
-     *         recovery period.
+     *         recovery period. A non-slashing rate drop is cleared with `resetBaseline`.
      */
     function pushTokenRate() external onlyRole(REPORTER_ROLE) whenNotPaused {
         uint256 rate = WSTETH.getStETHByWstETH(TOKEN_RATE_SCALE);
@@ -167,6 +173,20 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
         _lastStEthPerToken = rate;
 
         _updateRevenue(revenueUSD, block.timestamp);
+    }
+
+    /**
+     * @notice Re-seeds the rate baseline to the live wstETH rate.
+     * @dev    Use after a confirmed non-slashing rate drop. Forfeits the underwater window's
+     *         rewards. After genuine slashing the frozen baseline must be kept instead.
+     */
+    function resetBaseline() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        uint256 oldRate = _lastStEthPerToken;
+        uint256 newRate = WSTETH.getStETHByWstETH(TOKEN_RATE_SCALE);
+
+        _lastStEthPerToken = newRate;
+
+        emit BaselineReset(oldRate, newRate);
     }
 
     /*//////////////////////////////////////////////////////////////

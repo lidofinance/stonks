@@ -58,21 +58,19 @@ interface INESTController {
 
     function liquidityProvisioner() external view returns (address);
 
-    function ethPriceFloorUSD() external view returns (uint256);
+    function ethPriceFloorUSD() external view returns (uint128);
 
-    function dailyRevenueThresholdUSD() external view returns (uint256);
+    function dailyRevenueThresholdUSD() external view returns (uint128);
 
-    function surplusShareBps() external view returns (uint256);
+    function surplusShareBps() external view returns (uint16);
 
-    function dailyCapUSD() external view returns (uint256);
+    function dailyCapUSD() external view returns (uint128);
 
-    function annualCapUSD() external view returns (uint256);
+    function annualCapUSD() external view returns (uint128);
 
-    function minOrderSizeUSD() external view returns (uint256);
+    function minOrderSizeUSD() external view returns (uint128);
 
-    function orderPriceProtectionBps() external view returns (uint256);
-
-    function orderDurationSeconds() external view returns (uint256);
+    function orderDurationSeconds() external view returns (uint64);
 
     function lastAccountingTimestamp() external view returns (uint256);
 
@@ -91,6 +89,10 @@ interface INESTController {
     function lastDailyAllocationUSD() external view returns (int256);
 
     function annualSpendAccumulatorUSD() external view returns (uint256);
+
+    function outstandingWrappedStEth() external view returns (uint128);
+
+    function outstandingWrappedCommittedUsd() external view returns (uint128);
 
     function isExecutionPaused() external view returns (bool);
 
@@ -136,17 +138,17 @@ interface INESTController {
 
     function setMinOrderSizeUSD(uint256 minOrderSizeUSD_) external;
 
-    function setOrderPriceProtectionBps(uint256 orderPriceProtectionBps_) external;
-
     function addRevenueSource(address source_) external;
 
     function removeRevenueSource(address source_) external;
 
-    function setLiquidityProvisioner(address liquidityProvisioner_) external;
-
     function setStonks(address stonks_) external;
 
+    function setStonksAndProvisioner(address stonks_, address liquidityProvisioner_) external;
+
     function resetBuybackAccounting() external;
+
+    function creditReturnedSpend(uint256 usdAmount_, uint256 commitmentTimestamp_) external;
 
     function pauseExecution() external;
 
@@ -160,7 +162,7 @@ interface INESTController {
 
     function unpauseStonksOrderSignatures() external;
 
-    function recoverFromStonks(address token_, uint256 amount_) external;
+    function recoverFromStonks(address stonks_, address token_, uint256 amount_) external;
 
     function emergencyCancelOrder(address order_) external;
 

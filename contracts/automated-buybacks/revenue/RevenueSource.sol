@@ -33,6 +33,10 @@ abstract contract RevenueSource is AccessControlEnumerable, Pausable {
     /// @notice Maximum age of a revenue report before `getRevenue` flags it as stale.
     uint256 public immutable STALENESS_WINDOW_SECONDS;
 
+    /// @notice Deployment timestamp. The first report normalizes its period against this so a long
+    ///         deployment-to-first-report gap is not recorded verbatim as a daily rate.
+    uint256 internal immutable _genesisTimestamp;
+
     /*//////////////////////////////////////////////////////////////
                            STORAGE VARIABLES
     //////////////////////////////////////////////////////////////*/
@@ -78,6 +82,7 @@ abstract contract RevenueSource is AccessControlEnumerable, Pausable {
         }
 
         STALENESS_WINDOW_SECONDS = stalenessWindowSeconds_;
+        _genesisTimestamp = block.timestamp;
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
     }
@@ -128,15 +133,17 @@ abstract contract RevenueSource is AccessControlEnumerable, Pausable {
 
     /**
      * @notice Writes a new revenue figure, normalizing to a daily rate over the elapsed period.
-     * @dev    The first report and any zero-length period are stored raw. Callers must pass
-     *         monotonically non-decreasing timestamps. A decreasing value underflows.
-     * @param  revenueUSD_ Raw revenue accrued since `_lastReportTimestamp`, 1e18-scaled USD.
+     * @dev    The first report normalizes against the deployment timestamp. Any zero-length period
+     *         is stored raw. Callers must pass monotonically non-decreasing timestamps. A
+     *         decreasing value underflows.
+     * @param  revenueUSD_ Raw revenue accrued since the previous report, 1e18-scaled USD.
      * @param  reportTimestamp_ Timestamp of the new report. Must be `>= _lastReportTimestamp`.
      */
-    function _updateRevenue(uint256 revenueUSD_, uint256 reportTimestamp_) internal {
-        uint256 periodSeconds = reportTimestamp_ - _lastReportTimestamp;
+    function _updateRevenue(uint256 revenueUSD_, uint256 reportTimestamp_) internal whenNotPaused {
+        uint256 baseline = _lastReportTimestamp == 0 ? _genesisTimestamp : _lastReportTimestamp;
+        uint256 periodSeconds = reportTimestamp_ - baseline;
 
-        uint256 dailyRevenueUSD = _lastReportTimestamp == 0 || periodSeconds == 0
+        uint256 dailyRevenueUSD = periodSeconds == 0
             ? revenueUSD_
             : (revenueUSD_ * ONE_DAY) / periodSeconds;
 

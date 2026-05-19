@@ -5,6 +5,7 @@ pragma solidity 0.8.23;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {AssetRecovererACL} from "./AssetRecovererACL.sol";
 import {IStETH} from "../interfaces/IStETH.sol";
@@ -46,6 +47,52 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
         uint256 poolPriceDivergenceToleranceBps;
     }
 
+    /// @notice Result of an `addLiquidity` gate evaluation. `Eligible` is the only passing value.
+    enum AddLiquidityStatus {
+        ZeroLdoBalance,
+        ZeroWstEthBalance,
+        OraclePriceUnavailable,
+        PoolPriceUnavailable,
+        PoolPriceDivergenceTooHigh,
+        ZeroBalancedDepositAmount,
+        Eligible
+    }
+
+    /// @notice Output of `_evaluateAddLiquidityGates`. Carries the gate status, the balanced
+    ///         deposit amounts, and the prices `addLiquidity` reuses for the mint floor and the
+    ///         divergence error.
+    struct AddLiquidityEvaluation {
+        AddLiquidityStatus status;
+        uint256 ldoAmount;
+        uint256 wstEthAmount;
+        uint256 ldoUsdPrice;
+        uint256 wstEthUsdPrice;
+        uint256 poolEmaPrice;
+        uint256 oraclePriceInLdo;
+        uint256 divergenceBps;
+    }
+
+    /// @notice Result of an `unwrapExcessWstEth` gate evaluation. `Eligible` is the only passing
+    ///         value.
+    enum UnwrapStatus {
+        ZeroExcessWstEth,
+        OrderStateUnavailable,
+        ControllerProvisionerMismatch,
+        CooldownNotElapsed,
+        ClampPriceUnavailable,
+        Eligible
+    }
+
+    /// @notice Output of `_evaluateUnwrapGates`. Carries the gate status, the controller address,
+    ///         the excess wstETH to unwrap, and the cooldown values the revert reuses.
+    struct UnwrapEvaluation {
+        UnwrapStatus status;
+        address controller;
+        uint256 excessWstEth;
+        uint256 lastOrderTimestamp;
+        uint256 cooldownEnd;
+    }
+
     /*//////////////////////////////////////////////////////////////
                                CONSTANTS
     //////////////////////////////////////////////////////////////*/
@@ -55,6 +102,18 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
 
     /// @notice USD amount precision alignment with `OracleRouter` price output.
     uint256 internal constant PRICE_SCALE = 1e18;
+
+    /// @notice Minimum stETH balance an Order holds while still unsettled. Below it, the balance
+    ///         is dust the pipeline clamp can ignore.
+    uint256 internal constant MIN_POSSIBLE_BALANCE = 10;
+
+    /// @notice Upper bound on `poolSlippageToleranceBps`. Caps how far the deposit slippage guard
+    ///         can be loosened so a setter cannot drive `minMintAmount` to zero.
+    uint256 public constant MAX_POOL_SLIPPAGE_TOLERANCE_BPS = 1000;
+
+    /// @notice Upper bound on `poolPriceDivergenceToleranceBps`. Caps how far the EMA-vs-oracle
+    ///         divergence guard can be loosened so a setter cannot disable it.
+    uint256 public constant MAX_POOL_DIVERGENCE_TOLERANCE_BPS = 1000;
 
     /*//////////////////////////////////////////////////////////////
                               IMMUTABLES
@@ -91,15 +150,15 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     ///         `pauseLiquidity` and `unpauseLiquidity`.
     bool private _liquidityPaused;
 
-    /// @notice Maximum acceptable slippage for the Curve liquidity provision step, in basis points.
-    ///         Applied to the `calc_token_amount` estimate to derive `min_mint_amount` for
-    ///         `add_liquidity`. Bounded by `MAX_BASIS_POINTS`, stored as `uint16` for slot packing.
+    /// @notice Slippage tolerance for Curve deposits and withdrawals, in basis points. Discounts
+    ///         the `add_liquidity` mint floor and the `remove_liquidity` withdrawal floors.
+    ///         Bounded by `MAX_POOL_SLIPPAGE_TOLERANCE_BPS`, stored as `uint16` for slot packing.
     uint16 public poolSlippageToleranceBps;
 
     /// @notice Maximum acceptable divergence between the Curve pool's internal EMA price and the
     ///         oracle router's LDO/wstETH price, in basis points. Beyond this threshold,
     ///         `addLiquidity` reverts with `PoolPriceDivergenceTooHigh`. Bounded by
-    ///         `MAX_BASIS_POINTS`, stored as `uint16` for slot packing.
+    ///         `MAX_POOL_DIVERGENCE_TOLERANCE_BPS`, stored as `uint16` for slot packing.
     uint16 public poolPriceDivergenceToleranceBps;
 
     /*//////////////////////////////////////////////////////////////
@@ -149,6 +208,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     error InsufficientLpTokenBalance(uint256 requested, uint256 available);
     error InvalidRecipientAddress(address recipient);
     error CooldownNotElapsed(uint256 lastOrderTimestamp, uint256 cooldownEnd);
+    error OldControllerOrderUnsettled(address order);
     error LiquidityCurrentlyPaused();
     error PoolPriceDivergenceTooHigh(
         uint256 poolPrice,
@@ -156,6 +216,10 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
         uint256 divergenceBps,
         uint256 toleranceBps
     );
+    error OraclePriceUnavailable();
+    error PoolPriceUnavailable();
+    error OrderStateUnavailable();
+    error ControllerProvisionerMismatch();
     error InvalidStEthAddress(address stEth);
     error InvalidWstEthAddress(address wstEth);
     error InvalidLdoAddress(address ldo);
@@ -214,13 +278,13 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
         }
         if (
             initParams_.poolSlippageToleranceBps == 0 ||
-            initParams_.poolSlippageToleranceBps > MAX_BASIS_POINTS
+            initParams_.poolSlippageToleranceBps > MAX_POOL_SLIPPAGE_TOLERANCE_BPS
         ) {
             revert InvalidPoolSlippageTolerance(initParams_.poolSlippageToleranceBps);
         }
         if (
             initParams_.poolPriceDivergenceToleranceBps == 0 ||
-            initParams_.poolPriceDivergenceToleranceBps > MAX_BASIS_POINTS
+            initParams_.poolPriceDivergenceToleranceBps > MAX_POOL_DIVERGENCE_TOLERANCE_BPS
         ) {
             revert InvalidPoolPriceDivergenceTolerance(initParams_.poolPriceDivergenceToleranceBps);
         }
@@ -251,9 +315,9 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice Deposits balanced amounts of LDO and wstETH into the Curve LDO/wstETH pool. Minted
      *         LP tokens stay in the provisioner.
-     * @dev    Reverts on pause, zero balances, oracle divergence above tolerance, zero balanced
-     *         amounts, or Curve's slippage guard. Surplus on the larger-USD side stays in the
-     *         provisioner for the next cycle.
+     * @dev    Reverts on pause, zero balances, an unavailable oracle or pool price, divergence
+     *         above tolerance, zero balanced amounts, or Curve's slippage guard. Surplus on the
+     *         larger-USD side stays in the provisioner for the next cycle.
      * @return lpTokensMinted LP tokens minted by the pool.
      */
     function addLiquidity()
@@ -262,63 +326,28 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
         whenLiquidityNotPaused
         returns (uint256 lpTokensMinted)
     {
-        uint256 ldoBalance = LDO.balanceOf(address(this));
-        if (ldoBalance == 0) {
-            revert ZeroLdoBalance();
-        }
+        AddLiquidityEvaluation memory evaluation = _evaluateAddLiquidityGates();
+        _assertAddLiquidityEligible(evaluation);
 
-        uint256 wstEthBalance = WSTETH.balanceOf(address(this));
-        if (wstEthBalance == 0) {
-            revert ZeroWstEthBalance();
-        }
-
-        (uint256 ldoUsdPrice, uint256 wstEthUsdPrice) = ORACLE_ROUTER.getUsdPrices(
-            address(LDO),
-            address(WSTETH)
+        uint256 minMintAmount = _computeMinMintAmount(
+            evaluation.ldoAmount,
+            evaluation.wstEthAmount,
+            evaluation.ldoUsdPrice,
+            evaluation.wstEthUsdPrice,
+            evaluation.poolEmaPrice
         );
 
-        // Curve TwoCrypto's `price_oracle()` returns the wstETH price measured in LDO and
-        // scaled by 1e18. Match that orientation here. A zero LDO price divbyzero-panics, the
-        // intended boundary fail-safe.
-        uint256 oracleWstEthInLdoPriceScaled;
-        uint256 poolEmaPrice;
-        uint256 divergenceBps;
-        unchecked {
-            // Products stay well below 2^256 at realistic prices. The ternary takes the larger
-            // operand so the subtraction cannot underflow. Divbyzero on the denominator panics.
-            oracleWstEthInLdoPriceScaled = (wstEthUsdPrice * PRICE_SCALE) / ldoUsdPrice;
-            poolEmaPrice = CURVE_POOL_AND_TOKEN.price_oracle();
-            uint256 diff = poolEmaPrice >= oracleWstEthInLdoPriceScaled
-                ? poolEmaPrice - oracleWstEthInLdoPriceScaled
-                : oracleWstEthInLdoPriceScaled - poolEmaPrice;
-            divergenceBps = (diff * MAX_BASIS_POINTS) / oracleWstEthInLdoPriceScaled;
-        }
-        if (divergenceBps > poolPriceDivergenceToleranceBps) {
-            revert PoolPriceDivergenceTooHigh(
-                poolEmaPrice,
-                oracleWstEthInLdoPriceScaled,
-                divergenceBps,
-                poolPriceDivergenceToleranceBps
-            );
-        }
-
-        (uint256 ldoAmount, uint256 wstEthAmount) = _computeBalancedAmounts(
-            ldoBalance,
-            wstEthBalance,
-            ldoUsdPrice,
-            wstEthUsdPrice
+        lpTokensMinted = _depositToCurve(
+            evaluation.ldoAmount,
+            evaluation.wstEthAmount,
+            minMintAmount
         );
-        if (ldoAmount == 0 || wstEthAmount == 0) {
-            revert ZeroBalancedDepositAmount(ldoAmount, wstEthAmount);
-        }
-
-        lpTokensMinted = _depositToCurve(ldoAmount, wstEthAmount);
 
         emit LiquidityAdded(
             msg.sender,
             address(CURVE_POOL_AND_TOKEN),
-            ldoAmount,
-            wstEthAmount,
+            evaluation.ldoAmount,
+            evaluation.wstEthAmount,
             lpTokensMinted
         );
     }
@@ -333,39 +362,11 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
      * @return unwrappedStEthAmount stETH produced by the unwrap, forwarded to the controller.
      */
     function unwrapExcessWstEth() external nonReentrant returns (uint256 unwrappedStEthAmount) {
-        address controller = nestController;
-        (
-            uint256 lastOrderTimestamp,
-            uint256 orderDurationSeconds,
-            address lastOrderAddress,
-            address stonksAddress
-        ) = INESTController(controller).getOrderState();
+        UnwrapEvaluation memory evaluation = _evaluateUnwrapGates();
+        _assertUnwrapEligible(evaluation);
 
-        uint256 cooldownEnd;
-        unchecked {
-            // Both terms fit comfortably in a uint64. The sum cannot approach 2^256.
-            cooldownEnd = lastOrderTimestamp + orderDurationSeconds;
-        }
-        if (block.timestamp < cooldownEnd) {
-            revert CooldownNotElapsed(lastOrderTimestamp, cooldownEnd);
-        }
-
-        // Short-circuit when there is nothing to unwrap, ahead of the clamp's external reads.
-        uint256 wstEthBalance = WSTETH.balanceOf(address(this));
-        if (wstEthBalance == 0) {
-            revert ZeroExcessWstEth();
-        }
-
-        uint256 clampTarget = _computeClampTarget(
-            stonksAddress,
-            lastOrderAddress,
-            LDO.balanceOf(address(this))
-        );
-
-        if (wstEthBalance <= clampTarget) {
-            revert ZeroExcessWstEth();
-        }
-        uint256 excessWstEth = wstEthBalance - clampTarget;
+        address controller = evaluation.controller;
+        uint256 excessWstEth = evaluation.excessWstEth;
 
         unwrappedStEthAmount = WSTETH.unwrap(excessWstEth);
 
@@ -378,8 +379,10 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice Burns LP tokens for a proportional LDO/wstETH withdrawal from the Curve pool.
      *         Withdrawn tokens stay in the provisioner for redeposit, recovery, or future use.
-     * @dev    Minimum-out amounts are the pro-rata entitlements discounted by
-     *         `poolSlippageToleranceBps`. Remains callable when liquidity is paused.
+     * @dev    `remove_liquidity` withdraws pro-rata, so the caller gets a fair share regardless of
+     *         pool skew. `minAmounts` guards only against a misbehaving pool, derived from
+     *         `virtual_price` and `price_oracle` rather than live `balances()`. Remains callable
+     *         when liquidity is paused.
      * @param  lpAmount_ LP tokens to burn. Strictly positive and within the provisioner's balance.
      * @return ldoReceived LDO withdrawn from the pool.
      * @return wstEthReceived wstETH withdrawn from the pool.
@@ -401,18 +404,10 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
             revert InsufficientLpTokenBalance(lpAmount_, lpBalance);
         }
 
-        uint256 reserveLdo = CURVE_POOL_AND_TOKEN.balances(0);
-        uint256 reserveWstEth = CURVE_POOL_AND_TOKEN.balances(1);
-        uint256 lpTotalSupply = IERC20(address(CURVE_POOL_AND_TOKEN)).totalSupply();
-
-        uint256 slippageBps = poolSlippageToleranceBps;
-        uint256 minLdoAmount = (((lpAmount_ * reserveLdo) / lpTotalSupply) *
-            (MAX_BASIS_POINTS - slippageBps)) / MAX_BASIS_POINTS;
-        uint256 minWstEthAmount = (((lpAmount_ * reserveWstEth) / lpTotalSupply) *
-            (MAX_BASIS_POINTS - slippageBps)) / MAX_BASIS_POINTS;
-
-        uint256[2] memory minAmounts = [minLdoAmount, minWstEthAmount];
-        uint256[2] memory withdrawn = CURVE_POOL_AND_TOKEN.remove_liquidity(lpAmount_, minAmounts);
+        uint256[2] memory withdrawn = CURVE_POOL_AND_TOKEN.remove_liquidity(
+            lpAmount_,
+            _computeMinWithdrawAmounts(lpAmount_)
+        );
         ldoReceived = withdrawn[0];
         wstEthReceived = withdrawn[1];
 
@@ -457,12 +452,16 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice Updates the slippage tolerance applied to Curve pool deposits.
      * @dev    Zero is rejected because it would freeze provisioning. Use `pauseLiquidity` instead.
-     * @param  poolSlippageToleranceBps_ New tolerance in basis points. In `(0, MAX_BASIS_POINTS]`.
+     * @param  poolSlippageToleranceBps_ New tolerance in basis points. In
+     *         `(0, MAX_POOL_SLIPPAGE_TOLERANCE_BPS]`.
      */
     function setPoolSlippageToleranceBps(
         uint256 poolSlippageToleranceBps_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (poolSlippageToleranceBps_ == 0 || poolSlippageToleranceBps_ > MAX_BASIS_POINTS) {
+        if (
+            poolSlippageToleranceBps_ == 0 ||
+            poolSlippageToleranceBps_ > MAX_POOL_SLIPPAGE_TOLERANCE_BPS
+        ) {
             revert InvalidPoolSlippageTolerance(poolSlippageToleranceBps_);
         }
 
@@ -475,14 +474,14 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
      * @notice Updates the maximum acceptable divergence between the Curve pool's EMA price and the
      *         oracle router's LDO/wstETH price.
      * @param  poolPriceDivergenceToleranceBps_ New tolerance in basis points. In
-     *         `(0, MAX_BASIS_POINTS]`.
+     *         `(0, MAX_POOL_DIVERGENCE_TOLERANCE_BPS]`.
      */
     function setPoolPriceDivergenceToleranceBps(
         uint256 poolPriceDivergenceToleranceBps_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (
             poolPriceDivergenceToleranceBps_ == 0 ||
-            poolPriceDivergenceToleranceBps_ > MAX_BASIS_POINTS
+            poolPriceDivergenceToleranceBps_ > MAX_POOL_DIVERGENCE_TOLERANCE_BPS
         ) {
             revert InvalidPoolPriceDivergenceTolerance(poolPriceDivergenceToleranceBps_);
         }
@@ -495,11 +494,33 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice Updates the NESTController address. The new controller becomes the source for
      *         pipeline state reads and the destination for unwrapped stETH returns.
+     * @dev    Blocked while the old controller has a live or unsettled order. Its in-flight stETH
+     *         sits outside the new controller's clamp, so migrating then would unwrap wstETH that
+     *         still backs that order. Sequence migration after the old controller's order settles.
      * @param  nestController_ New controller address. Non-zero.
      */
     function setNestController(address nestController_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (nestController_ == address(0)) {
             revert InvalidNestControllerAddress(nestController_);
+        }
+
+        (
+            uint256 lastOrderTimestamp,
+            uint256 orderDurationSeconds,
+            address lastOrderAddress,
+
+        ) = INESTController(nestController).getOrderState();
+
+        uint256 cooldownEnd = lastOrderTimestamp + orderDurationSeconds;
+        if (block.timestamp <= cooldownEnd) {
+            revert CooldownNotElapsed(lastOrderTimestamp, cooldownEnd);
+        }
+        // Cooldown elapsed is not settlement. An expired-unfilled order still holds its stETH.
+        if (
+            lastOrderAddress != address(0) &&
+            STETH.balanceOf(lastOrderAddress) >= MIN_POSSIBLE_BALANCE
+        ) {
+            revert OldControllerOrderUnsettled(lastOrderAddress);
         }
 
         nestController = nestController_;
@@ -576,7 +597,8 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
      * @notice Balanced LDO and wstETH amounts a subsequent `addLiquidity` would deposit at the
      *         current oracle prices.
      * @dev    Never reverts. Returns `(0, 0)` on zero balances, missing prices, or any dependency
-     *         revert.
+     *         revert. A non-zero result sizes a deposit and does not confirm `addLiquidity` would
+     *         succeed. Gate on `canAddLiquidity` first.
      */
     function getAvailableLiquidity()
         external
@@ -679,90 +701,17 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
         if (_liquidityPaused) {
             return false;
         }
-
-        uint256 ldoBalance = LDO.balanceOf(address(this));
-        if (ldoBalance == 0) {
-            return false;
-        }
-        uint256 wstEthBalance = WSTETH.balanceOf(address(this));
-        if (wstEthBalance == 0) {
-            return false;
-        }
-
-        (bool priceOk, uint256 ldoUsdPrice, uint256 wstEthUsdPrice) = _tryGetUsdPrices(
-            address(LDO),
-            address(WSTETH)
-        );
-        if (!priceOk || ldoUsdPrice == 0 || wstEthUsdPrice == 0) {
-            return false;
-        }
-
-        uint256 oracleWstEthInLdoPriceScaled = (wstEthUsdPrice * PRICE_SCALE) / ldoUsdPrice;
-
-        if (oracleWstEthInLdoPriceScaled == 0) {
-            return false;
-        }
-
-        (bool poolOk, uint256 poolEmaPrice) = _tryPriceOracle();
-        if (!poolOk) {
-            return false;
-        }
-
-        uint256 divergenceBps;
-        unchecked {
-            // Ternary takes the larger operand so the subtraction cannot underflow. The
-            // denominator is guarded non-zero above.
-            uint256 diff = poolEmaPrice >= oracleWstEthInLdoPriceScaled
-                ? poolEmaPrice - oracleWstEthInLdoPriceScaled
-                : oracleWstEthInLdoPriceScaled - poolEmaPrice;
-            divergenceBps = (diff * MAX_BASIS_POINTS) / oracleWstEthInLdoPriceScaled;
-        }
-        if (divergenceBps > poolPriceDivergenceToleranceBps) {
-            return false;
-        }
-
-        (uint256 ldoAmount, uint256 wstEthAmount) = _computeBalancedAmounts(
-            ldoBalance,
-            wstEthBalance,
-            ldoUsdPrice,
-            wstEthUsdPrice
-        );
-        return ldoAmount > 0 && wstEthAmount > 0;
+        return _evaluateAddLiquidityGates().status == AddLiquidityStatus.Eligible;
     }
 
     /**
      * @notice Whether `unwrapExcessWstEth` would succeed at the current block. Keeper polling
      *         predicate.
-     * @dev    Never reverts. True when the cooldown has elapsed and the clamp leaves a positive
-     *         unwrappable excess.
+     * @dev    Never reverts. Mirrors every `unwrapExcessWstEth` precondition, including the
+     *         controller's `accountForReturnedExcess` caller binding.
      */
     function canUnwrapExcessWstEth() external view returns (bool) {
-        uint256 wstEthBalance = WSTETH.balanceOf(address(this));
-        if (wstEthBalance == 0) {
-            return false;
-        }
-
-        (
-            bool stateOk,
-            uint256 lastOrderTimestamp,
-            uint256 orderDurationSeconds,
-            address lastOrderAddress,
-            address stonksAddress
-        ) = _tryGetOrderState(nestController);
-        if (!stateOk || block.timestamp < lastOrderTimestamp + orderDurationSeconds) {
-            return false;
-        }
-
-        (bool clampOk, uint256 clampTarget) = _tryClampTarget(
-            stonksAddress,
-            lastOrderAddress,
-            LDO.balanceOf(address(this))
-        );
-        if (!clampOk) {
-            return false;
-        }
-
-        return wstEthBalance > clampTarget;
+        return _evaluateUnwrapGates().status == UnwrapStatus.Eligible;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -770,27 +719,24 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Approves the Curve pool, derives the slippage-discounted minimum-mint guard, and
-     *         calls `add_liquidity`.
-     * @dev    `forceApprove` sets the allowance to the exact deposit amount regardless of any
-     *         residual. The pool consumes the full approval inside `add_liquidity`.
+     * @notice Approves the Curve pool and deposits via `add_liquidity`.
+     * @dev    `forceApprove` sets the allowance to the exact deposit amount. The pool consumes the
+     *         full approval inside `add_liquidity`.
      * @param  ldoAmount_ LDO amount to deposit.
      * @param  wstEthAmount_ wstETH amount to deposit.
+     * @param  minMintAmount_ Minimum LP tokens to accept from `add_liquidity`.
      * @return lpTokensMinted LP tokens received from the Curve pool.
      */
     function _depositToCurve(
         uint256 ldoAmount_,
-        uint256 wstEthAmount_
+        uint256 wstEthAmount_,
+        uint256 minMintAmount_
     ) internal returns (uint256 lpTokensMinted) {
         LDO.forceApprove(address(CURVE_POOL_AND_TOKEN), ldoAmount_);
         IERC20(address(WSTETH)).forceApprove(address(CURVE_POOL_AND_TOKEN), wstEthAmount_);
 
         uint256[2] memory amounts = [ldoAmount_, wstEthAmount_];
-        uint256 expectedLpTokens = CURVE_POOL_AND_TOKEN.calc_token_amount(amounts, true);
-        uint256 minMintAmount = (expectedLpTokens * (MAX_BASIS_POINTS - poolSlippageToleranceBps)) /
-            MAX_BASIS_POINTS;
-
-        lpTokensMinted = CURVE_POOL_AND_TOKEN.add_liquidity(amounts, minMintAmount);
+        lpTokensMinted = CURVE_POOL_AND_TOKEN.add_liquidity(amounts, minMintAmount_);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -860,7 +806,20 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice Non-reverting variant of `_computeClampTarget` for the view path.
+     * @dev Revert-safe wrapper around `INESTController.liquidityProvisioner`. Returns `ok=false`
+     *      with the zero address on revert.
+     */
+    function _tryLiquidityProvisioner(
+        address controller_
+    ) internal view returns (bool ok, address provisioner) {
+        try INESTController(controller_).liquidityProvisioner() returns (address p) {
+            return (true, p);
+        } catch {}
+    }
+
+    /**
+     * @notice wstETH that must stay wrapped to back pending settlements. Sum of LDO-equivalent
+     *         wstETH plus Stonks and Order stETH converted via the wstETH rate.
      * @dev    Returns `(false, 0)` if `getUsdPrices` or `getWstETHByStETH` reverts, or if
      *         `wstEthUsdPrice` is zero.
      * @param  stonksAddress_     Stonks address. Source of the pipeline stETH bucket.
@@ -904,6 +863,217 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
+     * @notice Runs every shared `addLiquidity` gate and computes the balanced deposit pair.
+     * @dev    Non-reverting. A router or pool revert maps to `OraclePriceUnavailable` or
+     *         `PoolPriceUnavailable`. `addLiquidity` reverts on a non-`Eligible` status,
+     *         `canAddLiquidity` returns whether the status is `Eligible`.
+     * @return evaluation Gate status, balanced deposit amounts, prices, and divergence values.
+     */
+    function _evaluateAddLiquidityGates()
+        internal
+        view
+        returns (AddLiquidityEvaluation memory evaluation)
+    {
+        uint256 ldoBalance = LDO.balanceOf(address(this));
+        if (ldoBalance == 0) {
+            evaluation.status = AddLiquidityStatus.ZeroLdoBalance;
+            return evaluation;
+        }
+
+        uint256 wstEthBalance = WSTETH.balanceOf(address(this));
+        if (wstEthBalance == 0) {
+            evaluation.status = AddLiquidityStatus.ZeroWstEthBalance;
+            return evaluation;
+        }
+
+        (bool priceOk, uint256 ldoUsdPrice, uint256 wstEthUsdPrice) = _tryGetUsdPrices(
+            address(LDO),
+            address(WSTETH)
+        );
+        if (!priceOk || ldoUsdPrice == 0 || wstEthUsdPrice == 0) {
+            evaluation.status = AddLiquidityStatus.OraclePriceUnavailable;
+            return evaluation;
+        }
+
+        // Curve `price_oracle()` is the wstETH price in LDO scaled by 1e18. Match that
+        // orientation. `ldoUsdPrice` is guarded non-zero above.
+        uint256 oraclePriceInLdo = (wstEthUsdPrice * PRICE_SCALE) / ldoUsdPrice;
+        if (oraclePriceInLdo == 0) {
+            evaluation.status = AddLiquidityStatus.OraclePriceUnavailable;
+            return evaluation;
+        }
+
+        (bool poolOk, uint256 poolEmaPrice) = _tryPriceOracle();
+        if (!poolOk) {
+            evaluation.status = AddLiquidityStatus.PoolPriceUnavailable;
+            return evaluation;
+        }
+
+        uint256 divergenceBps;
+        unchecked {
+            // Ternary takes the larger operand so the subtraction cannot underflow. The
+            // denominator is guarded non-zero above.
+            uint256 diff = poolEmaPrice >= oraclePriceInLdo
+                ? poolEmaPrice - oraclePriceInLdo
+                : oraclePriceInLdo - poolEmaPrice;
+            divergenceBps = (diff * MAX_BASIS_POINTS) / oraclePriceInLdo;
+        }
+
+        evaluation.ldoUsdPrice = ldoUsdPrice;
+        evaluation.wstEthUsdPrice = wstEthUsdPrice;
+        evaluation.poolEmaPrice = poolEmaPrice;
+        evaluation.oraclePriceInLdo = oraclePriceInLdo;
+        evaluation.divergenceBps = divergenceBps;
+
+        if (divergenceBps > poolPriceDivergenceToleranceBps) {
+            evaluation.status = AddLiquidityStatus.PoolPriceDivergenceTooHigh;
+            return evaluation;
+        }
+
+        (uint256 ldoAmount, uint256 wstEthAmount) = _computeBalancedAmounts(
+            ldoBalance,
+            wstEthBalance,
+            ldoUsdPrice,
+            wstEthUsdPrice
+        );
+        evaluation.ldoAmount = ldoAmount;
+        evaluation.wstEthAmount = wstEthAmount;
+        if (ldoAmount == 0 || wstEthAmount == 0) {
+            evaluation.status = AddLiquidityStatus.ZeroBalancedDepositAmount;
+            return evaluation;
+        }
+
+        evaluation.status = AddLiquidityStatus.Eligible;
+    }
+
+    /**
+     * @notice Reverts with the error matching a non-`Eligible` add-liquidity evaluation.
+     * @param  evaluation_ Result of `_evaluateAddLiquidityGates`.
+     */
+    function _assertAddLiquidityEligible(
+        AddLiquidityEvaluation memory evaluation_
+    ) internal view {
+        AddLiquidityStatus status = evaluation_.status;
+        if (status == AddLiquidityStatus.Eligible) {
+            return;
+        }
+        if (status == AddLiquidityStatus.ZeroLdoBalance) {
+            revert ZeroLdoBalance();
+        }
+        if (status == AddLiquidityStatus.ZeroWstEthBalance) {
+            revert ZeroWstEthBalance();
+        }
+        if (status == AddLiquidityStatus.OraclePriceUnavailable) {
+            revert OraclePriceUnavailable();
+        }
+        if (status == AddLiquidityStatus.PoolPriceUnavailable) {
+            revert PoolPriceUnavailable();
+        }
+        if (status == AddLiquidityStatus.PoolPriceDivergenceTooHigh) {
+            revert PoolPriceDivergenceTooHigh(
+                evaluation_.poolEmaPrice,
+                evaluation_.oraclePriceInLdo,
+                evaluation_.divergenceBps,
+                poolPriceDivergenceToleranceBps
+            );
+        }
+        revert ZeroBalancedDepositAmount(evaluation_.ldoAmount, evaluation_.wstEthAmount);
+    }
+
+    /**
+     * @notice Runs every shared `unwrapExcessWstEth` gate and computes the excess to unwrap.
+     * @dev    Non-reverting. An order-state or clamp dependency revert maps to a named status.
+     *         `unwrapExcessWstEth` reverts on a non-`Eligible` status, `canUnwrapExcessWstEth`
+     *         returns whether the status is `Eligible`. The binding gate mirrors the controller's
+     *         `accountForReturnedExcess` caller check.
+     * @return evaluation Gate status, controller address, excess amount, and cooldown values.
+     */
+    function _evaluateUnwrapGates() internal view returns (UnwrapEvaluation memory evaluation) {
+        address controller = nestController;
+        evaluation.controller = controller;
+
+        uint256 wstEthBalance = WSTETH.balanceOf(address(this));
+        if (wstEthBalance == 0) {
+            evaluation.status = UnwrapStatus.ZeroExcessWstEth;
+            return evaluation;
+        }
+
+        (
+            bool stateOk,
+            uint256 lastOrderTimestamp,
+            uint256 orderDurationSeconds,
+            address lastOrderAddress,
+            address stonksAddress
+        ) = _tryGetOrderState(controller);
+        if (!stateOk) {
+            evaluation.status = UnwrapStatus.OrderStateUnavailable;
+            return evaluation;
+        }
+
+        // The unwrap path ends in `accountForReturnedExcess`, which the controller restricts to
+        // its bound provisioner. An orphaned old provisioner fails that callback.
+        (bool bindingOk, address boundProvisioner) = _tryLiquidityProvisioner(controller);
+        if (!bindingOk || boundProvisioner != address(this)) {
+            evaluation.status = UnwrapStatus.ControllerProvisionerMismatch;
+            return evaluation;
+        }
+
+        uint256 cooldownEnd;
+        unchecked {
+            // Both terms fit comfortably in a uint64. The sum cannot approach 2^256.
+            cooldownEnd = lastOrderTimestamp + orderDurationSeconds;
+        }
+        evaluation.lastOrderTimestamp = lastOrderTimestamp;
+        evaluation.cooldownEnd = cooldownEnd;
+        if (block.timestamp <= cooldownEnd) {
+            evaluation.status = UnwrapStatus.CooldownNotElapsed;
+            return evaluation;
+        }
+
+        (bool clampOk, uint256 clampTarget) = _tryClampTarget(
+            stonksAddress,
+            lastOrderAddress,
+            LDO.balanceOf(address(this))
+        );
+        if (!clampOk) {
+            evaluation.status = UnwrapStatus.ClampPriceUnavailable;
+            return evaluation;
+        }
+
+        if (wstEthBalance <= clampTarget) {
+            evaluation.status = UnwrapStatus.ZeroExcessWstEth;
+            return evaluation;
+        }
+        evaluation.excessWstEth = wstEthBalance - clampTarget;
+
+        evaluation.status = UnwrapStatus.Eligible;
+    }
+
+    /**
+     * @notice Reverts with the error matching a non-`Eligible` unwrap evaluation.
+     * @param  evaluation_ Result of `_evaluateUnwrapGates`.
+     */
+    function _assertUnwrapEligible(UnwrapEvaluation memory evaluation_) internal pure {
+        UnwrapStatus status = evaluation_.status;
+        if (status == UnwrapStatus.Eligible) {
+            return;
+        }
+        if (status == UnwrapStatus.ZeroExcessWstEth) {
+            revert ZeroExcessWstEth();
+        }
+        if (status == UnwrapStatus.OrderStateUnavailable) {
+            revert OrderStateUnavailable();
+        }
+        if (status == UnwrapStatus.ControllerProvisionerMismatch) {
+            revert ControllerProvisionerMismatch();
+        }
+        if (status == UnwrapStatus.CooldownNotElapsed) {
+            revert CooldownNotElapsed(evaluation_.lastOrderTimestamp, evaluation_.cooldownEnd);
+        }
+        revert OraclePriceUnavailable();
+    }
+
+    /**
      * @notice Balanced LDO and wstETH deposit pair, anchored on the smaller-USD side.
      * @dev    Pure math. Shared by `addLiquidity` and `getAvailableLiquidity` for identical reads.
      * @param  ldoBalance_ Current LDO balance of the provisioner.
@@ -932,40 +1102,60 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice wstETH clamp target. Sum of LDO-equivalent wstETH plus Stonks and Order stETH
-     *         converted via the wstETH rate.
-     * @dev    Stonks and Order stETH are summed before a single `getWstETHByStETH` call to
-     *         avoid duplicate truncation. Reverts propagate. Use `_tryClampTarget` for views.
-     * @param  stonksAddress_ Stonks address. Source of the pipeline stETH bucket.
-     * @param  lastOrderAddress_ Currently-tracked Order address. Zero skips the Order bucket.
-     * @param  ldoBalance_ Pre-fetched LDO balance of the provisioner.
-     * @return clampTarget Total wstETH that must stay wrapped to back pending settlements.
+     * @notice Minimum LP tokens `addLiquidity` accepts from `add_liquidity`.
+     * @dev    A guard built on `calc_token_amount` cannot fire, since it reads the same reserves
+     *         `add_liquidity` mints from. This values the deposit and one LP token in USD instead,
+     *         the LP token via `lp_price = 2 * virtual_price * sqrt(price_oracle)` in LDO.
+     *         `price_oracle` is the EMA divergence-checked against the oracle in `addLiquidity`.
+     * @param  ldoAmount_ Balanced LDO amount being deposited.
+     * @param  wstEthAmount_ Balanced wstETH amount being deposited.
+     * @param  ldoUsdPrice_ LDO/USD price scaled by `PRICE_SCALE`.
+     * @param  wstEthUsdPrice_ wstETH/USD price scaled by `PRICE_SCALE`.
+     * @param  poolEmaPrice_ Curve `price_oracle()`, wstETH price in LDO scaled by `PRICE_SCALE`.
+     * @return minMintAmount Minimum LP tokens to accept from `add_liquidity`.
      */
-    function _computeClampTarget(
-        address stonksAddress_,
-        address lastOrderAddress_,
-        uint256 ldoBalance_
-    ) internal view returns (uint256 clampTarget) {
-        uint256 ldoEquivalentWstEth;
-        // No LDO means an empty LDO bucket. Skip the oracle round-trip.
-        if (ldoBalance_ != 0) {
-            (uint256 ldoUsdPrice, uint256 wstEthUsdPrice) = ORACLE_ROUTER.getUsdPrices(
-                address(LDO),
-                address(WSTETH)
-            );
-            ldoEquivalentWstEth = (ldoBalance_ * ldoUsdPrice) / wstEthUsdPrice;
-        }
+    function _computeMinMintAmount(
+        uint256 ldoAmount_,
+        uint256 wstEthAmount_,
+        uint256 ldoUsdPrice_,
+        uint256 wstEthUsdPrice_,
+        uint256 poolEmaPrice_
+    ) internal view returns (uint256 minMintAmount) {
+        uint256 depositUsdValue = (ldoAmount_ * ldoUsdPrice_ + wstEthAmount_ * wstEthUsdPrice_) /
+            PRICE_SCALE;
 
-        uint256 pipelineStEth = STETH.balanceOf(stonksAddress_);
-        if (lastOrderAddress_ != address(0)) {
-            pipelineStEth += STETH.balanceOf(lastOrderAddress_);
-        }
+        uint256 virtualPrice = CURVE_POOL_AND_TOKEN.get_virtual_price();
+        // lp_price in LDO. sqrt(po * PRICE_SCALE) keeps the root PRICE_SCALE-scaled.
+        uint256 lpPriceInLdo = (2 * virtualPrice * Math.sqrt(poolEmaPrice_ * PRICE_SCALE)) /
+            PRICE_SCALE;
+        uint256 lpUsdValue = (lpPriceInLdo * ldoUsdPrice_) / PRICE_SCALE;
 
-        uint256 stEthEquivalentWstEth = pipelineStEth == 0
-            ? 0
-            : WSTETH.getWstETHByStETH(pipelineStEth);
+        minMintAmount =
+            (depositUsdValue * (MAX_BASIS_POINTS - poolSlippageToleranceBps)) /
+            (lpUsdValue * MAX_BASIS_POINTS);
+    }
 
-        clampTarget = ldoEquivalentWstEth + stEthEquivalentWstEth;
+    /**
+     * @notice Minimum `[LDO, wstETH]` amounts `removeLiquidity` accepts from `remove_liquidity`.
+     * @dev    A balanced cryptoswap pool holds `virtual_price * sqrt(price_oracle)` LDO and
+     *         `virtual_price / sqrt(price_oracle)` wstETH per LP token, discounted by
+     *         `poolSlippageToleranceBps`.
+     * @param  lpAmount_ LP tokens being burned.
+     * @return minAmounts Minimum `[LDO, wstETH]` to accept from `remove_liquidity`.
+     */
+    function _computeMinWithdrawAmounts(
+        uint256 lpAmount_
+    ) internal view returns (uint256[2] memory minAmounts) {
+        uint256 virtualPrice = CURVE_POOL_AND_TOKEN.get_virtual_price();
+        uint256 sqrtPoolPrice = Math.sqrt(CURVE_POOL_AND_TOKEN.price_oracle() * PRICE_SCALE);
+        uint256 keptBps = MAX_BASIS_POINTS - poolSlippageToleranceBps;
+
+        minAmounts[0] =
+            (lpAmount_ * virtualPrice * sqrtPoolPrice * keptBps) /
+            (PRICE_SCALE * PRICE_SCALE * MAX_BASIS_POINTS);
+        minAmounts[1] =
+            (lpAmount_ * virtualPrice * keptBps) /
+            (sqrtPoolPrice * MAX_BASIS_POINTS);
     }
 
 }

@@ -12,9 +12,8 @@ import {AccessControlEnumerable} from "@openzeppelin/contracts/access/AccessCont
 /**
  * @title AssetRecovererACL
  * @author swissarmytowel <info@lido.fi>
- * @notice Role-based asset-recovery base for NEST contracts. Uses `AccessControlEnumerable`
- *         to align its role identifiers with the broader NEST role model.
- * @dev    Assets are always sent to the immutable `AGENT` address.
+ * @notice Asset-recovery base for NEST contracts with role-based access control.
+ * @dev    All recovery flows send to the immutable `AGENT` address.
  */
 abstract contract AssetRecovererACL is AccessControlEnumerable {
     using Address for address payable;
@@ -24,19 +23,19 @@ abstract contract AssetRecovererACL is AccessControlEnumerable {
                                CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Role gating asset recovery and operational actions. Granted to the admin at
-    ///         construction. Delegated to the Treasury Management Committee post-deployment.
+    /// @notice Gates asset recovery and operational actions. Held by the admin at construction,
+    ///         delegated to the Treasury Management Committee post-deployment.
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
 
-    /// @notice Role gating pause/cancellation paths. Granted to the admin at construction.
-    ///         Delegated to the Emergency Committee post-deployment.
+    /// @notice Gates pause and cancellation paths. Held by the admin at construction,
+    ///         delegated to the Emergency Committee post-deployment.
     bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
 
     /*//////////////////////////////////////////////////////////////
                               IMMUTABLES
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Aragon Agent treasury address. Sole destination for every recovery path.
+    /// @notice Aragon Agent address. All recovery flows send assets here.
     address public immutable AGENT;
 
     /*//////////////////////////////////////////////////////////////
@@ -66,9 +65,8 @@ abstract contract AssetRecovererACL is AccessControlEnumerable {
 
     /**
      * @notice Grants `DEFAULT_ADMIN_ROLE`, `MANAGER_ROLE`, and `EMERGENCY_ROLE` to `admin_`.
-     *         Subsequent role assignments happen post-deployment via governance.
      * @param  admin_ Initial role holder. Non-zero.
-     * @param  agent_ Aragon Agent treasury address. Non-zero. Stored as immutable `AGENT`.
+     * @param  agent_ Aragon Agent address. Non-zero.
      */
     constructor(address admin_, address agent_) {
         if (admin_ == address(0)) {
