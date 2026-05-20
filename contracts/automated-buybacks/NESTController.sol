@@ -4,7 +4,6 @@ pragma solidity 0.8.23;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 import {AssetRecovererACL} from "./AssetRecovererACL.sol";
@@ -53,12 +52,12 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         address oracleRouter;
         address stonks;
         address liquidityProvisioner;
-        uint256 ethPriceFloorUSD;
-        uint256 dailyRevenueThresholdUSD;
-        uint256 surplusShareBps;
-        uint256 dailyCapUSD;
-        uint256 annualCapUSD;
-        uint256 minOrderSizeUSD;
+        uint128 ethPriceFloorUSD;
+        uint128 dailyRevenueThresholdUSD;
+        uint16 surplusShareBps;
+        uint128 dailyCapUSD;
+        uint128 annualCapUSD;
+        uint128 minOrderSizeUSD;
         address[] revenueSources;
     }
 
@@ -164,16 +163,16 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Timestamp of the last accounting update in `triggerExecution`.
-    uint64 internal _lastAccountingTimestamp;
+    uint64 public lastAccountingTimestamp;
 
     /// @notice Timestamp of the last order creation by `triggerExecution`.
-    uint64 internal _lastTriggerOrderTimestamp;
+    uint64 public lastTriggerOrderTimestamp;
 
     /// @notice Timestamp marking the start of the current annual period.
-    uint64 internal _annualPeriodStart;
+    uint64 public annualPeriodStart;
 
     /// @notice Timestamp of the most recent order placement from either execution path.
-    uint96 internal _lastOrderTimestamp;
+    uint96 public lastOrderTimestamp;
 
     /// @notice Address of the most recent Order contract.
     address public lastOrderAddress;
@@ -220,13 +219,13 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     event RetryFromStonksExecuted(address indexed order, uint256 sellAmountStEth);
     event ExecutionPaused(address indexed by);
     event ExecutionUnpaused(address indexed by);
-    event EthPriceFloorUSDSet(uint256 ethPriceFloorUSD);
-    event DailyRevenueThresholdUSDSet(uint256 dailyRevenueThresholdUSD);
-    event RevenueSurplusShareBpsSet(uint256 surplusShareBps);
-    event DailyCapUSDSet(uint256 dailyCapUSD);
-    event AnnualCapUSDSet(uint256 annualCapUSD);
+    event EthPriceFloorUSDSet(uint128 ethPriceFloorUSD);
+    event DailyRevenueThresholdUSDSet(uint128 dailyRevenueThresholdUSD);
+    event RevenueSurplusShareBpsSet(uint16 surplusShareBps);
+    event DailyCapUSDSet(uint128 dailyCapUSD);
+    event AnnualCapUSDSet(uint128 annualCapUSD);
     event AnnualPeriodReset(uint256 newPeriodStart, uint256 previousAccumulatorUSD);
-    event MinOrderSizeUSDSet(uint256 minOrderSizeUSD);
+    event MinOrderSizeUSDSet(uint128 minOrderSizeUSD);
     event StonksSet(address indexed stonks);
     event LiquidityProvisionerSet(address indexed liquidityProvisioner);
     event BuybackAccountingReset(
@@ -279,11 +278,11 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     error InvalidLdoAddress(address ldo);
     error InvalidOracleRouterAddress(address oracleRouter);
     error InvalidStonksAddress(address stonks);
-    error InvalidDailyRevenueThreshold(uint256 dailyRevenueThresholdUSD);
-    error InvalidRevenueSurplusShare(uint256 surplusShareBps);
-    error InvalidDailyCap(uint256 dailyCapUSD);
-    error InvalidAnnualCap(uint256 annualCapUSD);
-    error InvalidMinOrderSize(uint256 minOrderSizeUSD);
+    error InvalidDailyRevenueThreshold(uint128 dailyRevenueThresholdUSD);
+    error InvalidRevenueSurplusShare(uint16 surplusShareBps);
+    error InvalidDailyCap(uint128 dailyCapUSD);
+    error InvalidAnnualCap(uint128 annualCapUSD);
+    error InvalidMinOrderSize(uint128 minOrderSizeUSD);
     error InvalidRevenueSourceAddress(address source);
     error InvalidOrderAddress(address order);
     error InvalidTokenAddress(address token);
@@ -365,11 +364,13 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         if (sourceCount > MAX_REVENUE_SOURCES) {
             revert RevenueSourceLimitReached(MAX_REVENUE_SOURCES);
         }
+
         for (uint256 i; i < sourceCount; ) {
             address source = initParams_.revenueSources[i];
             if (source == address(0)) {
                 revert InvalidRevenueSourceAddress(source);
             }
+
             for (uint256 j; j < i; ) {
                 if (initParams_.revenueSources[j] == source) {
                     revert RevenueSourceAlreadyRegistered(source);
@@ -399,16 +400,16 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
         stonks = initParams_.stonks;
         liquidityProvisioner = initParams_.liquidityProvisioner;
-        ethPriceFloorUSD = SafeCast.toUint128(initParams_.ethPriceFloorUSD);
-        dailyRevenueThresholdUSD = SafeCast.toUint128(initParams_.dailyRevenueThresholdUSD);
-        surplusShareBps = uint16(initParams_.surplusShareBps);
-        dailyCapUSD = SafeCast.toUint128(initParams_.dailyCapUSD);
-        annualCapUSD = SafeCast.toUint128(initParams_.annualCapUSD);
-        minOrderSizeUSD = SafeCast.toUint128(initParams_.minOrderSizeUSD);
+        ethPriceFloorUSD = initParams_.ethPriceFloorUSD;
+        dailyRevenueThresholdUSD = initParams_.dailyRevenueThresholdUSD;
+        surplusShareBps = initParams_.surplusShareBps;
+        dailyCapUSD = initParams_.dailyCapUSD;
+        annualCapUSD = initParams_.annualCapUSD;
+        minOrderSizeUSD = initParams_.minOrderSizeUSD;
         _revenueSources = initParams_.revenueSources;
 
         orderDurationSeconds = uint64(IStonks(initParams_.stonks).ORDER_DURATION_IN_SECONDS());
-        _annualPeriodStart = uint64(block.timestamp);
+        annualPeriodStart = uint64(block.timestamp);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -437,12 +438,12 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
         (int256 preAccountingUnrealizedUSD, int256 dailyAllocationUSD) = _runAccountingIfDue();
 
-        uint256 cachedLastTrigger = _lastTriggerOrderTimestamp;
-        uint256 cachedLastAccounting = _lastAccountingTimestamp;
-        if (cachedLastTrigger >= cachedLastAccounting) {
+        uint256 cachedLastTriggerTs = lastTriggerOrderTimestamp;
+        uint256 cachedLastAccountingTs = lastAccountingTimestamp;
+        if (cachedLastTriggerTs >= cachedLastAccountingTs) {
             revert OrderAlreadyCreatedInCycle(
-                cachedLastTrigger,
-                cachedLastAccounting + TRIGGER_INTERVAL_SECONDS
+                cachedLastTriggerTs,
+                cachedLastAccountingTs + TRIGGER_INTERVAL_SECONDS
             );
         }
 
@@ -476,8 +477,8 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             );
         }
 
-        _lastTriggerOrderTimestamp = uint64(block.timestamp);
-        _lastOrderTimestamp = uint96(block.timestamp);
+        lastTriggerOrderTimestamp = uint64(block.timestamp);
+        lastOrderTimestamp = uint96(block.timestamp);
         lastOrderAddress = order;
         annualSpendAccumulatorUSD += budgetUSD;
         uint256 newCumulative = cumulativeBuybacksUSD + budgetUSD;
@@ -532,7 +533,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             address(LDO)
         );
         uint256 cachedEthFloor = ethPriceFloorUSD;
-        if (stEthUsdPrice == 0 || (cachedEthFloor != 0 && stEthUsdPrice < cachedEthFloor)) {
+        if (stEthUsdPrice == 0 || stEthUsdPrice < cachedEthFloor) {
             revert EthPriceBelowFloor(stEthUsdPrice, cachedEthFloor);
         }
         if (ldoPrice == 0) {
@@ -548,7 +549,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             orderBalance - STETH_TRANSFER_BUFFER,
             minBuyAmount
         );
-        _lastOrderTimestamp = uint96(block.timestamp);
+        lastOrderTimestamp = uint96(block.timestamp);
         lastOrderAddress = order;
 
         emit RetryFromStonksExecuted(order, orderBalance);
@@ -587,42 +588,37 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
         uint256 cachedOutstandingUsd = outstandingWrappedCommittedUsd;
         uint256 reverseUsd = (matched * cachedOutstandingUsd) / cachedOutstandingStEth;
-        unchecked {
-            outstandingWrappedStEth = uint128(cachedOutstandingStEth - matched);
-            outstandingWrappedCommittedUsd = uint128(cachedOutstandingUsd - reverseUsd);
-        }
+        outstandingWrappedStEth = uint128(cachedOutstandingStEth - matched);
+        outstandingWrappedCommittedUsd = uint128(cachedOutstandingUsd - reverseUsd);
 
         uint256 cachedAccumulator = annualSpendAccumulatorUSD;
-        uint256 newAccumulator;
         if (cachedAccumulator > reverseUsd) {
-            unchecked {
-                newAccumulator = cachedAccumulator - reverseUsd;
-            }
-            annualSpendAccumulatorUSD = newAccumulator;
+            annualSpendAccumulatorUSD = cachedAccumulator - reverseUsd;
         } else if (cachedAccumulator != 0) {
             annualSpendAccumulatorUSD = 0;
         }
 
         uint256 cachedCumulative = cumulativeBuybacksUSD;
-        uint256 newCumulative;
         if (cachedCumulative > reverseUsd) {
-            unchecked {
-                newCumulative = cachedCumulative - reverseUsd;
-            }
-            cumulativeBuybacksUSD = newCumulative;
+            cumulativeBuybacksUSD = cachedCumulative - reverseUsd;
         } else if (cachedCumulative != 0) {
             cumulativeBuybacksUSD = 0;
         }
 
-        emit SpendAdjustedForReturn(stEthAmount_, reverseUsd, newAccumulator, newCumulative);
+        emit SpendAdjustedForReturn(
+            stEthAmount_,
+            reverseUsd,
+            annualSpendAccumulatorUSD,
+            cumulativeBuybacksUSD
+        );
     }
 
     /**
      * @notice Updates the ETH/USD price threshold for the ETH price gate. Zero disables the gate.
      * @param  ethPriceFloorUSD_ New ETH/USD price floor.
      */
-    function setEthPriceFloorUSD(uint256 ethPriceFloorUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        ethPriceFloorUSD = SafeCast.toUint128(ethPriceFloorUSD_);
+    function setEthPriceFloorUSD(uint128 ethPriceFloorUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        ethPriceFloorUSD = ethPriceFloorUSD_;
 
         emit EthPriceFloorUSDSet(ethPriceFloorUSD_);
     }
@@ -632,13 +628,13 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
      * @param  dailyRevenueThresholdUSD_ New daily revenue threshold in USD. Must be greater than zero.
      */
     function setDailyRevenueThresholdUSD(
-        uint256 dailyRevenueThresholdUSD_
+        uint128 dailyRevenueThresholdUSD_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (dailyRevenueThresholdUSD_ == 0) {
             revert InvalidDailyRevenueThreshold(dailyRevenueThresholdUSD_);
         }
 
-        dailyRevenueThresholdUSD = SafeCast.toUint128(dailyRevenueThresholdUSD_);
+        dailyRevenueThresholdUSD = dailyRevenueThresholdUSD_;
 
         emit DailyRevenueThresholdUSDSet(dailyRevenueThresholdUSD_);
     }
@@ -648,13 +644,13 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
      * @param  surplusShareBps_ New surplus share in basis points. Must be in `(0, MAX_BASIS_POINTS]`.
      */
     function setRevenueSurplusShareBps(
-        uint256 surplusShareBps_
+        uint16 surplusShareBps_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (surplusShareBps_ == 0 || surplusShareBps_ > MAX_BASIS_POINTS) {
             revert InvalidRevenueSurplusShare(surplusShareBps_);
         }
 
-        surplusShareBps = uint16(surplusShareBps_);
+        surplusShareBps = surplusShareBps_;
 
         emit RevenueSurplusShareBpsSet(surplusShareBps_);
     }
@@ -663,12 +659,12 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
      * @notice Updates the maximum USD amount deployable per trigger.
      * @param  dailyCapUSD_ New daily cap in USD. Must satisfy `minOrderSizeUSD <= dailyCapUSD_ < annualCapUSD`.
      */
-    function setDailyCapUSD(uint256 dailyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setDailyCapUSD(uint128 dailyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (dailyCapUSD_ == 0 || dailyCapUSD_ < minOrderSizeUSD || dailyCapUSD_ >= annualCapUSD) {
             revert InvalidDailyCap(dailyCapUSD_);
         }
 
-        dailyCapUSD = SafeCast.toUint128(dailyCapUSD_);
+        dailyCapUSD = dailyCapUSD_;
 
         emit DailyCapUSDSet(dailyCapUSD_);
     }
@@ -679,12 +675,12 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
      *         accumulator clamps the gate budget to zero until the period rolls over.
      * @param  annualCapUSD_ New annual cap in USD. Must be strictly greater than `dailyCapUSD`.
      */
-    function setAnnualCapUSD(uint256 annualCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setAnnualCapUSD(uint128 annualCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (annualCapUSD_ == 0 || annualCapUSD_ <= dailyCapUSD) {
             revert InvalidAnnualCap(annualCapUSD_);
         }
 
-        annualCapUSD = SafeCast.toUint128(annualCapUSD_);
+        annualCapUSD = annualCapUSD_;
 
         emit AnnualCapUSDSet(annualCapUSD_);
     }
@@ -693,12 +689,12 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
      * @notice Updates the minimum viable budget threshold for order placement.
      * @param  minOrderSizeUSD_ New minimum order size in USD. Must satisfy `0 < minOrderSizeUSD_ <= dailyCapUSD`.
      */
-    function setMinOrderSizeUSD(uint256 minOrderSizeUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setMinOrderSizeUSD(uint128 minOrderSizeUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (minOrderSizeUSD_ == 0 || minOrderSizeUSD_ > dailyCapUSD) {
             revert InvalidMinOrderSize(minOrderSizeUSD_);
         }
 
-        minOrderSizeUSD = SafeCast.toUint128(minOrderSizeUSD_);
+        minOrderSizeUSD = minOrderSizeUSD_;
 
         emit MinOrderSizeUSDSet(minOrderSizeUSD_);
     }
@@ -719,6 +715,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             if (_revenueSources[i] == source_) {
                 revert RevenueSourceAlreadyRegistered(source_);
             }
+
             unchecked {
                 ++i;
             }
@@ -757,6 +754,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
                 return;
             }
+
             unchecked {
                 ++i;
             }
@@ -839,42 +837,37 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
      *                              `ExecutionTriggered` event.
      * @param  commitmentTimestamp_ Block timestamp of the original `triggerExecution`.
      */
-    function creditReturnedSpend(uint256 usdAmount_, uint256 commitmentTimestamp_)
-        external
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {
+    function creditReturnedSpend(
+        uint256 usdAmount_,
+        uint256 commitmentTimestamp_
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (usdAmount_ == 0) {
             revert ZeroCreditAmount();
         }
 
         uint256 cachedCumulative = cumulativeBuybacksUSD;
-        uint256 newCumulative = cachedCumulative;
         if (cachedCumulative > usdAmount_) {
-            unchecked {
-                newCumulative = cachedCumulative - usdAmount_;
-            }
-            cumulativeBuybacksUSD = newCumulative;
+            cumulativeBuybacksUSD = cachedCumulative - usdAmount_;
         } else if (cachedCumulative != 0) {
-            newCumulative = 0;
             cumulativeBuybacksUSD = 0;
         }
 
-        bool affectsAnnualPeriod = commitmentTimestamp_ >= _annualPeriodStart;
-        uint256 cachedAccumulator = annualSpendAccumulatorUSD;
-        uint256 newAccumulator = cachedAccumulator;
+        bool affectsAnnualPeriod = commitmentTimestamp_ >= annualPeriodStart;
         if (affectsAnnualPeriod) {
+            uint256 cachedAccumulator = annualSpendAccumulatorUSD;
             if (cachedAccumulator > usdAmount_) {
-                unchecked {
-                    newAccumulator = cachedAccumulator - usdAmount_;
-                }
-                annualSpendAccumulatorUSD = newAccumulator;
+                annualSpendAccumulatorUSD = cachedAccumulator - usdAmount_;
             } else if (cachedAccumulator != 0) {
-                newAccumulator = 0;
                 annualSpendAccumulatorUSD = 0;
             }
         }
 
-        emit ReturnedSpendCredited(usdAmount_, affectsAnnualPeriod, newAccumulator, newCumulative);
+        emit ReturnedSpendCredited(
+            usdAmount_,
+            affectsAnnualPeriod,
+            annualSpendAccumulatorUSD,
+            cumulativeBuybacksUSD
+        );
     }
 
     /**
@@ -1025,34 +1018,6 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Timestamp of the last accounting update in `triggerExecution`.
-     */
-    function lastAccountingTimestamp() external view returns (uint256) {
-        return _lastAccountingTimestamp;
-    }
-
-    /**
-     * @notice Timestamp of the last order creation by `triggerExecution`.
-     */
-    function lastTriggerOrderTimestamp() external view returns (uint256) {
-        return _lastTriggerOrderTimestamp;
-    }
-
-    /**
-     * @notice Timestamp marking the start of the current annual period.
-     */
-    function annualPeriodStart() external view returns (uint256) {
-        return _annualPeriodStart;
-    }
-
-    /**
-     * @notice Timestamp of the most recent order placement from either execution path.
-     */
-    function lastOrderTimestamp() external view returns (uint256) {
-        return _lastOrderTimestamp;
-    }
-
-    /**
      * @notice Whether `triggerExecution` would place an order at the current block. Mirrors every
      *         `triggerExecution` precondition as a read-only check and simulates accounting
      *         without writes. Never reverts.
@@ -1072,20 +1037,20 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         int256 preAccountingUnrealizedUSD;
         int256 dailyAllocationUSD;
 
-        if (block.timestamp >= uint256(_lastAccountingTimestamp) + TRIGGER_INTERVAL_SECONDS) {
-            (uint256 totalRevenueUSD, bool aggregationOk) = _trySimulateAggregateRevenue(
-                _lastAccountingTimestamp
+        if (block.timestamp >= uint256(lastAccountingTimestamp) + TRIGGER_INTERVAL_SECONDS) {
+            (uint256 totalRevenueUSD, bool aggregationSuccess) = _trySimulateAggregateRevenue(
+                lastAccountingTimestamp
             );
-            if (!aggregationOk) {
+            if (!aggregationSuccess) {
                 return false;
             }
-            int256 surplusUSD = int256(totalRevenueUSD) -
-                int256(uint256(dailyRevenueThresholdUSD));
+            int256 surplusUSD = int256(totalRevenueUSD) - int256(uint256(dailyRevenueThresholdUSD));
             dailyAllocationUSD =
-                (surplusUSD * int256(uint256(surplusShareBps))) / int256(MAX_BASIS_POINTS);
+                (surplusUSD * int256(uint256(surplusShareBps))) /
+                int256(MAX_BASIS_POINTS);
             preAccountingUnrealizedUSD = cachedAllocated - cachedCumulativeSigned;
         } else {
-            if (uint256(_lastTriggerOrderTimestamp) >= uint256(_lastAccountingTimestamp)) {
+            if (uint256(lastTriggerOrderTimestamp) >= uint256(lastAccountingTimestamp)) {
                 return false;
             }
             int256 cachedLastDaily = lastDailyAllocationUSD;
@@ -1102,17 +1067,17 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice Returns whether `retryFromStonks` would succeed at the current block. Mirrors all
      *         `retryFromStonks` preconditions as read-only checks. Never reverts.
-     * @return ok `true` if all gates pass and the tracked Order holds enough stETH to retry.
+     * @return canRetry `true` if all gates pass and the tracked Order holds enough stETH to retry.
      *         `false` otherwise.
      */
-    function canRetryFromStonks() external view returns (bool ok) {
+    function canRetryFromStonks() external view returns (bool canRetry) {
         if (_executionPaused) {
             return false;
         }
 
         // The `validTo` block is still within cooldown; `Order.recoverTokenFrom` only succeeds
         // once `block.timestamp` is past it.
-        if (block.timestamp <= uint256(_lastOrderTimestamp) + uint256(orderDurationSeconds)) {
+        if (block.timestamp <= uint256(lastOrderTimestamp) + uint256(orderDurationSeconds)) {
             return false;
         }
 
@@ -1144,7 +1109,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             return false;
         }
         uint256 cachedEthFloor = ethPriceFloorUSD;
-        ok = cachedEthFloor == 0 || stEthUsdPrice >= cachedEthFloor;
+        canRetry = cachedEthFloor == 0 || stEthUsdPrice >= cachedEthFloor;
     }
 
     /**
@@ -1154,14 +1119,14 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
      */
     function getSpendingState() external view returns (INESTController.SpendingState memory state) {
         state = INESTController.SpendingState({
-            lastTriggerOrderTimestamp: _lastTriggerOrderTimestamp,
-            lastAccountingTimestamp: _lastAccountingTimestamp,
-            lastOrderTimestamp: _lastOrderTimestamp,
+            lastTriggerOrderTimestamp: lastTriggerOrderTimestamp,
+            lastAccountingTimestamp: lastAccountingTimestamp,
+            lastOrderTimestamp: lastOrderTimestamp,
             lastOrderAddress: lastOrderAddress,
             orderDurationSeconds: orderDurationSeconds,
             annualCapUSD: annualCapUSD,
             annualSpendAccumulatorUSD: annualSpendAccumulatorUSD,
-            annualPeriodStart: _annualPeriodStart,
+            annualPeriodStart: annualPeriodStart,
             allocatedForBuybacksUSD: allocatedForBuybacksUSD,
             cumulativeBuybacksUSD: cumulativeBuybacksUSD,
             lastDailyAllocationUSD: lastDailyAllocationUSD
@@ -1187,7 +1152,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             address stonksAddress_
         )
     {
-        lastOrderTimestamp_ = _lastOrderTimestamp;
+        lastOrderTimestamp_ = lastOrderTimestamp;
         orderDurationSeconds_ = orderDurationSeconds;
         lastOrderAddress_ = lastOrderAddress;
         stonksAddress_ = stonks;
@@ -1244,7 +1209,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
      * @return surplusUSD `totalRevenueUSD - dailyRevenueThresholdUSD`.
      */
     function getDailySurplus() external view returns (uint256 totalRevenueUSD, int256 surplusUSD) {
-        (totalRevenueUSD, , ) = _aggregateRevenue(_lastAccountingTimestamp);
+        (totalRevenueUSD, , ) = _aggregateRevenue(lastAccountingTimestamp);
         surplusUSD = int256(totalRevenueUSD) - int256(uint256(dailyRevenueThresholdUSD));
     }
 
@@ -1283,9 +1248,9 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         internal
         returns (int256 preAccountingUnrealizedUSD, int256 dailyAllocationUSD)
     {
-        if (block.timestamp >= uint256(_annualPeriodStart) + ONE_YEAR) {
+        if (block.timestamp >= uint256(annualPeriodStart) + ONE_YEAR) {
             uint256 previousAccumulator = annualSpendAccumulatorUSD;
-            _annualPeriodStart = uint64(block.timestamp);
+            annualPeriodStart = uint64(block.timestamp);
             annualSpendAccumulatorUSD = 0;
 
             emit AnnualPeriodReset(block.timestamp, previousAccumulator);
@@ -1293,9 +1258,9 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
         int256 cachedAllocated = allocatedForBuybacksUSD;
         int256 cachedCumulativeSigned = int256(cumulativeBuybacksUSD);
-        uint256 cachedLastAccounting = _lastAccountingTimestamp;
+        uint256 cachedLastAccountingTs = lastAccountingTimestamp;
 
-        if (block.timestamp < cachedLastAccounting + TRIGGER_INTERVAL_SECONDS) {
+        if (block.timestamp < cachedLastAccountingTs + TRIGGER_INTERVAL_SECONDS) {
             int256 cachedLastDaily = lastDailyAllocationUSD;
             preAccountingUnrealizedUSD = cachedAllocated - cachedLastDaily - cachedCumulativeSigned;
             dailyAllocationUSD = cachedLastDaily;
@@ -1309,9 +1274,11 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             uint256 totalDailyRevenueUSD,
             bool hasFreshData,
             address[] memory revertedSources
-        ) = _aggregateRevenue(cachedLastAccounting);
+        ) = _aggregateRevenue(cachedLastAccountingTs);
+
         for (uint256 i; i < revertedSources.length; ) {
             emit RevenueSourceReverted(revertedSources[i]);
+
             unchecked {
                 ++i;
             }
@@ -1320,15 +1287,17 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         if (!hasFreshData) {
             return (preAccountingUnrealizedUSD, 0);
         }
+
         int256 surplusUSD = int256(totalDailyRevenueUSD) -
             int256(uint256(dailyRevenueThresholdUSD));
         dailyAllocationUSD =
-            (surplusUSD * int256(uint256(surplusShareBps))) / int256(MAX_BASIS_POINTS);
+            (surplusUSD * int256(uint256(surplusShareBps))) /
+            int256(MAX_BASIS_POINTS);
 
         int256 newAllocated = cachedAllocated + dailyAllocationUSD;
         allocatedForBuybacksUSD = newAllocated;
         lastDailyAllocationUSD = dailyAllocationUSD;
-        _lastAccountingTimestamp = uint64(block.timestamp);
+        lastAccountingTimestamp = uint64(block.timestamp);
 
         emit AccountingUpdated(surplusUSD, newAllocated, newAllocated - cachedCumulativeSigned);
     }
@@ -1368,16 +1337,16 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         if (IStonks(cachedStonks).isCreationPaused() || IStonks(cachedStonks).isKilled()) {
             return (false, SkipReason.StonksUnavailable, 0, 0);
         }
+        address cachedProvisioner = liquidityProvisioner;
 
-        // Receiver gate. A `Stonks.RECEIVER` out of sync with the provisioner would settle LDO
-        // to a stale receiver.
-        address expectedReceiver = liquidityProvisioner != address(0)
-            ? liquidityProvisioner
-            : AGENT;
-        if (IStonks(cachedStonks).RECEIVER() != expectedReceiver) {
-            return (false, SkipReason.ReceiverMismatch, 0, 0);
+        {
+            // Receiver gate. A `Stonks.RECEIVER` out of sync with the provisioner would settle LDO
+            // to a stale receiver.
+            address expectedReceiver = cachedProvisioner != address(0) ? cachedProvisioner : AGENT;
+            if (IStonks(cachedStonks).RECEIVER() != expectedReceiver) {
+                return (false, SkipReason.ReceiverMismatch, 0, 0);
+            }
         }
-
         // Quotability gate. The stETH/USD leg doubles as the ETH/USD proxy below. A zero on
         // either leg counts as a failure, guarding against the router's bridged-price path that
         // can quantize to zero without reverting.
@@ -1392,10 +1361,9 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         } catch {
             return (false, SkipReason.QuotabilityFailed, 0, 0);
         }
-
         // ETH price gate. Zero floor disables the gate.
         uint256 cachedEthFloor = ethPriceFloorUSD;
-        if (cachedEthFloor != 0 && stEthUsdPrice < cachedEthFloor) {
+        if (stEthUsdPrice < cachedEthFloor) {
             return (false, SkipReason.EthPriceBelowFloor, 0, stEthUsdPrice);
         }
 
@@ -1407,7 +1375,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         // Annual cap gate. `_runAccountingIfDue` performs the period roll. This mirrors it
         // read-only so the view path sees the same post-roll accumulator.
         uint256 cachedAnnualAccumulator = annualSpendAccumulatorUSD;
-        if (block.timestamp >= uint256(_annualPeriodStart) + ONE_YEAR) {
+        if (block.timestamp >= uint256(annualPeriodStart) + ONE_YEAR) {
             cachedAnnualAccumulator = 0;
         }
 
@@ -1433,6 +1401,14 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         // Minimum size check.
         if (budgetUSD < minOrderSizeUSD) {
             return (false, SkipReason.BudgetBelowMinOrderSize, 0, stEthUsdPrice);
+        }
+        {
+            // Stonks placement floor. The sell amount after the transfer buffer must still clear Stonks' `MIN_POSSIBLE_BALANCE`.
+            uint256 totalStEth = (budgetUSD * PRICE_SCALE) / stEthUsdPrice;
+            uint256 sellAmountStEth = cachedProvisioner != address(0) ? totalStEth / 2 : totalStEth;
+            if (sellAmountStEth < MIN_POSSIBLE_BALANCE + STETH_TRANSFER_BUFFER) {
+                return (false, SkipReason.BudgetBelowMinOrderSize, 0, stEthUsdPrice);
+            }
         }
 
         isEligible = true;
@@ -1506,8 +1482,9 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
      *         itself so the boundary block cannot clear the cooldown only to revert on recovery.
      */
     function _assertOrderCooldownElapsed() internal view {
-        uint256 cachedLastOrder = _lastOrderTimestamp;
+        uint256 cachedLastOrder = lastOrderTimestamp;
         uint256 cooldownEnd = cachedLastOrder + orderDurationSeconds;
+
         if (block.timestamp <= cooldownEnd) {
             revert CooldownNotElapsed(cachedLastOrder, cooldownEnd);
         }
@@ -1524,6 +1501,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     function _assertStonksReceiver(address stonks_, address provisioner_) internal view {
         address expectedReceiver = provisioner_ != address(0) ? provisioner_ : AGENT;
         address actualReceiver = IStonks(stonks_).RECEIVER();
+
         if (actualReceiver != expectedReceiver) {
             revert StonksReceiverMismatch(actualReceiver, expectedReceiver);
         }
@@ -1542,7 +1520,9 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
      * @return revertedSources Sources skipped because a getter reverted. The caller emits
      *         `RevenueSourceReverted` for each.
      */
-    function _aggregateRevenue(uint256 lastAccountingTimestamp_)
+    function _aggregateRevenue(
+        uint256 lastAccountingTimestamp_
+    )
         internal
         view
         returns (uint256 totalDailyRevenueUSD, bool hasFreshData, address[] memory revertedSources)
@@ -1563,7 +1543,6 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             } catch {
                 getterReverted = true;
             }
-
             if (!getterReverted && !isPaused) {
                 try source.getRevenue() returns (
                     uint256 revenueUSD,
@@ -1578,6 +1557,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
                         totalDailyRevenueUSD += revenueUSD;
                         hasFreshData = true;
                     }
+
                     unchecked {
                         ++activeSourceCount;
                     }
@@ -1588,6 +1568,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
             if (getterReverted) {
                 revertedBuffer[revertedCount] = address(source);
+
                 unchecked {
                     ++revertedCount;
                 }
@@ -1602,9 +1583,11 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             revert NoActiveRevenueSources();
         }
 
+        // shrink the output array to the actual count of reverted sources
         revertedSources = new address[](revertedCount);
         for (uint256 i; i < revertedCount; ) {
             revertedSources[i] = revertedBuffer[i];
+
             unchecked {
                 ++i;
             }
@@ -1618,15 +1601,13 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
      * @param  lastAccountingTimestamp_ Timestamp of the last accounting cycle.
      * @return totalRevenueUSD Aggregated 1e18-scaled USD revenue across fresh sources. Zero on
      *         failure or when no source refreshed.
-     * @return ok `true` when at least one active source returned non-stale data. `false` on a
+     * @return success `true` when at least one active source returned non-stale data. `false` on a
      *         stale source or when no source is active. A source whose getter reverts is skipped,
      *         mirroring `_aggregateRevenue`.
      */
-    function _trySimulateAggregateRevenue(uint256 lastAccountingTimestamp_)
-        internal
-        view
-        returns (uint256 totalRevenueUSD, bool ok)
-    {
+    function _trySimulateAggregateRevenue(
+        uint256 lastAccountingTimestamp_
+    ) internal view returns (uint256 totalRevenueUSD, bool success) {
         uint256 sourceCount = _revenueSources.length;
         uint256 activeSourceCount;
 
@@ -1640,7 +1621,6 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             } catch {
                 getterReverted = true;
             }
-
             if (!getterReverted && !isPaused) {
                 try source.getRevenue() returns (
                     uint256 revenueUSD,
@@ -1667,6 +1647,6 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         if (activeSourceCount == 0) {
             return (0, false);
         }
-        ok = true;
+        success = true;
     }
 }

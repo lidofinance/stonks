@@ -85,6 +85,7 @@ abstract contract RevenueSource is AccessControlEnumerable, Pausable {
         _genesisTimestamp = block.timestamp;
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
+        _grantRole(EMERGENCY_ROLE, admin_);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -122,9 +123,7 @@ abstract contract RevenueSource is AccessControlEnumerable, Pausable {
     {
         revenueUSD = _lastRevenueUSD;
         reportTimestamp = _lastReportTimestamp;
-        isStale =
-            reportTimestamp == 0 ||
-            block.timestamp > reportTimestamp + STALENESS_WINDOW_SECONDS;
+        isStale = block.timestamp > reportTimestamp + STALENESS_WINDOW_SECONDS;
     }
 
     /*//////////////////////////////////////////////////////////////

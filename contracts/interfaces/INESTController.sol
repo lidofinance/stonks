@@ -72,13 +72,13 @@ interface INESTController {
 
     function orderDurationSeconds() external view returns (uint64);
 
-    function lastAccountingTimestamp() external view returns (uint256);
+    function lastAccountingTimestamp() external view returns (uint64);
 
-    function lastTriggerOrderTimestamp() external view returns (uint256);
+    function lastTriggerOrderTimestamp() external view returns (uint64);
 
-    function annualPeriodStart() external view returns (uint256);
+    function annualPeriodStart() external view returns (uint64);
 
-    function lastOrderTimestamp() external view returns (uint256);
+    function lastOrderTimestamp() external view returns (uint96);
 
     function lastOrderAddress() external view returns (address);
 
@@ -126,17 +126,17 @@ interface INESTController {
 
     function accountForReturnedExcess(uint256 stEthAmount_) external;
 
-    function setEthPriceFloorUSD(uint256 ethPriceFloorUSD_) external;
+    function setEthPriceFloorUSD(uint128 ethPriceFloorUSD_) external;
 
-    function setDailyRevenueThresholdUSD(uint256 dailyRevenueThresholdUSD_) external;
+    function setDailyRevenueThresholdUSD(uint128 dailyRevenueThresholdUSD_) external;
 
-    function setRevenueSurplusShareBps(uint256 surplusShareBps_) external;
+    function setRevenueSurplusShareBps(uint16 surplusShareBps_) external;
 
-    function setDailyCapUSD(uint256 dailyCapUSD_) external;
+    function setDailyCapUSD(uint128 dailyCapUSD_) external;
 
-    function setAnnualCapUSD(uint256 annualCapUSD_) external;
+    function setAnnualCapUSD(uint128 annualCapUSD_) external;
 
-    function setMinOrderSizeUSD(uint256 minOrderSizeUSD_) external;
+    function setMinOrderSizeUSD(uint128 minOrderSizeUSD_) external;
 
     function addRevenueSource(address source_) external;
 

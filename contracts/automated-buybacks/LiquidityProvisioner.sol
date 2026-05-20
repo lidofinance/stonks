@@ -79,7 +79,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
         OrderStateUnavailable,
         ControllerProvisionerMismatch,
         CooldownNotElapsed,
-        ClampPriceUnavailable,
+        ReservePriceUnavailable,
         Eligible
     }
 
@@ -104,7 +104,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     uint256 internal constant PRICE_SCALE = 1e18;
 
     /// @notice Minimum stETH balance an Order holds while still unsettled. Below it, the balance
-    ///         is dust the pipeline clamp can ignore.
+    ///         is dust the wstETH reserve computation can ignore.
     uint256 internal constant MIN_POSSIBLE_BALANCE = 10;
 
     /// @notice Upper bound on `poolSlippageToleranceBps`. Caps how far the deposit slippage guard
@@ -140,7 +140,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice NESTController address. Source for `lastOrderTimestamp`, `orderDurationSeconds`,
-    ///         `stonks`, and `lastOrderAddress` used in the excess-wstETH clamp, and the destination
+    ///         `stonks`, and `lastOrderAddress` used in the wstETH reserve computation, and the destination
     ///         for unwrapped stETH returned via `unwrapExcessWstEth`.
     /// @dev    Packed with `_liquidityPaused`, `poolSlippageToleranceBps`, and
     ///         `poolPriceDivergenceToleranceBps` into one storage slot.
@@ -495,7 +495,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
      * @notice Updates the NESTController address. The new controller becomes the source for
      *         pipeline state reads and the destination for unwrapped stETH returns.
      * @dev    Blocked while the old controller has a live or unsettled order. Its in-flight stETH
-     *         sits outside the new controller's clamp, so migrating then would unwrap wstETH that
+     *         sits outside the new controller's reserve, so migrating then would unwrap wstETH that
      *         still backs that order. Sequence migration after the old controller's order settles.
      * @param  nestController_ New controller address. Non-zero.
      */
@@ -614,11 +614,11 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
             return (0, 0);
         }
 
-        (bool ok, uint256 ldoUsdPrice, uint256 wstEthUsdPrice) = _tryGetUsdPrices(
+        (bool pricesValid, uint256 ldoUsdPrice, uint256 wstEthUsdPrice) = _tryGetUsdPrices(
             address(LDO),
             address(WSTETH)
         );
-        if (!ok || ldoUsdPrice == 0 || wstEthUsdPrice == 0) {
+        if (!pricesValid || ldoUsdPrice == 0 || wstEthUsdPrice == 0) {
             return (0, 0);
         }
 
@@ -647,11 +647,11 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
             return wstEthBalance;
         }
 
-        (bool ok, uint256 ldoUsdPrice, uint256 wstEthUsdPrice) = _tryGetUsdPrices(
+        (bool pricesValid, uint256 ldoUsdPrice, uint256 wstEthUsdPrice) = _tryGetUsdPrices(
             address(LDO),
             address(WSTETH)
         );
-        if (!ok || wstEthUsdPrice == 0) {
+        if (!pricesValid || wstEthUsdPrice == 0) {
             return 0;
         }
 
@@ -663,7 +663,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
 
     /**
      * @notice wstETH that `unwrapExcessWstEth` would consume at the current block, accounting
-     *         for the full clamp: LDO, Stonks stETH, and last Order stETH.
+     *         for the full reserve: LDO, Stonks stETH, and last Order stETH.
      * @dev    Never reverts. Returns zero on dependency failure or absence of unwrappable excess.
      */
     function getUnwrappableExcessWstEth() external view returns (uint256 unwrappableWstEthAmount) {
@@ -672,24 +672,24 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
             return 0;
         }
 
-        (bool stateOk, , , address lastOrderAddress, address stonksAddress) = _tryGetOrderState(
+        (bool stateValid, , , address lastOrderAddress, address stonksAddress) = _tryGetOrderState(
             nestController
         );
-        if (!stateOk) {
+        if (!stateValid) {
             return 0;
         }
 
-        (bool clampOk, uint256 clampTarget) = _tryClampTarget(
+        (bool reserveValid, uint256 requiredWstEthReserve) = _tryComputeRequiredWstEthReserve(
             stonksAddress,
             lastOrderAddress,
             LDO.balanceOf(address(this))
         );
-        if (!clampOk) {
+        if (!reserveValid) {
             return 0;
         }
 
-        if (wstEthBalance > clampTarget) {
-            unwrappableWstEthAmount = wstEthBalance - clampTarget;
+        if (wstEthBalance > requiredWstEthReserve) {
+            unwrappableWstEthAmount = wstEthBalance - requiredWstEthReserve;
         }
     }
 
@@ -744,31 +744,31 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Revert-safe wrapper around `ORACLE_ROUTER.getUsdPrices`. Returns `ok=false` with
-     *      zero prices on revert.
+     * @dev Revert-safe wrapper around `ORACLE_ROUTER.getUsdPrices`. Returns `pricesValid=false`
+     *      with zero prices on revert.
      */
     function _tryGetUsdPrices(
         address base_,
         address quote_
-    ) internal view returns (bool ok, uint256 basePrice, uint256 quotePrice) {
+    ) internal view returns (bool pricesValid, uint256 basePrice, uint256 quotePrice) {
         try ORACLE_ROUTER.getUsdPrices(base_, quote_) returns (uint256 b, uint256 q) {
             return (true, b, q);
         } catch {}
     }
 
     /**
-     * @dev Revert-safe wrapper around `CURVE_POOL_AND_TOKEN.price_oracle`. Returns `ok=false`
-     *      with zero price on revert.
+     * @dev Revert-safe wrapper around `CURVE_POOL_AND_TOKEN.price_oracle`. Returns
+     *      `poolPriceValid=false` with zero price on revert.
      */
-    function _tryPriceOracle() internal view returns (bool ok, uint256 price) {
+    function _tryPriceOracle() internal view returns (bool poolPriceValid, uint256 price) {
         try CURVE_POOL_AND_TOKEN.price_oracle() returns (uint256 p) {
             return (true, p);
         } catch {}
     }
 
     /**
-     * @dev Revert-safe wrapper around `INESTController.getOrderState`. Returns `ok=false` with
-     *      zeroed fields on revert.
+     * @dev Revert-safe wrapper around `INESTController.getOrderState`. Returns
+     *      `stateValid=false` with zeroed fields on revert.
      */
     function _tryGetOrderState(
         address controller_
@@ -776,7 +776,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
         internal
         view
         returns (
-            bool ok,
+            bool stateValid,
             uint256 lastOrderTimestamp,
             uint256 orderDurationSeconds,
             address lastOrderAddress,
@@ -794,24 +794,24 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @dev Revert-safe wrapper around `WSTETH.getWstETHByStETH`. Returns `ok=false` with zero
-     *      amount on revert.
+     * @dev Revert-safe wrapper around `WSTETH.getWstETHByStETH`. Returns `conversionValid=false`
+     *      with zero amount on revert.
      */
     function _tryGetWstETHByStETH(
         uint256 stEthAmount_
-    ) internal view returns (bool ok, uint256 wstEthAmount) {
+    ) internal view returns (bool conversionValid, uint256 wstEthAmount) {
         try WSTETH.getWstETHByStETH(stEthAmount_) returns (uint256 v) {
             return (true, v);
         } catch {}
     }
 
     /**
-     * @dev Revert-safe wrapper around `INESTController.liquidityProvisioner`. Returns `ok=false`
-     *      with the zero address on revert.
+     * @dev Revert-safe wrapper around `INESTController.liquidityProvisioner`. Returns
+     *      `bindingValid=false` with the zero address on revert.
      */
     function _tryLiquidityProvisioner(
         address controller_
-    ) internal view returns (bool ok, address provisioner) {
+    ) internal view returns (bool bindingValid, address provisioner) {
         try INESTController(controller_).liquidityProvisioner() returns (address p) {
             return (true, p);
         } catch {}
@@ -820,25 +820,25 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice wstETH that must stay wrapped to back pending settlements. Sum of LDO-equivalent
      *         wstETH plus Stonks and Order stETH converted via the wstETH rate.
-     * @dev    Returns `(false, 0)` if `getUsdPrices` or `getWstETHByStETH` reverts, or if
-     *         `wstEthUsdPrice` is zero.
+     * @dev    Returns `reserveValid=false` with a zero reserve if `getUsdPrices` or
+     *         `getWstETHByStETH` reverts, or if `wstEthUsdPrice` is zero.
      * @param  stonksAddress_     Stonks address. Source of the pipeline stETH bucket.
      * @param  lastOrderAddress_  Currently-tracked Order address. Zero skips the Order bucket.
      * @param  ldoBalance_        Pre-fetched LDO balance of the provisioner.
      */
-    function _tryClampTarget(
+    function _tryComputeRequiredWstEthReserve(
         address stonksAddress_,
         address lastOrderAddress_,
         uint256 ldoBalance_
-    ) internal view returns (bool ok, uint256 clampTarget) {
+    ) internal view returns (bool reserveValid, uint256 requiredWstEthReserve) {
         uint256 ldoEquivalentWstEth;
         // No LDO means an empty LDO bucket. Skip the oracle round-trip.
         if (ldoBalance_ != 0) {
-            (bool priceOk, uint256 ldoUsdPrice, uint256 wstEthUsdPrice) = _tryGetUsdPrices(
+            (bool pricesValid, uint256 ldoUsdPrice, uint256 wstEthUsdPrice) = _tryGetUsdPrices(
                 address(LDO),
                 address(WSTETH)
             );
-            if (!priceOk || wstEthUsdPrice == 0) {
+            if (!pricesValid || wstEthUsdPrice == 0) {
                 return (false, 0);
             }
             ldoEquivalentWstEth = (ldoBalance_ * ldoUsdPrice) / wstEthUsdPrice;
@@ -851,15 +851,15 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
 
         uint256 stEthEquivalentWstEth;
         if (pipelineStEth != 0) {
-            (bool wstEthOk, uint256 value) = _tryGetWstETHByStETH(pipelineStEth);
-            if (!wstEthOk) {
+            (bool conversionValid, uint256 value) = _tryGetWstETHByStETH(pipelineStEth);
+            if (!conversionValid) {
                 return (false, 0);
             }
             stEthEquivalentWstEth = value;
         }
 
-        clampTarget = ldoEquivalentWstEth + stEthEquivalentWstEth;
-        return (true, clampTarget);
+        requiredWstEthReserve = ldoEquivalentWstEth + stEthEquivalentWstEth;
+        return (true, requiredWstEthReserve);
     }
 
     /**
@@ -886,11 +886,11 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
             return evaluation;
         }
 
-        (bool priceOk, uint256 ldoUsdPrice, uint256 wstEthUsdPrice) = _tryGetUsdPrices(
+        (bool pricesValid, uint256 ldoUsdPrice, uint256 wstEthUsdPrice) = _tryGetUsdPrices(
             address(LDO),
             address(WSTETH)
         );
-        if (!priceOk || ldoUsdPrice == 0 || wstEthUsdPrice == 0) {
+        if (!pricesValid || ldoUsdPrice == 0 || wstEthUsdPrice == 0) {
             evaluation.status = AddLiquidityStatus.OraclePriceUnavailable;
             return evaluation;
         }
@@ -903,21 +903,17 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
             return evaluation;
         }
 
-        (bool poolOk, uint256 poolEmaPrice) = _tryPriceOracle();
-        if (!poolOk) {
+        (bool poolPriceValid, uint256 poolEmaPrice) = _tryPriceOracle();
+        if (!poolPriceValid) {
             evaluation.status = AddLiquidityStatus.PoolPriceUnavailable;
             return evaluation;
         }
 
         uint256 divergenceBps;
-        unchecked {
-            // Ternary takes the larger operand so the subtraction cannot underflow. The
-            // denominator is guarded non-zero above.
-            uint256 diff = poolEmaPrice >= oraclePriceInLdo
-                ? poolEmaPrice - oraclePriceInLdo
-                : oraclePriceInLdo - poolEmaPrice;
-            divergenceBps = (diff * MAX_BASIS_POINTS) / oraclePriceInLdo;
-        }
+        uint256 diff = poolEmaPrice >= oraclePriceInLdo
+            ? poolEmaPrice - oraclePriceInLdo
+            : oraclePriceInLdo - poolEmaPrice;
+        divergenceBps = (diff * MAX_BASIS_POINTS) / oraclePriceInLdo;
 
         evaluation.ldoUsdPrice = ldoUsdPrice;
         evaluation.wstEthUsdPrice = wstEthUsdPrice;
@@ -938,6 +934,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
         );
         evaluation.ldoAmount = ldoAmount;
         evaluation.wstEthAmount = wstEthAmount;
+
         if (ldoAmount == 0 || wstEthAmount == 0) {
             evaluation.status = AddLiquidityStatus.ZeroBalancedDepositAmount;
             return evaluation;
@@ -950,9 +947,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
      * @notice Reverts with the error matching a non-`Eligible` add-liquidity evaluation.
      * @param  evaluation_ Result of `_evaluateAddLiquidityGates`.
      */
-    function _assertAddLiquidityEligible(
-        AddLiquidityEvaluation memory evaluation_
-    ) internal view {
+    function _assertAddLiquidityEligible(AddLiquidityEvaluation memory evaluation_) internal view {
         AddLiquidityStatus status = evaluation_.status;
         if (status == AddLiquidityStatus.Eligible) {
             return;
@@ -982,7 +977,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
 
     /**
      * @notice Runs every shared `unwrapExcessWstEth` gate and computes the excess to unwrap.
-     * @dev    Non-reverting. An order-state or clamp dependency revert maps to a named status.
+     * @dev    Non-reverting. An order-state or reserve dependency revert maps to a named status.
      *         `unwrapExcessWstEth` reverts on a non-`Eligible` status, `canUnwrapExcessWstEth`
      *         returns whether the status is `Eligible`. The binding gate mirrors the controller's
      *         `accountForReturnedExcess` caller check.
@@ -999,30 +994,28 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
         }
 
         (
-            bool stateOk,
+            bool stateValid,
             uint256 lastOrderTimestamp,
             uint256 orderDurationSeconds,
             address lastOrderAddress,
             address stonksAddress
         ) = _tryGetOrderState(controller);
-        if (!stateOk) {
+        if (!stateValid) {
             evaluation.status = UnwrapStatus.OrderStateUnavailable;
             return evaluation;
         }
 
         // The unwrap path ends in `accountForReturnedExcess`, which the controller restricts to
         // its bound provisioner. An orphaned old provisioner fails that callback.
-        (bool bindingOk, address boundProvisioner) = _tryLiquidityProvisioner(controller);
-        if (!bindingOk || boundProvisioner != address(this)) {
+        (bool bindingValid, address boundProvisioner) = _tryLiquidityProvisioner(controller);
+        if (!bindingValid || boundProvisioner != address(this)) {
             evaluation.status = UnwrapStatus.ControllerProvisionerMismatch;
             return evaluation;
         }
 
         uint256 cooldownEnd;
-        unchecked {
-            // Both terms fit comfortably in a uint64. The sum cannot approach 2^256.
-            cooldownEnd = lastOrderTimestamp + orderDurationSeconds;
-        }
+        cooldownEnd = lastOrderTimestamp + orderDurationSeconds;
+
         evaluation.lastOrderTimestamp = lastOrderTimestamp;
         evaluation.cooldownEnd = cooldownEnd;
         if (block.timestamp <= cooldownEnd) {
@@ -1030,21 +1023,21 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
             return evaluation;
         }
 
-        (bool clampOk, uint256 clampTarget) = _tryClampTarget(
+        (bool reserveValid, uint256 requiredWstEthReserve) = _tryComputeRequiredWstEthReserve(
             stonksAddress,
             lastOrderAddress,
             LDO.balanceOf(address(this))
         );
-        if (!clampOk) {
-            evaluation.status = UnwrapStatus.ClampPriceUnavailable;
+        if (!reserveValid) {
+            evaluation.status = UnwrapStatus.ReservePriceUnavailable;
             return evaluation;
         }
 
-        if (wstEthBalance <= clampTarget) {
+        if (wstEthBalance <= requiredWstEthReserve) {
             evaluation.status = UnwrapStatus.ZeroExcessWstEth;
             return evaluation;
         }
-        evaluation.excessWstEth = wstEthBalance - clampTarget;
+        evaluation.excessWstEth = wstEthBalance - requiredWstEthReserve;
 
         evaluation.status = UnwrapStatus.Eligible;
     }
@@ -1153,9 +1146,6 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
         minAmounts[0] =
             (lpAmount_ * virtualPrice * sqrtPoolPrice * keptBps) /
             (PRICE_SCALE * PRICE_SCALE * MAX_BASIS_POINTS);
-        minAmounts[1] =
-            (lpAmount_ * virtualPrice * keptBps) /
-            (sqrtPoolPrice * MAX_BASIS_POINTS);
+        minAmounts[1] = (lpAmount_ * virtualPrice * keptBps) / (sqrtPoolPrice * MAX_BASIS_POINTS);
     }
-
 }
