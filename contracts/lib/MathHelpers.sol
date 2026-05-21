@@ -3,11 +3,11 @@
 pragma solidity 0.8.23;
 
 /**
- * @title Math
+ * @title MathHelpers
  * @author swissarmytowel <info@lido.fi>
  * @notice Small math helpers shared across NEST contracts.
  */
-library Math {
+library MathHelpers {
     /**
      * @notice Subtracts `b_` from `a_`, returning 0 when `b_ >= a_` instead of reverting.
      * @param  a_ Minuend.

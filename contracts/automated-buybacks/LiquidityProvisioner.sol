@@ -8,6 +8,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {AssetRecovererACL} from "./AssetRecovererACL.sol";
+import {MathHelpers} from "../lib/MathHelpers.sol";
 import {IStETH} from "../interfaces/IStETH.sol";
 import {IWstETH} from "../interfaces/IWstETH.sol";
 import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
@@ -656,9 +657,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
         }
 
         uint256 ldoEquivalentWstEth = (ldoBalance * ldoUsdPrice) / wstEthUsdPrice;
-        if (wstEthBalance > ldoEquivalentWstEth) {
-            excessWstEthAmount = wstEthBalance - ldoEquivalentWstEth;
-        }
+        excessWstEthAmount = MathHelpers.saturatedSub(wstEthBalance, ldoEquivalentWstEth);
     }
 
     /**
@@ -688,9 +687,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
             return 0;
         }
 
-        if (wstEthBalance > requiredWstEthReserve) {
-            unwrappableWstEthAmount = wstEthBalance - requiredWstEthReserve;
-        }
+        unwrappableWstEthAmount = MathHelpers.saturatedSub(wstEthBalance, requiredWstEthReserve);
     }
 
     /**

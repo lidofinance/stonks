@@ -8,7 +8,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 import {AssetRecovererACL} from "./AssetRecovererACL.sol";
-import {Math} from "../lib/Math.sol";
+import {MathHelpers} from "../lib/MathHelpers.sol";
 import {IStETH} from "../interfaces/IStETH.sol";
 import {IWstETH} from "../interfaces/IWstETH.sol";
 import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
@@ -635,8 +635,8 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
 
         // Saturating subtraction on the budget counters. They may already have been reduced
         // by an annual rollover, an earlier refund, or an admin reset.
-        annualSpendAccumulatorUSD = Math.saturatedSub(annualSpendAccumulatorUSD, refundUsd);
-        cumulativeBuybacksUSD = Math.saturatedSub(cumulativeBuybacksUSD, refundUsd);
+        annualSpendAccumulatorUSD = MathHelpers.saturatedSub(annualSpendAccumulatorUSD, refundUsd);
+        cumulativeBuybacksUSD = MathHelpers.saturatedSub(cumulativeBuybacksUSD, refundUsd);
 
         emit SpendAdjustedForReturn(
             stEthAmount_,
@@ -857,11 +857,14 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
             revert ZeroCreditAmount();
         }
 
-        cumulativeBuybacksUSD = Math.saturatedSub(cumulativeBuybacksUSD, usdAmount_);
+        cumulativeBuybacksUSD = MathHelpers.saturatedSub(cumulativeBuybacksUSD, usdAmount_);
 
         bool affectsAnnualPeriod = commitmentTimestamp_ >= annualPeriodStart;
         if (affectsAnnualPeriod) {
-            annualSpendAccumulatorUSD = Math.saturatedSub(annualSpendAccumulatorUSD, usdAmount_);
+            annualSpendAccumulatorUSD = MathHelpers.saturatedSub(
+                annualSpendAccumulatorUSD,
+                usdAmount_
+            );
         }
 
         emit ReturnedSpendCredited(
