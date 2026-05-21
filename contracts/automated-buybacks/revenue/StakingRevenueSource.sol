@@ -1,5 +1,5 @@
-// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
-// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
+// SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.23;
 
 import {RevenueSource} from "./RevenueSource.sol";
@@ -12,7 +12,7 @@ import {IStakingRouter} from "../../interfaces/IStakingRouter.sol";
 /**
  * @title StakingRevenueSource
  * @author swissarmytowel <info@lido.fi>
- * @notice Revenue source that back-derives DAO treasury staking revenue from the stETH/wstETH
+ * @notice Revenue source that back-derives DAO treasury staking revenue from the stETH share
  *         rate delta reported by `TokenRateNotifier` after each Lido rebase. Vault shares are
  *         excluded. The derived stETH is converted to USD via `OracleRouter` and forwarded to
  *         the base class for daily-rate normalization.
@@ -28,7 +28,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
 
     /// @notice Role authorizing `pushTokenRate`. Granted at construction to the
     ///         `TokenRateNotifier` only, blocking out-of-order calls between rebases.
-    bytes32 public constant REPORTER_ROLE = keccak256("REPORTER_ROLE");
+    bytes32 public constant REPORTER_ROLE = keccak256("NEST.StakingRevenueSource.REPORTER_ROLE");
 
     /// @notice Scale factor for stETH/wstETH rate arithmetic, matching Lido's
     ///         `TokenRateAndUpdateTimestampProvider` convention.
@@ -59,16 +59,19 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
                            STORAGE VARIABLES
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Rate snapshot from the previous `pushTokenRate` call, scaled to `TOKEN_RATE_SCALE`.
-    ///         Advances only on positive deltas. Frozen on zero or negative deltas so the pre-event
-    ///         rate remains the high-water-mark baseline across slashing and recovery.
+    /// @notice Rate snapshot scaled to `TOKEN_RATE_SCALE`. Zero until `seedBaseline` is called.
+    ///         After seeding, advances on every report; negative rebases lower the baseline so
+    ///         subsequent recovery is recognized against the new low rather than absorbed into a
+    ///         frozen high-water-mark.
     uint256 private _lastStEthPerToken;
 
     /*//////////////////////////////////////////////////////////////
                                 EVENTS
     //////////////////////////////////////////////////////////////*/
 
+    event BaselineSeeded(uint256 rate);
     event BaselineReset(uint256 oldRate, uint256 newRate);
+    event OracleLookupFailed(bytes lowLevelRevertData);
 
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
@@ -79,18 +82,22 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     error InvalidWstEthAddress(address wstEth);
     error InvalidStakingRouterAddress(address stakingRouter);
     error InvalidTokenRateNotifierAddress(address tokenRateNotifier);
+    error BaselineAlreadySeeded();
+    error BaselineNotSeeded();
+    error OracleLookupOutOfGas();
 
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Wires external dependencies, seeds the rate baseline from the live wstETH rate, and
-     *         grants `REPORTER_ROLE` to `tokenRateNotifier_`.
-     * @dev    Seeding against the live rate ensures the first `pushTokenRate` measures a genuine
-     *         delta rather than the cumulative staking rate since wstETH deployment.
+     * @notice Wires external dependencies and grants `REPORTER_ROLE` to `tokenRateNotifier_`.
+     * @dev    `pushTokenRate` reverts with `BaselineNotSeeded` until `seedBaseline` is called.
      * @param  admin_ Initial admin. Non-zero. Forwarded to `RevenueSource`.
      * @param  stalenessWindowSeconds_ Strictly positive. Forwarded to `RevenueSource`.
+     * @param  minReportIntervalSeconds_ Minimum spacing between accepted reports. Sized
+     *         conservatively below Lido's rebase cadence (~24h) so legitimate rebases are
+     *         always accepted while back-to-back calls revert. Forwarded to `RevenueSource`.
      * @param  oracleRouter_ `OracleRouter` for stETH → USD conversion. Non-zero.
      * @param  stEth_ stETH token. Non-zero.
      * @param  wstEth_ wstETH token. Non-zero.
@@ -101,12 +108,13 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     constructor(
         address admin_,
         uint256 stalenessWindowSeconds_,
+        uint256 minReportIntervalSeconds_,
         address oracleRouter_,
         address stEth_,
         address wstEth_,
         address stakingRouter_,
         address tokenRateNotifier_
-    ) RevenueSource(admin_, stalenessWindowSeconds_) {
+    ) RevenueSource(admin_, stalenessWindowSeconds_, minReportIntervalSeconds_) {
         if (oracleRouter_ == address(0)) {
             revert InvalidOracleRouterAddress(oracleRouter_);
         }
@@ -128,8 +136,6 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
         WSTETH = IWstETH(wstEth_);
         STAKING_ROUTER = IStakingRouter(stakingRouter_);
 
-        _lastStEthPerToken = IWstETH(wstEth_).getStETHByWstETH(TOKEN_RATE_SCALE);
-
         _grantRole(REPORTER_ROLE, tokenRateNotifier_);
     }
 
@@ -138,18 +144,48 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     //////////////////////////////////////////////////////////////*/
 
     /**
+     * @notice Seeds the rate baseline from the live wstETH rate, enabling `pushTokenRate`.
+     * @dev    Single-use; reverts with `BaselineAlreadySeeded` once set. Intended to run in
+     *         the same governance transaction that registers this contract as a
+     *         `TokenRateNotifier` observer, so the first reported delta is measured from the
+     *         post-enactment rate rather than a stale deployment-time rate.
+     */
+    function seedBaseline() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_lastStEthPerToken != 0) {
+            revert BaselineAlreadySeeded();
+        }
+
+        uint256 rate = WSTETH.getStETHByWstETH(TOKEN_RATE_SCALE);
+        _lastStEthPerToken = rate;
+
+        emit BaselineSeeded(rate);
+    }
+
+    /**
      * @notice `ITokenRatePusher` callback invoked by `TokenRateNotifier` after each rebase.
      *         Derives the DAO's share of gross staking rewards from the rate delta, converts to
      *         USD, and forwards to `_updateRevenue`.
      * @dev    The notifier wraps this call in try/catch, so reverts here are non-blocking and
      *         surface as `PushTokenRateFailed` on the notifier. Zero- and negative-delta reports
-     *         fire `_updateRevenue(0, block.timestamp)` to refresh the staleness timer. Negative
-     *         deltas preserve the pre-event baseline so the deficit accumulates across the full
-     *         recovery period. A non-slashing rate drop is cleared with `resetBaseline`.
+     *         fire `_updateRevenue(0, block.timestamp)` to refresh the staleness timer. The
+     *         baseline advances on every report, so each positive rebase is priced against the
+     *         most recent rate, internal-share count, and fee split; negative rebases lower the
+     *         baseline and forgo revenue recognition for the underwater window rather than
+     *         carrying a frozen deficit. Reverts with `BaselineNotSeeded` until `seedBaseline`
+     *         has run. The `OracleRouter` lookup is wrapped: a recoverable revert (e.g. stale
+     *         feed) emits `OracleLookupFailed` and refreshes the staleness timer with a zero
+     *         report; an empty revert (out-of-gas heuristic) propagates as
+     *         `OracleLookupOutOfGas` so the notifier surfaces a definitive failure rather than
+     *         silently zeroing the report.
      */
     function pushTokenRate() external onlyRole(REPORTER_ROLE) whenNotPaused {
-        uint256 rate = WSTETH.getStETHByWstETH(TOKEN_RATE_SCALE);
         uint256 lastRate = _lastStEthPerToken;
+        if (lastRate == 0) {
+            revert BaselineNotSeeded();
+        }
+
+        uint256 rate = WSTETH.getStETHByWstETH(TOKEN_RATE_SCALE);
+        _lastStEthPerToken = rate;
 
         if (rate <= lastRate) {
             _updateRevenue(0, block.timestamp);
@@ -162,28 +198,66 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
             .getStakingFeeAggregateDistribution();
         uint256 internalShares = STETH.getTotalShares() - STETH.getExternalShares();
 
-        // Back-derives the treasury share of gross rewards from a post-fee rate delta. A
-        // malformed `StakingRouter` where `totalFee >= basePrecision` divbyzero-panics here.
-        uint256 revenueStEth = (rateDelta * internalShares * treasuryFee) /
-            (TOKEN_RATE_SCALE * (basePrecision - (modulesFee + treasuryFee)));
+        // Combined fee that goes to modules and the treasury on each rebase.
+        uint256 totalFee = modulesFee + treasuryFee;
 
-        (uint256 stEthUsdPrice, ) = ORACLE_ROUTER.getUsdPrices(address(STETH), address(STETH));
+        // Stakers' slice of each rebase, in `basePrecision` units. Applies to every stETH
+        // share, internal and external alike.
+        uint256 netStakerShare = basePrecision - totalFee;
+
+        // stETH earned by internal stakers this rebase, still scaled by `TOKEN_RATE_SCALE`.
+        // Vault (external) shares are excluded by `internalShares`.
+        uint256 postFeeRewardScaled = rateDelta * internalShares;
+
+        // Treasury cut. The unfolded math is:
+        //     gross  = postFeeRewardScaled * basePrecision / netStakerShare
+        //     cut    = gross * treasuryFee / basePrecision
+        // The `basePrecision` factors cancel. All multiplications run before the single
+        // division to keep precision. Reverts on division by zero if `totalFee >= basePrecision`.
+        uint256 revenueStEth = (postFeeRewardScaled * treasuryFee) /
+            (TOKEN_RATE_SCALE * netStakerShare);
+
+        uint256 stEthUsdPrice;
+        try ORACLE_ROUTER.getUsdPrices(address(STETH), address(STETH)) returns (
+            uint256 priceUSD,
+            uint256 /* quoteUsdPrice */
+        ) {
+            stEthUsdPrice = priceUSD;
+        } catch (bytes memory lowLevelRevertData) {
+            // Empty revert data is the canonical out-of-gas signature: every revert path in
+            // `OracleRouter` carries a named custom error. Propagate as an explicit revert so
+            // the notifier's `PushTokenRateFailed` event signals a hard failure rather than
+            // silently treating this rebase as a zero-revenue refresh.
+            if (lowLevelRevertData.length == 0) {
+                revert OracleLookupOutOfGas();
+            }
+            // Recoverable oracle failure (stale feed, misconfigured token, sequencer issue).
+            // Refresh the staleness timer with a zero report so the source ages out gracefully
+            // and recovers automatically on the next push once the upstream issue clears.
+            emit OracleLookupFailed(lowLevelRevertData);
+            _updateRevenue(0, block.timestamp);
+            return;
+        }
+
         uint256 revenueUSD = (revenueStEth * stEthUsdPrice) / PRICE_SCALE;
-
-        _lastStEthPerToken = rate;
 
         _updateRevenue(revenueUSD, block.timestamp);
     }
 
     /**
      * @notice Re-seeds the rate baseline to the live wstETH rate.
-     * @dev    Use after a confirmed non-slashing rate drop. Forfeits the underwater window's
-     *         rewards. After genuine slashing the frozen baseline must be kept instead.
+     * @dev    Safety hatch for re-synchronizing after periods where `pushTokenRate` was not
+     *         called (extended pauses, observer reattachment, notifier reconfiguration). Skips
+     *         revenue recognition for the rate movement between the last reported rate and the
+     *         live rate at the time of this call.
      */
     function resetBaseline() external onlyRole(DEFAULT_ADMIN_ROLE) {
         uint256 oldRate = _lastStEthPerToken;
-        uint256 newRate = WSTETH.getStETHByWstETH(TOKEN_RATE_SCALE);
+        if (oldRate == 0) {
+            revert BaselineNotSeeded();
+        }
 
+        uint256 newRate = WSTETH.getStETHByWstETH(TOKEN_RATE_SCALE);
         _lastStEthPerToken = newRate;
 
         emit BaselineReset(oldRate, newRate);

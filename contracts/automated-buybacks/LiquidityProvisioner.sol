@@ -1,5 +1,5 @@
-// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
-// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
+// SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.23;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -21,7 +21,7 @@ import {INESTController} from "../interfaces/INESTController.sol";
  *         NESTController, deposits balanced amounts into the Curve LDO/wstETH pool, retains the
  *         minted LP tokens, and unwraps any wstETH overhang after partial or unfilled orders
  *         back to stETH for return to the controller.
- * @dev    Inherits `AssetRecovererACL` for role-based access and recovery to the Aragon Agent,
+ * @dev    Inherits `AssetRecovererACL` for role-based access and recovery to the treasury,
  *         and `ReentrancyGuard` for `addLiquidity`, `removeLiquidity`, `transferLpTokensTo`, and
  *         `unwrapExcessWstEth`. Provisioner and controller hold no roles on each other. They
  *         communicate via public view functions and the `accountForReturnedExcess` callback.
@@ -36,7 +36,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     /// @notice Constructor input parameters for the LiquidityProvisioner.
     struct InitParams {
         address admin;
-        address agent;
+        address treasury;
         address stEth;
         address wstEth;
         address ldo;
@@ -167,14 +167,14 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
 
     event LiquidityAdded(
         address indexed caller,
-        address indexed pool,
+        address pool,
         uint256 ldoAmount,
         uint256 wstEthAmount,
         uint256 lpTokensMinted
     );
     event LiquidityRemoved(
         address indexed caller,
-        address indexed pool,
+        address pool,
         uint256 lpAmount,
         uint256 ldoReceived,
         uint256 wstEthReceived
@@ -257,7 +257,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
      */
     constructor(
         InitParams memory initParams_
-    ) AssetRecovererACL(initParams_.admin, initParams_.agent) {
+    ) AssetRecovererACL(initParams_.admin, initParams_.treasury) {
         if (initParams_.stEth == address(0)) {
             revert InvalidStEthAddress(initParams_.stEth);
         }
@@ -423,7 +423,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice Transfers LP tokens to an arbitrary address. Supports pool migration or
      *         provisioner replacement via DAO vote.
-     * @dev    Use `recoverERC20` to sweep LP tokens to the Aragon Agent. Remains callable when
+     * @dev    Use `recoverERC20` to sweep LP tokens to the treasury. Remains callable when
      *         liquidity is paused.
      * @param  to_ Recipient address. Non-zero.
      * @param  amount_ LP-token amount. Strictly positive and within the provisioner's balance.
@@ -551,12 +551,12 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice Recovers an ERC-20 balance to the Aragon Agent. When recovering wstETH, the
+     * @notice Recovers an ERC-20 balance to the treasury. When recovering wstETH, the
      *         provisioner auto-unwraps to stETH so the treasury always receives stETH.
      * @dev    Overrides `AssetRecovererACL.recoverERC20` to special-case wstETH. Remains callable
      *         when liquidity is paused.
      * @param  token_ ERC-20 token to recover.
-     * @param  amount_ Token amount transferred to `AGENT`.
+     * @param  amount_ Token amount transferred to `TREASURY`.
      */
     function recoverERC20(
         address token_,
@@ -565,13 +565,13 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard {
         if (token_ == address(WSTETH)) {
             uint256 stEthAmount = WSTETH.unwrap(amount_);
 
-            emit WstEthRecoveredAsStEth(amount_, stEthAmount, AGENT);
+            emit WstEthRecoveredAsStEth(amount_, stEthAmount, TREASURY);
 
-            IERC20(address(STETH)).safeTransfer(AGENT, stEthAmount);
+            IERC20(address(STETH)).safeTransfer(TREASURY, stEthAmount);
         } else {
-            emit ERC20Recovered(token_, AGENT, amount_);
+            emit ERC20Recovered(token_, TREASURY, amount_);
 
-            IERC20(token_).safeTransfer(AGENT, amount_);
+            IERC20(token_).safeTransfer(TREASURY, amount_);
         }
     }
 

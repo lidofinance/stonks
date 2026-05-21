@@ -112,6 +112,8 @@ interface INESTController {
             address stonksAddress
         );
 
+    function getRevenueSources() external view returns (address[] memory);
+
     function getRevenueSourcesWithStatus() external view returns (RevenueSourceStatus[] memory);
 
     function getEthPriceUSD() external view returns (uint256);
