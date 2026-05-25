@@ -1,17 +1,12 @@
-// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
-// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
+// SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.23;
 
 /**
  * @title IRevenueSource
  * @notice Read surface every revenue contributor exposes to the NESTController aggregator.
- *         Concrete sources extend the abstract `RevenueSource`, which implements both methods.
+ *         Concrete sources extend the abstract `RevenueSource`, which implements this method.
  */
 interface IRevenueSource {
-    function getRevenue()
-        external
-        view
-        returns (uint256 revenueUSD, uint256 reportTimestamp, bool isStale);
-
-    function paused() external view returns (bool);
+    function getCumulativeRevenueUSD() external view returns (uint256);
 }

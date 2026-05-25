@@ -94,10 +94,6 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
      * @notice Wires external dependencies and grants `REPORTER_ROLE` to `tokenRateNotifier_`.
      * @dev    `pushTokenRate` reverts with `BaselineNotSeeded` until `seedBaseline` is called.
      * @param  admin_ Initial admin. Non-zero. Forwarded to `RevenueSource`.
-     * @param  stalenessWindowSeconds_ Strictly positive. Forwarded to `RevenueSource`.
-     * @param  minReportIntervalSeconds_ Minimum spacing between accepted reports. Sized
-     *         conservatively below Lido's rebase cadence (~24h) so legitimate rebases are
-     *         always accepted while back-to-back calls revert. Forwarded to `RevenueSource`.
      * @param  oracleRouter_ `OracleRouter` for stETH → USD conversion. Non-zero.
      * @param  stEth_ stETH token. Non-zero.
      * @param  wstEth_ wstETH token. Non-zero.
@@ -107,14 +103,12 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
      */
     constructor(
         address admin_,
-        uint256 stalenessWindowSeconds_,
-        uint256 minReportIntervalSeconds_,
         address oracleRouter_,
         address stEth_,
         address wstEth_,
         address stakingRouter_,
         address tokenRateNotifier_
-    ) RevenueSource(admin_, stalenessWindowSeconds_, minReportIntervalSeconds_) {
+    ) RevenueSource(admin_) {
         if (oracleRouter_ == address(0)) {
             revert InvalidOracleRouterAddress(oracleRouter_);
         }
@@ -167,18 +161,17 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
      *         USD, and forwards to `_updateRevenue`.
      * @dev    The notifier wraps this call in try/catch, so reverts here are non-blocking and
      *         surface as `PushTokenRateFailed` on the notifier. Zero- and negative-delta reports
-     *         fire `_updateRevenue(0, block.timestamp)` to refresh the staleness timer. The
-     *         baseline advances on every report, so each positive rebase is priced against the
-     *         most recent rate, internal-share count, and fee split; negative rebases lower the
-     *         baseline and forgo revenue recognition for the underwater window rather than
+     *         advance the baseline but contribute no revenue, so the accumulator is untouched.
+     *         The baseline advances on every report, so each positive rebase is priced against
+     *         the most recent rate, internal-share count, and fee split; negative rebases lower
+     *         the baseline and forgo revenue recognition for the underwater window rather than
      *         carrying a frozen deficit. Reverts with `BaselineNotSeeded` until `seedBaseline`
      *         has run. The `OracleRouter` lookup is wrapped: a recoverable revert (e.g. stale
-     *         feed) emits `OracleLookupFailed` and refreshes the staleness timer with a zero
-     *         report; an empty revert (out-of-gas heuristic) propagates as
-     *         `OracleLookupOutOfGas` so the notifier surfaces a definitive failure rather than
-     *         silently zeroing the report.
+     *         feed) emits `OracleLookupFailed` and skips this rebase; an empty revert
+     *         (out-of-gas heuristic) propagates as `OracleLookupOutOfGas` so the notifier
+     *         surfaces a definitive failure.
      */
-    function pushTokenRate() external onlyRole(REPORTER_ROLE) whenNotPaused {
+    function pushTokenRate() external onlyRole(REPORTER_ROLE) {
         uint256 lastRate = _lastStEthPerToken;
         if (lastRate == 0) {
             revert BaselineNotSeeded();
@@ -188,7 +181,6 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
         _lastStEthPerToken = rate;
 
         if (rate <= lastRate) {
-            _updateRevenue(0, block.timestamp);
             return;
         }
 
@@ -232,16 +224,16 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
                 revert OracleLookupOutOfGas();
             }
             // Recoverable oracle failure (stale feed, misconfigured token, sequencer issue).
-            // Refresh the staleness timer with a zero report so the source ages out gracefully
-            // and recovers automatically on the next push once the upstream issue clears.
+            // Skip this rebase; the baseline already advanced, so subsequent reports remain
+            // anchored to the current rate and the source recovers automatically once the
+            // upstream issue clears.
             emit OracleLookupFailed(lowLevelRevertData);
-            _updateRevenue(0, block.timestamp);
             return;
         }
 
         uint256 revenueUSD = (revenueStEth * stEthUsdPrice) / PRICE_SCALE;
 
-        _updateRevenue(revenueUSD, block.timestamp);
+        _addRevenueUSD(revenueUSD);
     }
 
     /**
