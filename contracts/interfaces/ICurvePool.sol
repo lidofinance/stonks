@@ -16,4 +16,11 @@ interface ICurvePool {
     function price_oracle() external view returns (uint256);
 
     function coins(uint256 index_) external view returns (address);
+
+    function balances(uint256 index_) external view returns (uint256);
+
+    function calc_token_amount(uint256[2] calldata amounts_, bool isDeposit_)
+        external
+        view
+        returns (uint256);
 }
