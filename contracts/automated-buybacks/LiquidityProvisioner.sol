@@ -85,7 +85,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Gates `onStEthAllocated`. Held by the NESTController.
-    bytes32 public constant ALLOCATOR_ROLE = keccak256("NEST.ALLOCATOR_ROLE");
+    bytes32 public constant ALLOCATOR_ROLE = keccak256("NEST.LiquidityProvisioner.ALLOCATOR_ROLE");
 
     /// @notice 100% in basis points.
     uint256 public constant MAX_BASIS_POINTS = 10000;
