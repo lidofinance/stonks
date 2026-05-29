@@ -11,10 +11,14 @@ import {IStakingRouter} from "../../interfaces/IStakingRouter.sol";
 /**
  * @title StakingRevenueSource
  * @author swissarmytowel <info@lido.fi>
- * @notice Captures DAO treasury staking revenue from each Lido rebase. Reads
- *         `sharesMintedAsFees` directly from the `TokenRateNotifier` callback, splits it into
- *         the treasury portion using the current `StakingRouter` fee distribution, converts to
- *         USD via `OracleRouter`, and accumulates the result in the base class.
+ * @notice Captures DAO treasury staking revenue from each Lido rebase in two stages. The rebase
+ *         callback path (`pushTokenRate`) is oracle-free: it slices `sharesMintedAsFees` by the
+ *         treasury portion of the current fee split, converts shares to stETH at the
+ *         post-rebase rate, and accumulates the result in a pending stETH bucket. A separate
+ *         permissionless `convertPendingRevenueToUSD` call settles the bucket into the
+ *         cumulative USD accumulator using `OracleRouter`. This decoupling keeps the rebase
+ *         critical path free of Chainlink dependencies and turns oracle outages into deferred,
+ *         retryable conversions rather than lost revenue.
  * @dev    Must be registered as an observer on `TokenRateNotifier`. `REPORTER_ROLE` is granted
  *         to the notifier at construction so `pushTokenRate` is restricted to the rebase
  *         callback path. ERC165 support for `ITokenRatePusher.interfaceId` is required for
@@ -29,15 +33,16 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     ///         `TokenRateNotifier` only, blocking out-of-order calls between rebases.
     bytes32 public constant REPORTER_ROLE = keccak256("NEST.StakingRevenueSource.REPORTER_ROLE");
 
-    /// @notice USD amount precision alignment with `OracleRouter` output.
-    uint256 internal constant PRICE_SCALE = 1e18;
-
     /*//////////////////////////////////////////////////////////////
                               IMMUTABLES
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice `OracleRouter` used for stETH → USD conversion.
+    /// @notice `OracleRouter` used for stETH → USD conversion in
+    ///         `convertPendingRevenueToUSD`. Not touched on the rebase callback path.
     IOracleRouter public immutable ORACLE_ROUTER;
+
+    /// @notice Price unit used by `OracleRouter`.
+    uint256 public immutable PRICE_SCALE;
 
     /// @notice stETH token. Queried for share-to-stETH conversion at the post-rebase rate.
     IStETH public immutable STETH;
@@ -47,10 +52,20 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     IStakingRouter public immutable STAKING_ROUTER;
 
     /*//////////////////////////////////////////////////////////////
+                           STORAGE VARIABLES
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Treasury stETH accrued from rebases since the last successful conversion.
+    ///         Grows on every non-trivial `pushTokenRate`; cleared by
+    ///         `convertPendingRevenueToUSD`.
+    uint256 private _pendingRevenueStEth;
+
+    /*//////////////////////////////////////////////////////////////
                                 EVENTS
     //////////////////////////////////////////////////////////////*/
 
-    event OracleLookupFailed(bytes lowLevelRevertData);
+    event RevenueAccumulatedInStEth(uint256 stEthAmount, uint256 pendingRevenueStEth);
+    event PendingRevenueConverted(uint256 stEthConverted, uint256 stEthUsdPrice, uint256 revenueUSD);
 
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
@@ -60,7 +75,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     error InvalidStEthAddress(address stEth);
     error InvalidStakingRouterAddress(address stakingRouter);
     error InvalidTokenRateNotifierAddress(address tokenRateNotifier);
-    error OracleLookupOutOfGas();
+    error OracleReturnedZeroPrice();
 
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
@@ -96,6 +111,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
         }
 
         ORACLE_ROUTER = IOracleRouter(oracleRouter_);
+        PRICE_SCALE = IOracleRouter(oracleRouter_).PRICE_UNIT();
         STETH = IStETH(stEth_);
         STAKING_ROUTER = IStakingRouter(stakingRouter_);
 
@@ -109,19 +125,32 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     /**
      * @notice `ITokenRatePusher` callback invoked by `TokenRateNotifier` after each rebase.
      *         Slices the total minted fee shares by the treasury's share of the fee split,
-     *         converts to USD, and appends to the cumulative accumulator.
+     *         converts to stETH at the post-rebase rate, and queues the amount for later USD
+     *         conversion. Does not touch the `OracleRouter`.
      * @dev    The notifier wraps this call in try/catch, so reverts here are non-blocking and
-     *         surface as `PushTokenRateFailed` on the notifier. The `OracleRouter` lookup is
-     *         wrapped: a recoverable revert (e.g. stale feed) emits `OracleLookupFailed` and
-     *         skips this rebase; an empty revert (out-of-gas heuristic) propagates as
-     *         `OracleLookupOutOfGas` so the notifier surfaces a definitive failure rather than
-     *         silently skipping.
+     *         surface as `PushTokenRateFailed` on the notifier. The rebase critical path is
+     *         intentionally oracle-free: USD conversion is deferred to
+     *         `convertPendingRevenueToUSD`, so an oracle outage cannot cause a rebase-time
+     *         revert and cannot lose revenue — the stETH owed to the DAO sits in the pending
+     *         bucket until any caller settles it.
+     *
+     *         The signature mirrors `Lido.handlePostTokenRebase` so the notifier can forward
+     *         the full rebase payload to all observers uniformly. This source only consumes
+     *         `sharesMintedAsFees_`; the remaining parameters are accepted but ignored.
      * @param  sharesMintedAsFees_ Total fee shares minted by the protocol on this rebase, as
      *         passed through `TokenRateNotifier` from `Lido.handlePostTokenRebase`. Zero on
      *         rebases where no fees were minted (e.g. negative CL delta offset by EL rewards
      *         that lift the rate but produce no protocol fees).
      */
-    function pushTokenRate(uint256 sharesMintedAsFees_) external onlyRole(REPORTER_ROLE) {
+    function pushTokenRate(
+        uint256 /* reportTimestamp_ */,
+        uint256 /* timeElapsed_ */,
+        uint256 /* preTotalShares_ */,
+        uint256 /* preTotalEther_ */,
+        uint256 /* postTotalShares_ */,
+        uint256 /* postTotalEther_ */,
+        uint256 sharesMintedAsFees_
+    ) external onlyRole(REPORTER_ROLE) {
         if (sharesMintedAsFees_ == 0) {
             return;
         }
@@ -144,30 +173,49 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
         // reflects the new period.
         uint256 treasuryStEth = STETH.getPooledEthByShares(treasuryShares);
 
-        uint256 stEthUsdPrice;
-        try ORACLE_ROUTER.getUsdPrices(address(STETH), address(STETH)) returns (
-            uint256 priceUSD,
-            uint256 /* quoteUsdPrice */
-        ) {
-            stEthUsdPrice = priceUSD;
-        } catch (bytes memory lowLevelRevertData) {
-            // Empty revert data is the canonical out-of-gas signature: every revert path in
-            // `OracleRouter` carries a named custom error. Propagate as an explicit revert so
-            // the notifier's `PushTokenRateFailed` event signals a hard failure rather than a
-            // silently dropped rebase.
-            if (lowLevelRevertData.length == 0) {
-                revert OracleLookupOutOfGas();
-            }
-            // Recoverable oracle failure (stale feed, misconfigured token, sequencer issue).
-            // Skip this rebase; the protocol resumes accounting on the next push once the
-            // upstream issue clears.
-            emit OracleLookupFailed(lowLevelRevertData);
+        uint256 newPending = _pendingRevenueStEth + treasuryStEth;
+        _pendingRevenueStEth = newPending;
+        emit RevenueAccumulatedInStEth(treasuryStEth, newPending);
+    }
+
+    /**
+     * @notice Converts the pending stETH revenue bucket to USD and appends to the cumulative
+     *         accumulator. Permissionless: any caller can settle the bucket once the oracle is
+     *         healthy.
+     * @dev    Reverts naturally if the `OracleRouter` reverts (caller retries when feeds
+     *         recover) or if the router returns a zero price (treated as a degraded read; the
+     *         bucket is preserved for retry). On success the pending bucket is cleared
+     *         atomically with the cumulative write, so the conversion is single-shot per
+     *         settlement cycle. A no-op (return) when the bucket is empty so cheap polling does
+     *         not waste caller gas with reverts.
+     */
+    function convertPendingRevenueToUSD() external {
+        uint256 pending = _pendingRevenueStEth;
+        if (pending == 0) {
             return;
         }
 
-        uint256 revenueUSD = (treasuryStEth * stEthUsdPrice) / PRICE_SCALE;
+        (uint256 stEthUsdPrice, ) = ORACLE_ROUTER.getUsdPrices(address(STETH), address(STETH));
+        if (stEthUsdPrice == 0) {
+            revert OracleReturnedZeroPrice();
+        }
 
+        uint256 revenueUSD = (pending * stEthUsdPrice) / PRICE_SCALE;
+
+        _pendingRevenueStEth = 0;
         _addRevenueUSD(revenueUSD);
+        emit PendingRevenueConverted(pending, stEthUsdPrice, revenueUSD);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        EXTERNAL VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Pending stETH awaiting USD conversion.
+     */
+    function getPendingRevenueStEth() external view returns (uint256) {
+        return _pendingRevenueStEth;
     }
 
     /*//////////////////////////////////////////////////////////////

@@ -17,8 +17,7 @@ abstract contract RevenueSource is IRevenueSource, AccessControlEnumerable {
                            STORAGE VARIABLES
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Monotonic cumulative revenue in 1e18-scaled USD. Advances on every accepted
-    ///         report. Cleared only by `resetCumulativeRevenueUSD`.
+    /// @notice Monotonic cumulative revenue in 1e18-scaled USD.
     uint256 private _cumulativeRevenueUSD;
 
     /*//////////////////////////////////////////////////////////////
@@ -26,7 +25,6 @@ abstract contract RevenueSource is IRevenueSource, AccessControlEnumerable {
     //////////////////////////////////////////////////////////////*/
 
     event RevenueAdded(uint256 amountUSD, uint256 cumulativeRevenueUSD);
-    event CumulativeRevenueReset(uint256 previousCumulativeRevenueUSD);
 
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
@@ -51,29 +49,11 @@ abstract contract RevenueSource is IRevenueSource, AccessControlEnumerable {
     }
 
     /*//////////////////////////////////////////////////////////////
-                           EXTERNAL FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Clears the cumulative revenue accumulator.
-     * @dev    Safety hatch for state migrations and for resynchronizing the source after the
-     *         consumer's matching spend accumulator has been reset. Without this, a reset on
-     *         the consumer side would re-expose the entire historical cumulative as fresh
-     *         surplus on the next aggregation.
-     */
-    function resetCumulativeRevenueUSD() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        uint256 previous = _cumulativeRevenueUSD;
-        _cumulativeRevenueUSD = 0;
-        emit CumulativeRevenueReset(previous);
-    }
-
-    /*//////////////////////////////////////////////////////////////
                         EXTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Monotonic cumulative revenue contributed by this source since the last
-     *         `resetCumulativeRevenueUSD` (or since deployment).
+     * @notice Monotonic cumulative revenue contributed by this source since deployment.
      * @return Cumulative revenue in 1e18-scaled USD.
      */
     function getCumulativeRevenueUSD() external view returns (uint256) {
