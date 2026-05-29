@@ -24,16 +24,7 @@ interface ILiquidityProvisioner {
 
     function setOperatingMode(bool lpModeEnabled_, address stonks_) external;
 
-    function placeOrder(uint256 minBuyAmount_) external returns (address newOrder);
-
-    function placeOrderWithAmount(
-        uint256 sellAmount_,
-        uint256 minBuyAmount_
-    ) external returns (address newOrder);
-
-    function retryFromStonks() external returns (address newOrder);
-
-    function recoverStaleOrder(address order_) external;
+    function placeOrder() external returns (address newOrder);
 
     function pauseStonksCreation() external;
 
@@ -44,6 +35,4 @@ interface ILiquidityProvisioner {
     function unpauseStonksSignatures() external;
 
     function getPlacementStatus() external view returns (PlacementStatus memory);
-
-    function canRetryFromStonks() external view returns (bool);
 }
