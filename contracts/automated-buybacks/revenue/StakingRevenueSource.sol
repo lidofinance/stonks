@@ -3,7 +3,7 @@
 pragma solidity 0.8.23;
 
 import {RevenueSource} from "./RevenueSource.sol";
-import {ITokenRatePusher} from "../../interfaces/ITokenRatePusher.sol";
+import {ITokenRatePusherWithArgs} from "../../interfaces/ITokenRatePusherWithArgs.sol";
 import {IOracleRouter} from "../../interfaces/IOracleRouter.sol";
 import {IStETH} from "../../interfaces/IStETH.sol";
 import {IStakingRouter} from "../../interfaces/IStakingRouter.sol";
@@ -21,10 +21,11 @@ import {IStakingRouter} from "../../interfaces/IStakingRouter.sol";
  *         retryable conversions rather than lost revenue.
  * @dev    Must be registered as an observer on `TokenRateNotifier`. `REPORTER_ROLE` is granted
  *         to the notifier at construction so `pushTokenRate` is restricted to the rebase
- *         callback path. ERC165 support for `ITokenRatePusher.interfaceId` is required for
- *         registration.
+ *         callback path. ERC165 support for `ITokenRatePusherWithArgs.interfaceId` is required
+ *         so `TokenRateNotifier.addObserver` auto-detects the args-bearing flavor and forwards
+ *         the full rebase payload.
  */
-contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
+contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
     /*//////////////////////////////////////////////////////////////
                                CONSTANTS
     //////////////////////////////////////////////////////////////*/
@@ -123,7 +124,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice `ITokenRatePusher` callback invoked by `TokenRateNotifier` after each rebase.
+     * @notice `ITokenRatePusherWithArgs` callback invoked by `TokenRateNotifier` after each rebase.
      *         Slices the total minted fee shares by the treasury's share of the fee split,
      *         converts to stETH at the post-rebase rate, and queues the amount for later USD
      *         conversion. Does not touch the `OracleRouter`.
@@ -225,11 +226,12 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusher {
     /**
      * @notice ERC165 entry point. Queried by `TokenRateNotifier.addObserver` during registration.
      * @param  interfaceId_ Interface identifier to probe.
-     * @return `true` for `ITokenRatePusher` and any interface accepted by the inheritance chain.
+     * @return `true` for `ITokenRatePusherWithArgs` and any interface accepted by the
+     *         inheritance chain.
      */
     function supportsInterface(bytes4 interfaceId_) public view override returns (bool) {
         return
-            interfaceId_ == type(ITokenRatePusher).interfaceId ||
+            interfaceId_ == type(ITokenRatePusherWithArgs).interfaceId ||
             super.supportsInterface(interfaceId_);
     }
 }

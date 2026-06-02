@@ -562,13 +562,19 @@ describe('StakingRevenueSource', function () {
       await snapshot.restore()
     })
 
-    it('should return true for ITokenRatePusher.interfaceId', async function () {
+    it('should return true for ITokenRatePusherWithArgs.interfaceId', async function () {
       const interfaceId = ethers
         .id(
           'pushTokenRate(uint256,uint256,uint256,uint256,uint256,uint256,uint256)'
         )
         .substring(0, 10) as `0x${string}`
       expect(await subject.supportsInterface(interfaceId)).to.equal(true)
+    })
+
+    it('should NOT return true for the no-arg ITokenRatePusher.interfaceId', async function () {
+      // Notifier dispatches WithArgs only when the no-arg flavor is not claimed.
+      const noArgInterfaceId = ethers.id('pushTokenRate()').substring(0, 10) as `0x${string}`
+      expect(await subject.supportsInterface(noArgInterfaceId)).to.equal(false)
     })
 
     it('should return true for the inherited IAccessControl.interfaceId', async function () {
