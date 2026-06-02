@@ -6,12 +6,30 @@ import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
 
 /**
  * @title StakingRevenueSource stubs
- * @notice Minimal test doubles for the three external dependencies consumed by
- *         `StakingRevenueSource.pushTokenRate`: stETH share→ETH conversion, StakingRouter fee
- *         distribution, and OracleRouter USD price. Each stub exposes a setter so the test
- *         writer can script precise branch coverage. Unused interface methods are omitted to
- *         keep ABIs tight.
+ * @notice Minimal test doubles for the external dependencies consumed by
+ *         `StakingRevenueSource`: stETH share→ETH conversion, StakingRouter fee distribution,
+ *         OracleRouter USD price, and LidoLocator service discovery. Each stub exposes a
+ *         setter so the test writer can script precise branch coverage. Unused interface
+ *         methods are omitted to keep ABIs tight.
  */
+
+contract LidoLocatorStub {
+    address public lido;
+    address public stakingRouter;
+    address public postTokenRebaseReceiver;
+
+    function setLido(address lido_) external {
+        lido = lido_;
+    }
+
+    function setStakingRouter(address stakingRouter_) external {
+        stakingRouter = stakingRouter_;
+    }
+
+    function setPostTokenRebaseReceiver(address receiver_) external {
+        postTokenRebaseReceiver = receiver_;
+    }
+}
 
 contract StEthSharesStub {
     /// @notice stETH per share, scaled to `1e18` (1e18 == 1.0 stETH per share).

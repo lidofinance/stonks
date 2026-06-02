@@ -1,11 +1,8 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
-import { Signer } from 'ethers'
 import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 
 import { RevenueSourceHarness, RevenueSourceHarness__factory } from '../../../typechain-types'
-
-const DEFAULT_ADMIN_ROLE = ethers.ZeroHash
 
 const ONE_USD = ethers.parseEther('1')
 const SAMPLE_REVENUE_USD = ethers.parseEther('1000')
@@ -13,13 +10,10 @@ const SAMPLE_REVENUE_USD = ethers.parseEther('1000')
 describe('RevenueSource', function () {
   let factory: RevenueSourceHarness__factory
   let subject: RevenueSourceHarness
-  let admin: Signer
   let topSnapshot: SnapshotRestorer
 
   before(async function () {
     topSnapshot = await takeSnapshot()
-    ;[admin] = await ethers.getSigners()
-
     factory = await ethers.getContractFactory('RevenueSourceHarness')
   })
 
@@ -28,7 +22,7 @@ describe('RevenueSource', function () {
   })
 
   async function deploy() {
-    const instance = await factory.deploy(await admin.getAddress())
+    const instance = await factory.deploy()
     await instance.waitForDeployment()
     return instance
   }
@@ -45,22 +39,8 @@ describe('RevenueSource', function () {
       await snapshot.restore()
     })
 
-    it('should expose DEFAULT_ADMIN_ROLE as bytes32(0)', async function () {
-      expect(await subject.DEFAULT_ADMIN_ROLE()).to.equal(DEFAULT_ADMIN_ROLE)
-    })
-
-    it('should grant DEFAULT_ADMIN_ROLE to admin_', async function () {
-      expect(await subject.hasRole(DEFAULT_ADMIN_ROLE, await admin.getAddress())).to.equal(true)
-    })
-
     it('should initialize the cumulative revenue accumulator at zero', async function () {
       expect(await subject.getCumulativeRevenueUSD()).to.equal(0n)
-    })
-
-    it('should revert with InvalidAdminAddress when admin_ is zero', async function () {
-      await expect(factory.deploy(ethers.ZeroAddress))
-        .to.be.revertedWithCustomError(factory, 'InvalidAdminAddress')
-        .withArgs(ethers.ZeroAddress)
     })
   })
 
@@ -121,5 +101,4 @@ describe('RevenueSource', function () {
       expect(await subject.getCumulativeRevenueUSD()).to.equal(max)
     })
   })
-
 })

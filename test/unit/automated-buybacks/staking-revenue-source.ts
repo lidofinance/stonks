@@ -12,9 +12,10 @@ import {
   StakingRouterStub__factory,
   OracleRouterUsdStub,
   OracleRouterUsdStub__factory,
+  LidoLocatorStub,
+  LidoLocatorStub__factory,
 } from '../../../typechain-types'
 
-const DEFAULT_ADMIN_ROLE = ethers.ZeroHash
 const PRICE_SCALE = 10n ** 18n
 
 const BASE_PRECISION = 10_000n
@@ -30,7 +31,7 @@ const NOMINAL_FEE_SHARES = ethers.parseEther('1000')
 
 // Placeholder values for the rebase-payload parameters that `StakingRevenueSource` does not
 // consume. Their values do not affect any branch of `pushTokenRate`; they exist only so the
-// call satisfies the 7-argument `ITokenRatePusher` signature.
+// call satisfies the 7-argument `ITokenRatePusherWithArgs` signature.
 const PUSH_IGNORED = {
   reportTimestamp: 1n,
   timeElapsed: 1n,
@@ -64,11 +65,6 @@ enum OracleFailureMode {
   EmptyRevert = 2,
 }
 
-const missingRoleRegex = (account: string, role: string) =>
-  new RegExp(
-    `AccessControl: account ${account.toLowerCase()} is missing role ${role.toLowerCase()}`
-  )
-
 function expectedTreasuryStEth(
   sharesMintedAsFees: bigint,
   treasuryFee: bigint,
@@ -100,10 +96,12 @@ describe('StakingRevenueSource', function () {
   let stEthStub: StEthSharesStub
   let stakingRouterStub: StakingRouterStub
   let oracleStub: OracleRouterUsdStub
+  let locatorStub: LidoLocatorStub
 
   let admin: Signer
   let notifier: Signer
   let stranger: Signer
+  let altNotifier: Signer
 
   let topSnapshot: SnapshotRestorer
 
@@ -111,32 +109,32 @@ describe('StakingRevenueSource', function () {
     stEth: StEthSharesStub
     stakingRouter: StakingRouterStub
     oracle: OracleRouterUsdStub
+    locator: LidoLocatorStub
   }> {
     const stEth = await new StEthSharesStub__factory(admin).deploy(INITIAL_POOLED_ETH_PER_SHARE)
     const stakingRouter = await new StakingRouterStub__factory(admin).deploy()
     const oracle = await new OracleRouterUsdStub__factory(admin).deploy()
+    const locator = await new LidoLocatorStub__factory(admin).deploy()
 
     await stakingRouter.setFeeDistribution(MODULES_FEE, TREASURY_FEE, BASE_PRECISION)
     await oracle.setUsdPrice(STETH_USD_PRICE, STETH_USD_PRICE)
 
-    return { stEth, stakingRouter, oracle }
+    await locator.setLido(await stEth.getAddress())
+    await locator.setStakingRouter(await stakingRouter.getAddress())
+    await locator.setPostTokenRebaseReceiver(await notifier.getAddress())
+
+    return { stEth, stakingRouter, oracle, locator }
   }
 
   async function deploySubject(
     overrides: {
-      admin?: string
       oracleRouter?: string
-      stEth?: string
-      stakingRouter?: string
-      tokenRateNotifier?: string
+      lidoLocator?: string
     } = {}
   ) {
     const instance = await factory.deploy(
-      overrides.admin ?? (await admin.getAddress()),
       overrides.oracleRouter ?? (await oracleStub.getAddress()),
-      overrides.stEth ?? (await stEthStub.getAddress()),
-      overrides.stakingRouter ?? (await stakingRouterStub.getAddress()),
-      overrides.tokenRateNotifier ?? (await notifier.getAddress())
+      overrides.lidoLocator ?? (await locatorStub.getAddress())
     )
     await instance.waitForDeployment()
     return instance
@@ -144,7 +142,7 @@ describe('StakingRevenueSource', function () {
 
   before(async function () {
     topSnapshot = await takeSnapshot()
-    ;[admin, notifier, stranger] = await ethers.getSigners()
+    ;[admin, notifier, stranger, altNotifier] = await ethers.getSigners()
 
     factory = await ethers.getContractFactory('StakingRevenueSource')
   })
@@ -158,6 +156,7 @@ describe('StakingRevenueSource', function () {
     stEthStub = stubs.stEth
     stakingRouterStub = stubs.stakingRouter
     oracleStub = stubs.oracle
+    locatorStub = stubs.locator
   })
 
   describe('deployment:', function () {
@@ -172,71 +171,25 @@ describe('StakingRevenueSource', function () {
       await snapshot.restore()
     })
 
-    it('should revert with InvalidAdminAddress when admin_ is zero', async function () {
-      await expect(deploySubject({ admin: ethers.ZeroAddress }))
-        .to.be.revertedWithCustomError(factory, 'InvalidAdminAddress')
-        .withArgs(ethers.ZeroAddress)
-    })
-
     it('should revert with InvalidOracleRouterAddress when oracle is zero', async function () {
       await expect(deploySubject({ oracleRouter: ethers.ZeroAddress }))
         .to.be.revertedWithCustomError(factory, 'InvalidOracleRouterAddress')
         .withArgs(ethers.ZeroAddress)
     })
 
-    it('should revert with InvalidStEthAddress when stEth is zero', async function () {
-      await expect(deploySubject({ stEth: ethers.ZeroAddress }))
-        .to.be.revertedWithCustomError(factory, 'InvalidStEthAddress')
+    it('should revert with InvalidLidoLocatorAddress when locator is zero', async function () {
+      await expect(deploySubject({ lidoLocator: ethers.ZeroAddress }))
+        .to.be.revertedWithCustomError(factory, 'InvalidLidoLocatorAddress')
         .withArgs(ethers.ZeroAddress)
     })
 
-    it('should revert with InvalidStakingRouterAddress when staking router is zero', async function () {
-      await expect(deploySubject({ stakingRouter: ethers.ZeroAddress }))
-        .to.be.revertedWithCustomError(factory, 'InvalidStakingRouterAddress')
-        .withArgs(ethers.ZeroAddress)
-    })
-
-    it('should revert with InvalidTokenRateNotifierAddress when notifier is zero', async function () {
-      await expect(deploySubject({ tokenRateNotifier: ethers.ZeroAddress }))
-        .to.be.revertedWithCustomError(factory, 'InvalidTokenRateNotifierAddress')
-        .withArgs(ethers.ZeroAddress)
-    })
-
-    it('should expose REPORTER_ROLE as the namespaced keccak hash', async function () {
-      const expected = ethers.keccak256(
-        ethers.toUtf8Bytes('NEST.StakingRevenueSource.REPORTER_ROLE')
-      )
-      expect(await subject.REPORTER_ROLE()).to.equal(expected)
-    })
-
-    it('should store all external-dependency addresses as immutables', async function () {
+    it('should store ORACLE_ROUTER and LIDO_LOCATOR as immutables', async function () {
       expect(await subject.ORACLE_ROUTER()).to.equal(await oracleStub.getAddress())
-      expect(await subject.STETH()).to.equal(await stEthStub.getAddress())
-      expect(await subject.STAKING_ROUTER()).to.equal(await stakingRouterStub.getAddress())
+      expect(await subject.LIDO_LOCATOR()).to.equal(await locatorStub.getAddress())
     })
 
     it('should cache PRICE_SCALE from the OracleRouter at construction', async function () {
       expect(await subject.PRICE_SCALE()).to.equal(await oracleStub.PRICE_UNIT())
-    })
-
-    it('should grant DEFAULT_ADMIN_ROLE to admin_', async function () {
-      expect(await subject.hasRole(DEFAULT_ADMIN_ROLE, await admin.getAddress())).to.equal(true)
-    })
-
-    it('should grant REPORTER_ROLE to tokenRateNotifier_', async function () {
-      const reporterRole = await subject.REPORTER_ROLE()
-      expect(await subject.hasRole(reporterRole, await notifier.getAddress())).to.equal(true)
-    })
-
-    it('should NOT grant REPORTER_ROLE to admin_', async function () {
-      const reporterRole = await subject.REPORTER_ROLE()
-      expect(await subject.hasRole(reporterRole, await admin.getAddress())).to.equal(false)
-    })
-
-    it('should register exactly one REPORTER_ROLE member', async function () {
-      const reporterRole = await subject.REPORTER_ROLE()
-      expect(await subject.getRoleMemberCount(reporterRole)).to.equal(1n)
-      expect(await subject.getRoleMember(reporterRole, 0n)).to.equal(await notifier.getAddress())
     })
 
     it('should initialize cumulative and pending accumulators at zero', async function () {
@@ -257,33 +210,45 @@ describe('StakingRevenueSource', function () {
       await snapshot.restore()
     })
 
-    describe('access control:', function () {
-      it('should revert when called by admin lacking REPORTER_ROLE', async function () {
+    describe('authorization:', function () {
+      it('should revert with UnauthorizedCaller when called by admin', async function () {
         const adminAddr = await admin.getAddress()
-        const reporterRole = await subject.REPORTER_ROLE()
-        await expect(pushSharesMinted(subject, admin, NOMINAL_FEE_SHARES)).to.be.revertedWith(
-          missingRoleRegex(adminAddr, reporterRole)
-        )
+        await expect(pushSharesMinted(subject, admin, NOMINAL_FEE_SHARES))
+          .to.be.revertedWithCustomError(subject, 'UnauthorizedCaller')
+          .withArgs(adminAddr)
       })
 
-      it('should revert when called by an unrelated stranger', async function () {
+      it('should revert with UnauthorizedCaller when called by an unrelated stranger', async function () {
         const strangerAddr = await stranger.getAddress()
-        const reporterRole = await subject.REPORTER_ROLE()
-        await expect(pushSharesMinted(subject, stranger, NOMINAL_FEE_SHARES)).to.be.revertedWith(
-          missingRoleRegex(strangerAddr, reporterRole)
-        )
+        await expect(pushSharesMinted(subject, stranger, NOMINAL_FEE_SHARES))
+          .to.be.revertedWithCustomError(subject, 'UnauthorizedCaller')
+          .withArgs(strangerAddr)
       })
 
-      it('should revert after REPORTER_ROLE is revoked from the notifier', async function () {
+      it('should accept the caller currently registered as postTokenRebaseReceiver', async function () {
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)).to.not.be.reverted
+      })
+
+      it('self-heal: a locator upgrade that retargets the receiver auto-grants the new caller', async function () {
+        // The original notifier is no longer the receiver after the locator update.
+        await locatorStub.setPostTokenRebaseReceiver(await altNotifier.getAddress())
+
         const notifierAddr = await notifier.getAddress()
-        const reporterRole = await subject.REPORTER_ROLE()
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.be.revertedWithCustomError(subject, 'UnauthorizedCaller')
+          .withArgs(notifierAddr)
 
-        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
-        await subject.connect(admin).revokeRole(reporterRole, notifierAddr)
+        // The newly-pointed receiver can push without any contract-side governance action.
+        await expect(pushSharesMinted(subject, altNotifier, NOMINAL_FEE_SHARES)).to.not.be.reverted
+      })
 
-        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)).to.be.revertedWith(
-          missingRoleRegex(notifierAddr, reporterRole)
-        )
+      it('should revert UnauthorizedCaller when locator reports zero receiver', async function () {
+        await locatorStub.setPostTokenRebaseReceiver(ethers.ZeroAddress)
+
+        const notifierAddr = await notifier.getAddress()
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.be.revertedWithCustomError(subject, 'UnauthorizedCaller')
+          .withArgs(notifierAddr)
       })
     })
 
@@ -357,6 +322,27 @@ describe('StakingRevenueSource', function () {
           .to.emit(subject, 'RevenueAccumulatedInStEth')
           .withArgs(secondStEth, firstStEth + secondStEth)
       })
+
+      it('should pick up the new StakingRouter address if the locator is upgraded', async function () {
+        // Deploy a second StakingRouter stub with a different fee split. After the locator is
+        // retargeted, the contract must use the new router's split.
+        const newStakingRouter = await new StakingRouterStub__factory(admin).deploy()
+        const newModulesFee = 700n
+        const newTreasuryFee = 300n
+        await newStakingRouter.setFeeDistribution(newModulesFee, newTreasuryFee, BASE_PRECISION)
+        await locatorStub.setStakingRouter(await newStakingRouter.getAddress())
+
+        const expectedStEth = expectedTreasuryStEth(
+          NOMINAL_FEE_SHARES,
+          newTreasuryFee,
+          newModulesFee,
+          INITIAL_POOLED_ETH_PER_SHARE
+        )
+
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.emit(subject, 'RevenueAccumulatedInStEth')
+          .withArgs(expectedStEth, expectedStEth)
+      })
     })
 
     describe('zero-input fast paths:', function () {
@@ -403,7 +389,6 @@ describe('StakingRevenueSource', function () {
           .withArgs(1n, 1n)
       })
     })
-
   })
 
   describe('#convertPendingRevenueToUSD', function () {
@@ -564,40 +549,22 @@ describe('StakingRevenueSource', function () {
 
     it('should return true for ITokenRatePusherWithArgs.interfaceId', async function () {
       const interfaceId = ethers
-        .id(
-          'pushTokenRate(uint256,uint256,uint256,uint256,uint256,uint256,uint256)'
-        )
+        .id('pushTokenRate(uint256,uint256,uint256,uint256,uint256,uint256,uint256)')
         .substring(0, 10) as `0x${string}`
       expect(await subject.supportsInterface(interfaceId)).to.equal(true)
     })
 
+    it('should return true for IERC165.interfaceId', async function () {
+      expect(await subject.supportsInterface('0x01ffc9a7')).to.equal(true)
+    })
+
     it('should NOT return true for the no-arg ITokenRatePusher.interfaceId', async function () {
-      // Notifier dispatches WithArgs only when the no-arg flavor is not claimed.
       const noArgInterfaceId = ethers.id('pushTokenRate()').substring(0, 10) as `0x${string}`
       expect(await subject.supportsInterface(noArgInterfaceId)).to.equal(false)
     })
 
-    it('should return true for the inherited IAccessControl.interfaceId', async function () {
-      // OZ v4.9.3 AccessControl returns `true` for its own interfaceId (0x7965db0b).
-      const interfaceId = '0x7965db0b'
-      expect(await subject.supportsInterface(interfaceId)).to.equal(true)
-    })
-
-    it('should return true for the inherited IAccessControlEnumerable.interfaceId', async function () {
-      // XOR of getRoleMember(bytes32,uint256) and getRoleMemberCount(bytes32) selectors.
-      const interfaceId = '0x5a05180f'
-      expect(await subject.supportsInterface(interfaceId)).to.equal(true)
-    })
-
-    it('should return true for IERC165.interfaceId', async function () {
-      const interfaceId = '0x01ffc9a7'
-      expect(await subject.supportsInterface(interfaceId)).to.equal(true)
-    })
-
     it('should return false for an unrelated interface id', async function () {
-      const interfaceId = '0xdeadbeef'
-      expect(await subject.supportsInterface(interfaceId)).to.equal(false)
+      expect(await subject.supportsInterface('0xdeadbeef')).to.equal(false)
     })
   })
-
 })

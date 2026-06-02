@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.23;
 
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {RevenueSource} from "./RevenueSource.sol";
 import {ITokenRatePusherWithArgs} from "../../interfaces/ITokenRatePusherWithArgs.sol";
 import {IOracleRouter} from "../../interfaces/IOracleRouter.sol";
+import {ILidoLocator} from "../../interfaces/ILidoLocator.sol";
 import {IStETH} from "../../interfaces/IStETH.sol";
 import {IStakingRouter} from "../../interfaces/IStakingRouter.sol";
 
@@ -16,24 +18,15 @@ import {IStakingRouter} from "../../interfaces/IStakingRouter.sol";
  *         treasury portion of the current fee split, converts shares to stETH at the
  *         post-rebase rate, and accumulates the result in a pending stETH bucket. A separate
  *         permissionless `convertPendingRevenueToUSD` call settles the bucket into the
- *         cumulative USD accumulator using `OracleRouter`. This decoupling keeps the rebase
- *         critical path free of Chainlink dependencies and turns oracle outages into deferred,
- *         retryable conversions rather than lost revenue.
- * @dev    Must be registered as an observer on `TokenRateNotifier`. `REPORTER_ROLE` is granted
- *         to the notifier at construction so `pushTokenRate` is restricted to the rebase
- *         callback path. ERC165 support for `ITokenRatePusherWithArgs.interfaceId` is required
- *         so `TokenRateNotifier.addObserver` auto-detects the args-bearing flavor and forwards
- *         the full rebase payload.
+ *         cumulative USD accumulator using `OracleRouter`. Decoupling keeps the rebase critical
+ *         path free of Chainlink dependencies and turns oracle outages into deferred, retryable
+ *         conversions rather than lost revenue.
+ * @dev    Must be registered as an observer on the `TokenRateNotifier` referenced by
+ *         `LidoLocator.postTokenRebaseReceiver`.
+ *         ERC165 support for `ITokenRatePusherWithArgs.interfaceId` is required so
+ *         `TokenRateNotifier.addObserver` auto-detects the args-bearing flavor.
  */
-contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
-    /*//////////////////////////////////////////////////////////////
-                               CONSTANTS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Role authorizing `pushTokenRate`. Granted at construction to the
-    ///         `TokenRateNotifier` only, blocking out-of-order calls between rebases.
-    bytes32 public constant REPORTER_ROLE = keccak256("NEST.StakingRevenueSource.REPORTER_ROLE");
-
+contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC165 {
     /*//////////////////////////////////////////////////////////////
                               IMMUTABLES
     //////////////////////////////////////////////////////////////*/
@@ -42,15 +35,11 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
     ///         `convertPendingRevenueToUSD`. Not touched on the rebase callback path.
     IOracleRouter public immutable ORACLE_ROUTER;
 
-    /// @notice Price unit used by `OracleRouter`.
+    /// @notice Price unit reported by `OracleRouter`.
     uint256 public immutable PRICE_SCALE;
 
-    /// @notice stETH token. Queried for share-to-stETH conversion at the post-rebase rate.
-    IStETH public immutable STETH;
-
-    /// @notice Lido `StakingRouter`. Queried at call time for the modules/treasury fee split
-    ///         used to slice `sharesMintedAsFees`.
-    IStakingRouter public immutable STAKING_ROUTER;
+    /// @notice `LidoLocator` instance.
+    ILidoLocator public immutable LIDO_LOCATOR;
 
     /*//////////////////////////////////////////////////////////////
                            STORAGE VARIABLES
@@ -73,9 +62,8 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
     //////////////////////////////////////////////////////////////*/
 
     error InvalidOracleRouterAddress(address oracleRouter);
-    error InvalidStEthAddress(address stEth);
-    error InvalidStakingRouterAddress(address stakingRouter);
-    error InvalidTokenRateNotifierAddress(address tokenRateNotifier);
+    error InvalidLidoLocatorAddress(address lidoLocator);
+    error UnauthorizedCaller(address caller);
     error OracleReturnedZeroPrice();
 
     /*//////////////////////////////////////////////////////////////
@@ -83,40 +71,24 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Wires external dependencies and grants `REPORTER_ROLE` to `tokenRateNotifier_`.
-     * @param  admin_ Initial admin. Non-zero. Forwarded to `RevenueSource`.
+     * @notice Wires external dependencies. Only `OracleRouter` and `LidoLocator` references are
+     *         stored on this contract; all Lido infrastructure addresses (`lido`,
+     *         `stakingRouter`, `postTokenRebaseReceiver`) are resolved live from the locator on
+     *         each call so locator upgrades are transparently auto-followed.
      * @param  oracleRouter_ `OracleRouter` for stETH → USD conversion. Non-zero.
-     * @param  stEth_ stETH token. Non-zero.
-     * @param  stakingRouter_ Lido `StakingRouter` for fee distribution lookups. Non-zero.
-     * @param  tokenRateNotifier_ Authorized caller of `pushTokenRate`. Non-zero. Granted
-     *         `REPORTER_ROLE`.
+     * @param  lidoLocator_  `LidoLocator` for resolving Lido infrastructure. Non-zero.
      */
-    constructor(
-        address admin_,
-        address oracleRouter_,
-        address stEth_,
-        address stakingRouter_,
-        address tokenRateNotifier_
-    ) RevenueSource(admin_) {
+    constructor(address oracleRouter_, address lidoLocator_) {
         if (oracleRouter_ == address(0)) {
             revert InvalidOracleRouterAddress(oracleRouter_);
         }
-        if (stEth_ == address(0)) {
-            revert InvalidStEthAddress(stEth_);
-        }
-        if (stakingRouter_ == address(0)) {
-            revert InvalidStakingRouterAddress(stakingRouter_);
-        }
-        if (tokenRateNotifier_ == address(0)) {
-            revert InvalidTokenRateNotifierAddress(tokenRateNotifier_);
+        if (lidoLocator_ == address(0)) {
+            revert InvalidLidoLocatorAddress(lidoLocator_);
         }
 
         ORACLE_ROUTER = IOracleRouter(oracleRouter_);
         PRICE_SCALE = IOracleRouter(oracleRouter_).PRICE_UNIT();
-        STETH = IStETH(stEth_);
-        STAKING_ROUTER = IStakingRouter(stakingRouter_);
-
-        _grantRole(REPORTER_ROLE, tokenRateNotifier_);
+        LIDO_LOCATOR = ILidoLocator(lidoLocator_);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -124,16 +96,17 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice `ITokenRatePusherWithArgs` callback invoked by `TokenRateNotifier` after each rebase.
-     *         Slices the total minted fee shares by the treasury's share of the fee split,
-     *         converts to stETH at the post-rebase rate, and queues the amount for later USD
-     *         conversion. Does not touch the `OracleRouter`.
-     * @dev    The notifier wraps this call in try/catch, so reverts here are non-blocking and
-     *         surface as `PushTokenRateFailed` on the notifier. The rebase critical path is
-     *         intentionally oracle-free: USD conversion is deferred to
-     *         `convertPendingRevenueToUSD`, so an oracle outage cannot cause a rebase-time
-     *         revert and cannot lose revenue — the stETH owed to the DAO sits in the pending
-     *         bucket until any caller settles it.
+     * @notice `ITokenRatePusherWithArgs` callback invoked by `TokenRateNotifier` after each
+     *         rebase. Slices the total minted fee shares by the treasury's share of the fee
+     *         split, converts to stETH at the post-rebase rate, and queues the amount for
+     *         later USD conversion. Does not touch the `OracleRouter`.
+     * @dev    Authorization is checked live against `LIDO_LOCATOR.postTokenRebaseReceiver()` so
+     *         a locator upgrade that retargets the receiver is auto-followed. The notifier
+     *         wraps this call in try/catch, so reverts here are non-blocking and surface as
+     *         `PushTokenRateFailed` on the notifier. The rebase critical path is intentionally
+     *         oracle-free: USD conversion is deferred to `convertPendingRevenueToUSD`, so an
+     *         oracle outage cannot cause a rebase-time revert and cannot lose revenue — the
+     *         stETH owed to the DAO sits in the pending bucket until any caller settles it.
      *
      *         The signature mirrors `Lido.handlePostTokenRebase` so the notifier can forward
      *         the full rebase payload to all observers uniformly. This source only consumes
@@ -151,12 +124,16 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
         uint256 /* postTotalShares_ */,
         uint256 /* postTotalEther_ */,
         uint256 sharesMintedAsFees_
-    ) external onlyRole(REPORTER_ROLE) {
+    ) external {
+        if (msg.sender != LIDO_LOCATOR.postTokenRebaseReceiver()) {
+            revert UnauthorizedCaller(msg.sender);
+        }
+
         if (sharesMintedAsFees_ == 0) {
             return;
         }
 
-        (uint256 modulesFee, uint256 treasuryFee, ) = STAKING_ROUTER
+        (uint256 modulesFee, uint256 treasuryFee, ) = IStakingRouter(LIDO_LOCATOR.stakingRouter())
             .getStakingFeeAggregateDistribution();
 
         // Treasury's slice of the total fee mint. `modulesFee + treasuryFee` is the full fee
@@ -172,7 +149,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
         // Shares → stETH at the post-rebase rate. `pushTokenRate` fires inside
         // `handlePostTokenRebase` after the rebase has been applied, so the rate already
         // reflects the new period.
-        uint256 treasuryStEth = STETH.getPooledEthByShares(treasuryShares);
+        uint256 treasuryStEth = IStETH(LIDO_LOCATOR.lido()).getPooledEthByShares(treasuryShares);
 
         uint256 newPending = _pendingRevenueStEth + treasuryStEth;
         _pendingRevenueStEth = newPending;
@@ -187,8 +164,8 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
      *         recover) or if the router returns a zero price (treated as a degraded read; the
      *         bucket is preserved for retry). On success the pending bucket is cleared
      *         atomically with the cumulative write, so the conversion is single-shot per
-     *         settlement cycle. A no-op (return) when the bucket is empty so cheap polling does
-     *         not waste caller gas with reverts.
+     *         settlement cycle. A no-op (return) when the bucket is empty so cheap polling
+     *         does not waste caller gas with reverts.
      */
     function convertPendingRevenueToUSD() external {
         uint256 pending = _pendingRevenueStEth;
@@ -196,7 +173,8 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
             return;
         }
 
-        (uint256 stEthUsdPrice, ) = ORACLE_ROUTER.getUsdPrices(address(STETH), address(STETH));
+        address stEth = LIDO_LOCATOR.lido();
+        (uint256 stEthUsdPrice, ) = ORACLE_ROUTER.getUsdPrices(stEth, stEth);
         if (stEthUsdPrice == 0) {
             revert OracleReturnedZeroPrice();
         }
@@ -219,19 +197,15 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
         return _pendingRevenueStEth;
     }
 
-    /*//////////////////////////////////////////////////////////////
-                            PUBLIC FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
     /**
-     * @notice ERC165 entry point. Queried by `TokenRateNotifier.addObserver` during registration.
+     * @notice ERC165 entry point. Queried by `TokenRateNotifier.addObserver` during
+     *         registration to detect the args-bearing observer flavor.
      * @param  interfaceId_ Interface identifier to probe.
-     * @return `true` for `ITokenRatePusherWithArgs` and any interface accepted by the
-     *         inheritance chain.
+     * @return `true` for `ITokenRatePusherWithArgs` and `IERC165`.
      */
-    function supportsInterface(bytes4 interfaceId_) public view override returns (bool) {
+    function supportsInterface(bytes4 interfaceId_) external pure returns (bool) {
         return
             interfaceId_ == type(ITokenRatePusherWithArgs).interfaceId ||
-            super.supportsInterface(interfaceId_);
+            interfaceId_ == type(IERC165).interfaceId;
     }
 }

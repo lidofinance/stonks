@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.23;
 
-import {AccessControlEnumerable} from "@openzeppelin/contracts/access/AccessControlEnumerable.sol";
 import {IRevenueSource} from "../../interfaces/IRevenueSource.sol";
 
 /**
@@ -10,9 +9,8 @@ import {IRevenueSource} from "../../interfaces/IRevenueSource.sol";
  * @author swissarmytowel <info@lido.fi>
  * @notice Base contract for revenue data providers. Maintains a monotonic cumulative USD
  *         revenue accumulator and exposes it as the sole read.
- * @dev    Revenue sources hold no recoverable assets, so `AssetRecovererACL` is not inherited.
  */
-abstract contract RevenueSource is IRevenueSource, AccessControlEnumerable {
+abstract contract RevenueSource is IRevenueSource {
     /*//////////////////////////////////////////////////////////////
                            STORAGE VARIABLES
     //////////////////////////////////////////////////////////////*/
@@ -25,28 +23,6 @@ abstract contract RevenueSource is IRevenueSource, AccessControlEnumerable {
     //////////////////////////////////////////////////////////////*/
 
     event RevenueAdded(uint256 amountUSD, uint256 cumulativeRevenueUSD);
-
-    /*//////////////////////////////////////////////////////////////
-                                ERRORS
-    //////////////////////////////////////////////////////////////*/
-
-    error InvalidAdminAddress(address admin);
-
-    /*//////////////////////////////////////////////////////////////
-                              CONSTRUCTOR
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Grants `DEFAULT_ADMIN_ROLE` to `admin_`.
-     * @param  admin_ Initial admin and role manager. Non-zero.
-     */
-    constructor(address admin_) {
-        if (admin_ == address(0)) {
-            revert InvalidAdminAddress(admin_);
-        }
-
-        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
-    }
 
     /*//////////////////////////////////////////////////////////////
                         EXTERNAL VIEW FUNCTIONS
@@ -66,10 +42,6 @@ abstract contract RevenueSource is IRevenueSource, AccessControlEnumerable {
 
     /**
      * @notice Appends `amountUSD_` to the cumulative revenue accumulator.
-     * @dev    Concrete sources call this after computing the revenue accrued since their
-     *         previous report. Passing zero is a no-op write that still emits, which subclasses
-     *         can use to signal a processed-but-zero-revenue event; if that signal is
-     *         unnecessary, the subclass should skip the call entirely.
      * @param  amountUSD_ Revenue accrued since the previous accepted report, 1e18-scaled USD.
      */
     function _addRevenueUSD(uint256 amountUSD_) internal {

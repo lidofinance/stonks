@@ -11,8 +11,6 @@ import {RevenueSource} from "../automated-buybacks/revenue/RevenueSource.sol";
  *         full subclass (e.g. `StakingRevenueSource`) in scope.
  */
 contract RevenueSourceHarness is RevenueSource {
-    constructor(address admin_) RevenueSource(admin_) {}
-
     function addRevenueUSD(uint256 amountUSD_) external {
         _addRevenueUSD(amountUSD_);
     }
