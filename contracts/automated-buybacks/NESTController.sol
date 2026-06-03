@@ -19,7 +19,7 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
  * @title NESTController
  * @author swissarmytowel <info@lido.fi>
  * @notice Allocates a share of surplus revenue as stETH to a recipient, capped daily and per cycle.
- *         The cycle linearly protects a portion of revenue from buybacks.
+ *         The cycle is a recurring accounting period and protects a portion of revenue from buybacks.
  */
 contract NESTController is AssetRecovererACL, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -45,7 +45,7 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         address stEth;
         address oracleRouter;
         address recipient;
-        uint64 genesis;
+        uint256 genesis;
         uint256 cycleDays;
         uint128 dailyCapUSD;
         uint128 cycleCapUSD;
@@ -349,17 +349,18 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         view
         returns (AllocationStatus status, uint256 allocationUSD, uint256 allocationStEth)
     {
-        uint256 surplusUSD = _lifetimeRevenueUSD().saturatedSub(protectedRevenueUSD());
-        uint256 maxAllocatableUSD = Math.mulDiv(surplusUSD, surplusShareBP, MAX_BASIS_POINTS);
-        allocationUSD = maxAllocatableUSD.saturatedSub(_allocatedUSD(cycle));
-        if (allocationUSD == 0) return (AllocationStatus.NoAvailableBudget, 0, 0);
-
         // Price gate.
         uint256 stEthPriceUSD = _tryQuoteStEthUSD();
         if (stEthPriceUSD == 0) return (AllocationStatus.QuoteUnavailable, 0, 0);
         if (minStEthQuoteUSD > stEthPriceUSD) {
             return (AllocationStatus.StEthPriceBelowMin, 0, 0);
         }
+
+        // Check available surplus budget
+        uint256 surplusUSD = _lifetimeRevenueUSD().saturatedSub(protectedRevenueUSD());
+        uint256 maxAllocatableUSD = Math.mulDiv(surplusUSD, surplusShareBP, MAX_BASIS_POINTS);
+        allocationUSD = maxAllocatableUSD.saturatedSub(_allocatedUSD(cycle));
+        if (allocationUSD == 0) return (AllocationStatus.NoAvailableBudget, 0, 0);
 
         // Clamp by caps; convert to stETH; clamp by balance; restate in USD.
         allocationUSD = _clampByWindow(allocationUSD, cycle, cycleCapUSD);
