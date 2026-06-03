@@ -2,173 +2,87 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
 import {IStETH} from "./IStETH.sol";
-import {IWstETH} from "./IWstETH.sol";
 import {IOracleRouter} from "./IOracleRouter.sol";
 
 /**
  * @title INESTController
- * @notice Public surface of the NEST automated-buyback controller. Covers configuration,
- *         execution entry points, pipeline state reads, pass-throughs to Stonks and Order, and
- *         the `accountForReturnedExcess` callback consumed by the LiquidityProvisioner. See
- *         `NESTController` for per-function semantics and constraints.
+ * @notice Public surface of the NEST Allocator.
  */
 interface INESTController {
-    /// @notice Aggregated pipeline and annual spend state, returned by `getSpendingState`.
-    struct SpendingState {
-        uint256 lastTriggerOrderTimestamp;
-        uint256 lastAccountingTimestamp;
-        uint256 lastOrderTimestamp;
-        address lastOrderAddress;
-        uint256 orderDurationSeconds;
-        uint256 annualCapUSD;
-        uint256 annualSpendAccumulatorUSD;
-        uint256 annualPeriodStart;
-        int256 allocatedForBuybacksUSD;
-        uint256 cumulativeBuybacksUSD;
-        int256 lastDailyAllocationUSD;
+    enum AllocationStatus {
+        Eligible,
+        NoAvailableBudget,
+        QuoteUnavailable,
+        StEthPriceBelowMin,
+        AllocationBelowMin
     }
 
-    /// @notice Per-source snapshot returned by `getRevenueSourcesWithStatus`.
-    struct RevenueSourceStatus {
-        address source;
-        uint256 lastRevenueUSD;
-        uint256 reportTimestamp;
-        bool isPaused;
-        bool isStale;
+    struct AllocationWindow {
+        uint64 windowEnd;
+        uint128 allocatedUSD;
     }
 
     function MAX_BASIS_POINTS() external view returns (uint256);
-
-    function TRIGGER_INTERVAL_SECONDS() external view returns (uint256);
 
     function MAX_REVENUE_SOURCES() external view returns (uint256);
 
     function STETH() external view returns (IStETH);
 
-    function WSTETH() external view returns (IWstETH);
-
-    function LDO() external view returns (IERC20);
-
     function ORACLE_ROUTER() external view returns (IOracleRouter);
 
-    function stonks() external view returns (address);
+    function GENESIS() external view returns (uint256);
 
-    function liquidityProvisioner() external view returns (address);
+    function CYCLE_DAYS() external view returns (uint256);
 
-    function ethPriceFloorUSD() external view returns (uint128);
+    function recipient() external view returns (address);
 
-    function dailyRevenueThresholdUSD() external view returns (uint128);
-
-    function surplusShareBps() external view returns (uint16);
+    function lifetimeAllocatedUSD() external view returns (uint256);
 
     function dailyCapUSD() external view returns (uint128);
 
-    function annualCapUSD() external view returns (uint128);
+    function cycleCapUSD() external view returns (uint128);
 
-    function minOrderSizeUSD() external view returns (uint128);
+    function protectedPerDayUSD() external view returns (uint128);
 
-    function orderDurationSeconds() external view returns (uint64);
+    function minStEthQuoteUSD() external view returns (uint128);
 
-    function lastAccountingTimestamp() external view returns (uint64);
+    function minAllocationUSD() external view returns (uint128);
 
-    function lastTriggerOrderTimestamp() external view returns (uint64);
+    function surplusShareBP() external view returns (uint16);
 
-    function annualPeriodStart() external view returns (uint64);
+    function daily() external view returns (uint64 windowEnd, uint128 allocatedUSD);
 
-    function lastOrderTimestamp() external view returns (uint96);
+    function cycle() external view returns (uint64 windowEnd, uint128 allocatedUSD);
 
-    function lastOrderAddress() external view returns (address);
-
-    function allocatedForBuybacksUSD() external view returns (int256);
-
-    function cumulativeBuybacksUSD() external view returns (uint256);
-
-    function lastDailyAllocationUSD() external view returns (int256);
-
-    function annualSpendAccumulatorUSD() external view returns (uint256);
-
-    function outstandingWrappedStEth() external view returns (uint128);
-
-    function outstandingWrappedCommittedUsd() external view returns (uint128);
-
-    function isExecutionPaused() external view returns (bool);
-
-    function canTriggerExecution() external view returns (bool);
-
-    function canRetryFromStonks() external view returns (bool);
-
-    function getSpendingState() external view returns (SpendingState memory);
-
-    function getOrderState()
+    function canAllocate()
         external
         view
-        returns (
-            uint256 lastOrderTimestamp,
-            uint256 orderDurationSeconds,
-            address lastOrderAddress,
-            address stonksAddress
-        );
+        returns (bool ok, AllocationStatus reason, uint256 allocationUSD, uint256 allocationStEth);
+
+    function protectedRevenueUSD() external view returns (uint256);
 
     function getRevenueSources() external view returns (address[] memory);
 
-    function getRevenueSourcesWithStatus() external view returns (RevenueSourceStatus[] memory);
+    function getStEthPriceUSD() external view returns (uint256);
 
-    function getEthPriceUSD() external view returns (uint256);
+    function allocate() external;
 
-    function getDailySurplus() external view returns (uint256 totalRevenueUSD, int256 surplusUSD);
-
-    function getAvailableStEthBalance() external view returns (uint256);
-
-    function triggerExecution() external returns (address order);
-
-    function retryFromStonks() external returns (address order);
-
-    function accountForReturnedExcess(uint256 stEthAmount_) external;
-
-    function setEthPriceFloorUSD(uint128 ethPriceFloorUSD_) external;
-
-    function setDailyRevenueThresholdUSD(uint128 dailyRevenueThresholdUSD_) external;
-
-    function setRevenueSurplusShareBps(uint16 surplusShareBps_) external;
+    function setRecipient(address newRecipient_) external;
 
     function setDailyCapUSD(uint128 dailyCapUSD_) external;
 
-    function setAnnualCapUSD(uint128 annualCapUSD_) external;
+    function setCycleCapUSD(uint128 cycleCapUSD_) external;
 
-    function setMinOrderSizeUSD(uint128 minOrderSizeUSD_) external;
+    function setProtectedPerDayUSD(uint128 protectedPerDayUSD_) external;
+
+    function setMinStEthQuoteUSD(uint128 minStEthQuoteUSD_) external;
+
+    function setMinAllocationUSD(uint128 minAllocationUSD_) external;
+
+    function setSurplusShareBP(uint16 surplusShareBP_) external;
 
     function addRevenueSource(address source_) external;
 
     function removeRevenueSource(address source_) external;
-
-    function setStonks(address stonks_) external;
-
-    function setStonksAndProvisioner(address stonks_, address liquidityProvisioner_) external;
-
-    function resetBuybackAccounting() external;
-
-    function creditReturnedSpend(uint256 usdAmount_, uint256 commitmentTimestamp_) external;
-
-    function pauseExecution() external;
-
-    function unpauseExecution() external;
-
-    function pauseStonksOrderCreation() external;
-
-    function unpauseStonksOrderCreation() external;
-
-    function pauseStonksOrderSignatures() external;
-
-    function unpauseStonksOrderSignatures() external;
-
-    function recoverFromStonks(address stonks_, address token_, uint256 amount_) external;
-
-    function emergencyCancelOrder(address order_) external;
-
-    function emergencyRevokeOrderRelayer(address order_) external;
-
-    function recoverERC20FromOrder(address order_, address token_, uint256 amount_) external;
 }

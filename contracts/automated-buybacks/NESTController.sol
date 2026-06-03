@@ -12,50 +12,57 @@ import {AssetRecovererACL} from "./AssetRecovererACL.sol";
 import {IStETH} from "../interfaces/IStETH.sol";
 import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
 import {IRevenueSource} from "../interfaces/IRevenueSource.sol";
+import {IAllocationRecipient} from "../interfaces/IAllocationRecipient.sol";
+import {MathHelpers} from "../lib/MathHelpers.sol";
 
 /**
  * @title NESTController
  * @author swissarmytowel <info@lido.fi>
- * @notice Allocates a configurable share of accrued revenue as stETH to a spender,
- *         capped per day and per year and gated by an oracle price floor.
+ * @notice Allocates a share of surplus revenue as stETH to a recipient, capped daily and per cycle.
+ *         The cycle linearly protects a portion of revenue from buybacks.
  */
 contract NESTController is AssetRecovererACL, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.AddressSet;
+    using MathHelpers for uint256;
 
     /*//////////////////////////////////////////////////////////////
                                  TYPES
     //////////////////////////////////////////////////////////////*/
 
-    struct AllocatorConfig {
-        uint128 minEthPriceUSD;
-        uint128 dailyCapUSD;
-        uint128 annualCapUSD;
-        uint128 minAllocationUSD;
-        uint16  allocationShareBP;
+    /// @notice Allocation counter for a rolling window.
+    struct AllocationWindow {
+        /// @notice First timestamp at which the next window starts.
+        uint64 windowEnd;
+        /// @notice USD allocated in the current window. 1e18-scaled.
+        uint128 allocatedUSD;
     }
 
-    struct SpendWindow {
-        uint64  windowEnd;
-        uint192 spentUSD;
-    }
-
+    /// @notice Constructor input parameters.
     struct InitParams {
         address admin;
         address treasury;
         address stEth;
-        address ldo;
         address oracleRouter;
-        address spender;
-        AllocatorConfig config;
+        address recipient;
+        uint64 genesis;
+        uint256 cycleDays;
+        uint128 dailyCapUSD;
+        uint128 cycleCapUSD;
+        uint128 protectedPerDayUSD;
+        uint128 minStEthQuoteUSD;
+        uint128 minAllocationUSD;
+        uint16 surplusShareBP;
         address[] revenueSources;
     }
 
-    enum SkipReason {
-        OK,
+    /// @notice Outcome of an allocation eligibility check. Only the eligible value passes;
+    ///         the others are surfaced as the skip reason.
+    enum AllocationStatus {
+        Eligible,
         NoAvailableBudget,
-        QuotabilityFailed,
-        EthPriceBelowMin,
+        QuoteUnavailable,
+        StEthPriceBelowMin,
         AllocationBelowMin
     }
 
@@ -63,33 +70,69 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
                                CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
+    /// @notice 100% in basis points.
     uint256 public constant MAX_BASIS_POINTS = 10_000;
+
+    /// @notice Upper bound on registered revenue sources.
     uint256 public constant MAX_REVENUE_SOURCES = 50;
 
+    /// @notice Length of one day in seconds.
     uint256 internal constant ONE_DAY = 1 days;
-    uint256 internal constant ONE_YEAR = 365 days;
 
-    /// @dev Matches OracleRouter's USD precision.
+    /// @notice USD amount precision alignment with the oracle router (1e18).
     uint256 internal constant PRICE_SCALE = 1e18;
 
     /*//////////////////////////////////////////////////////////////
                               IMMUTABLES
     //////////////////////////////////////////////////////////////*/
 
+    /// @notice stETH token. Allocations are made in stETH sent to the recipient.
     IStETH public immutable STETH;
-    IERC20 public immutable LDO;
+
+    /// @notice Oracle router. Quotes stETH/USD.
     IOracleRouter public immutable ORACLE_ROUTER;
 
+    /// @notice Start of the first cycle.
+    uint256 public immutable GENESIS;
+
+    /// @notice Length of one cycle in days.
+    uint256 public immutable CYCLE_DAYS;
+
     /*//////////////////////////////////////////////////////////////
-                                STORAGE
+                          CONFIGURABLE STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    AllocatorConfig public config;
-    address public spender;
-    uint256 public lifetimeSpentUSD;
-    SpendWindow public daily;
-    SpendWindow public annual;
+    /// @notice Daily allocation cap.
+    uint128 public dailyCapUSD;
 
+    /// @notice Cycle allocation cap.
+    uint128 public cycleCapUSD;
+
+    /// @notice Per-day rate at which protected revenue accrues within the cycle.
+    uint128 public protectedPerDayUSD;
+
+    /// @notice stETH/USD quote floor.
+    uint128 public minStEthQuoteUSD;
+
+    /// @notice Minimum per-call allocation.
+    uint128 public minAllocationUSD;
+
+    /// @notice Allocation share of the surplus, in basis points.
+    uint16 public surplusShareBP;
+
+    /// @notice Recipient of allocation.
+    address public recipient;
+
+    /// @notice Monotonic total USD allocated.
+    uint256 public lifetimeAllocatedUSD;
+
+    /// @notice Genesis-aligned daily allocation bucket.
+    AllocationWindow public daily;
+
+    /// @notice Genesis-aligned cycle allocation bucket.
+    AllocationWindow public cycle;
+
+    /// @dev Registered revenue sources counted toward total lifetime revenue.
     EnumerableSet.AddressSet internal _revenueSources;
 
     /*//////////////////////////////////////////////////////////////
@@ -97,16 +140,18 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     event Allocated(
-        address indexed triggeredBy,
-        address indexed spender,
-        uint256 budgetUSD,
-        uint256 budgetStEth,
-        uint256 lifetimeSpentUSD
+        address indexed triggeredBy, address indexed recipient, uint256 allocationUSD, uint256 allocationStEth
     );
-    event AllocationSkipped(address indexed caller, uint8 reason);
-    event WindowRolled(uint256 windowDuration, uint256 newWindowEnd, uint256 previousSpentUSD);
-    event SpenderSet(address indexed spender);
-    event ConfigSet(AllocatorConfig config);
+    event AllocationSkipped(address indexed caller, AllocationStatus reason);
+    event WindowRolled(uint256 windowDurationSeconds, uint256 newWindowEnd, uint256 previousAllocatedUSD);
+    event RecipientSet(address indexed recipient);
+    event DailyCapUSDSet(uint128 dailyCapUSD);
+    event CycleCapUSDSet(uint128 cycleCapUSD);
+    event ProtectedPerDayUSDSet(uint128 protectedPerDayUSD);
+    event MinStEthQuoteUSDSet(uint128 minStEthQuoteUSD);
+    event MinAllocationUSDSet(uint128 minAllocationUSD);
+    event SurplusShareBPSet(uint16 surplusShareBP);
+    event LifetimeAllocatedUSDSet(uint256 lifetimeAllocatedUSD);
     event RevenueSourceAdded(address indexed source);
     event RevenueSourceRemoved(address indexed source);
 
@@ -114,37 +159,47 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
                                 ERRORS
     //////////////////////////////////////////////////////////////*/
 
-    error InvalidStEthAddress(address stEth);
-    error InvalidLdoAddress(address ldo);
-    error InvalidOracleRouterAddress(address oracleRouter);
-    error InvalidSpenderAddress(address spender);
-    error InvalidConfig();
-    error InvalidRevenueSourceAddress(address source);
-    error RevenueSourceAlreadyRegistered(address source);
-    error RevenueSourceNotRegistered(address source);
+    error StEthZeroAddress();
+    error OracleRouterZeroAddress();
+    error RecipientZeroAddress();
+    error GenesisZero();
+    error GenesisInFuture();
+    error CycleDaysZero();
+    error SurplusShareBPInvalid();
+    error DailyCapUSDZero();
+    error CycleCapUSDZero();
+    error MinAllocationUSDZero();
+    error DailyCapExceedsCycleCap();
+    error MinAllocationExceedsDailyCap();
+    error RevenueSourceZeroAddress();
+    error RevenueSourceAlreadyRegistered();
+    error RevenueSourceNotRegistered();
     error RevenueSourceLimitReached(uint256 maxSources);
 
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    constructor(
-        InitParams memory initParams_
-    ) AssetRecovererACL(initParams_.admin, initParams_.treasury) {
-        if (initParams_.stEth == address(0)) revert InvalidStEthAddress(initParams_.stEth);
-        if (initParams_.ldo == address(0)) revert InvalidLdoAddress(initParams_.ldo);
-        if (initParams_.oracleRouter == address(0)) {
-            revert InvalidOracleRouterAddress(initParams_.oracleRouter);
-        }
-        if (initParams_.spender == address(0)) revert InvalidSpenderAddress(initParams_.spender);
-        _validateConfig(initParams_.config);
+    /// @notice Validates inputs, sets immutables, registers initial sources, seeds allocation windows.
+    constructor(InitParams memory initParams_) AssetRecovererACL(initParams_.admin, initParams_.treasury) {
+        if (initParams_.stEth == address(0)) revert StEthZeroAddress();
+        if (initParams_.oracleRouter == address(0)) revert OracleRouterZeroAddress();
+        if (initParams_.genesis == 0) revert GenesisZero();
+        if (initParams_.genesis > block.timestamp) revert GenesisInFuture();
+        if (initParams_.cycleDays == 0) revert CycleDaysZero();
 
         STETH = IStETH(initParams_.stEth);
-        LDO = IERC20(initParams_.ldo);
         ORACLE_ROUTER = IOracleRouter(initParams_.oracleRouter);
+        GENESIS = initParams_.genesis;
+        CYCLE_DAYS = initParams_.cycleDays;
 
-        config = initParams_.config;
-        spender = initParams_.spender;
+        _setRecipient(initParams_.recipient);
+        _setCycleCapUSD(initParams_.cycleCapUSD);
+        _setDailyCapUSD(initParams_.dailyCapUSD);
+        _setMinAllocationUSD(initParams_.minAllocationUSD);
+        _setSurplusShareBP(initParams_.surplusShareBP);
+        _setProtectedPerDayUSD(initParams_.protectedPerDayUSD);
+        _setMinStEthQuoteUSD(initParams_.minStEthQuoteUSD);
 
         address[] memory sources = initParams_.revenueSources;
         if (sources.length > MAX_REVENUE_SOURCES) {
@@ -153,200 +208,298 @@ contract NESTController is AssetRecovererACL, ReentrancyGuard {
         for (uint256 i = 0; i < sources.length; ++i) {
             _registerRevenueSource(sources[i]);
         }
-        
-        lifetimeSpentUSD = _sumRevenueUSD();
+
+        _setLifetimeAllocatedUSD(_lifetimeRevenueUSD());
+        _advanceWindow(daily, ONE_DAY, 0);
+        _advanceWindow(cycle, _cycleSeconds(), 0);
     }
 
     /*//////////////////////////////////////////////////////////////
-                        EXTERNAL - LIFECYCLE
+                       EXTERNAL FUNCTIONS - LIFECYCLE
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Permissionless and idempotent. No-op when nothing is allocatable.
+    /// @notice Allocates the eligible budget as stETH to the recipient. Permissionless and idempotent.
+    /// @dev    Emits a skip event and returns when nothing is allocatable. After the transfer,
+    ///         invokes the recipient's onStEthAllocated() hook; a revert there reverts the allocation.
     function allocate() external nonReentrant {
-        (bool ok, SkipReason reason, uint256 budgetUSD, uint256 budgetStEth) = _evaluate();
-        if (!ok) {
-            emit AllocationSkipped(msg.sender, uint8(reason));
+        (AllocationStatus status, uint256 allocationUSD, uint256 allocationStEth) = _calcAllocation();
+        if (status != AllocationStatus.Eligible) {
+            emit AllocationSkipped(msg.sender, status);
             return;
         }
 
-        _updateWindow(annual, ONE_YEAR, budgetUSD);
-        _updateWindow(daily, ONE_DAY, budgetUSD);
+        _advanceWindow(cycle, _cycleSeconds(), allocationUSD);
+        _advanceWindow(daily, ONE_DAY, allocationUSD);
 
-        uint256 newLifetimeSpent = lifetimeSpentUSD + budgetUSD;
-        lifetimeSpentUSD = newLifetimeSpent;
+        _setLifetimeAllocatedUSD(lifetimeAllocatedUSD + allocationUSD);
 
-        IERC20(address(STETH)).safeTransfer(spender, budgetStEth);
+        IERC20(address(STETH)).safeTransfer(recipient, allocationStEth);
 
-        emit Allocated(msg.sender, spender, budgetUSD, budgetStEth, newLifetimeSpent);
+        emit Allocated(msg.sender, recipient, allocationUSD, allocationStEth);
+
+        IAllocationRecipient(recipient).onStEthAllocated();
     }
 
     /*//////////////////////////////////////////////////////////////
-                       EXTERNAL - CONFIGURATION
+                     EXTERNAL FUNCTIONS - CONFIGURATION
     //////////////////////////////////////////////////////////////*/
-    function setConfig(AllocatorConfig calldata newConfig_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _validateConfig(newConfig_);
-        uint16 oldShareBP = config.allocationShareBP;
-        config = newConfig_;
 
-        if (oldShareBP != newConfig_.allocationShareBP) {
-            lifetimeSpentUSD = _sumRevenueUSD();
+    /// @notice Sets the daily allocation cap. Must be within [minAllocationUSD, cycleCapUSD].
+    function setDailyCapUSD(uint128 dailyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setDailyCapUSD(dailyCapUSD_);
+    }
+
+    /// @notice Sets the cycle allocation cap. Must be at least the daily cap.
+    function setCycleCapUSD(uint128 cycleCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setCycleCapUSD(cycleCapUSD_);
+    }
+
+    /// @notice Sets the per-day protected-revenue accrual rate. Unconstrained.
+    function setProtectedPerDayUSD(uint128 protectedPerDayUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setProtectedPerDayUSD(protectedPerDayUSD_);
+    }
+
+    /// @notice Sets the stETH/USD quote floor. Unconstrained (zero disables the gate).
+    function setMinStEthQuoteUSD(uint128 minStEthQuoteUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setMinStEthQuoteUSD(minStEthQuoteUSD_);
+    }
+
+    /// @notice Sets the minimum per-call allocation. Must be within (0, dailyCapUSD].
+    function setMinAllocationUSD(uint128 minAllocationUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setMinAllocationUSD(minAllocationUSD_);
+    }
+
+    /// @notice Sets the surplus allocation share, in basis points. Must be within (0, 100%].
+    /// @dev    Rebases lifetime allocation to current revenue when the share changes
+    ///         (informational; does not affect the budget).
+    function setSurplusShareBP(uint16 surplusShareBP_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        bool shareChanged = surplusShareBP != surplusShareBP_;
+        _setSurplusShareBP(surplusShareBP_);
+        if (shareChanged) {
+            _setLifetimeAllocatedUSD(_lifetimeRevenueUSD());
         }
-
-        emit ConfigSet(newConfig_);
     }
 
-    function setSpender(address newSpender_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (newSpender_ == address(0)) revert InvalidSpenderAddress(newSpender_);
-        spender = newSpender_;
-        emit SpenderSet(newSpender_);
+    /// @notice Updates the recipient of subsequent allocations.
+    function setRecipient(address newRecipient_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setRecipient(newRecipient_);
     }
 
+    /// @notice Registers a new revenue source.
+    /// @dev    Rebases lifetime allocation to current revenue.
     function addRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_revenueSources.length() >= MAX_REVENUE_SOURCES) {
             revert RevenueSourceLimitReached(MAX_REVENUE_SOURCES);
         }
         _registerRevenueSource(source_);
-
-        lifetimeSpentUSD = _sumRevenueUSD();
+        _setLifetimeAllocatedUSD(_lifetimeRevenueUSD());
     }
 
+    /// @notice Deregisters a revenue source.
+    /// @dev    Rebases lifetime allocation to current revenue.
     function removeRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (!_revenueSources.remove(source_)) revert RevenueSourceNotRegistered(source_);
-        lifetimeSpentUSD = _sumRevenueUSD();
+        if (!_revenueSources.remove(source_)) revert RevenueSourceNotRegistered();
+        _setLifetimeAllocatedUSD(_lifetimeRevenueUSD());
         emit RevenueSourceRemoved(source_);
     }
 
     /*//////////////////////////////////////////////////////////////
-                          EXTERNAL - VIEWS
+                        EXTERNAL FUNCTIONS - VIEWS
     //////////////////////////////////////////////////////////////*/
 
+    /// @notice Allocation eligibility at the current block. Mirrors what a real allocation would compute.
+    /// @return ok           True iff the budget is non-zero and all gates pass.
+    /// @return reason       Allocation status code; zero on success.
+    /// @return allocationUSD    USD budget that would be allocated.
+    /// @return allocationStEth  stETH amount that would be transferred.
     function canAllocate()
         external
         view
-        returns (bool ok, uint8 reason, uint256 budgetUSD, uint256 budgetStEth)
+        returns (bool ok, AllocationStatus reason, uint256 allocationUSD, uint256 allocationStEth)
     {
-        SkipReason reasonEnum;
-        (ok, reasonEnum, budgetUSD, budgetStEth) = _evaluate();
-        reason = uint8(reasonEnum);
+        (reason, allocationUSD, allocationStEth) = _calcAllocation();
+        ok = reason == AllocationStatus.Eligible;
     }
 
+    /// @notice Addresses of every registered revenue source.
     function getRevenueSources() external view returns (address[] memory) {
         return _revenueSources.values();
     }
 
-    /// @notice Reverts on oracle failure.
+    /// @notice Current stETH/USD price. Reverts on oracle failure.
     function getStEthPriceUSD() external view returns (uint256 stEthPriceUSD) {
-        (stEthPriceUSD, ) = ORACLE_ROUTER.getUsdPrices(address(STETH), address(LDO));
+        (stEthPriceUSD,) = ORACLE_ROUTER.getUsdPrices(address(STETH), address(STETH));
+    }
+
+    /// @notice USD reserved from buybacks in the current cycle. Accrues in
+    ///         integer-day steps and resets to zero at the start of each cycle.
+    function protectedRevenueUSD() public view returns (uint256) {
+        uint256 elapsedInCurrentCycle = (block.timestamp - GENESIS) % _cycleSeconds();
+        uint256 daysIntoCycle = elapsedInCurrentCycle / ONE_DAY;
+        return uint256(protectedPerDayUSD) * daysIntoCycle;
     }
 
     /*//////////////////////////////////////////////////////////////
-                              INTERNAL
+                           INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    function _evaluate()
+    /// @dev Evaluates the eligible budget for the current block.
+    function _calcAllocation()
         internal
         view
-        returns (bool ok, SkipReason reason, uint256 budgetUSD, uint256 budgetStEth)
+        returns (AllocationStatus status, uint256 allocationUSD, uint256 allocationStEth)
     {
-        AllocatorConfig memory cfg = config;
+        uint256 surplusUSD = _lifetimeRevenueUSD().saturatedSub(protectedRevenueUSD());
+        uint256 maxAllocatableUSD = Math.mulDiv(surplusUSD, surplusShareBP, MAX_BASIS_POINTS);
+        allocationUSD = maxAllocatableUSD.saturatedSub(_allocatedUSD(cycle));
+        if (allocationUSD == 0) return (AllocationStatus.NoAvailableBudget, 0, 0);
 
-        // 1. Available budget = share of cumulative revenue minus lifetime spend.
-        uint256 totalAllocation = (_sumRevenueUSD() * cfg.allocationShareBP) / MAX_BASIS_POINTS;
-        if (totalAllocation <= lifetimeSpentUSD) {
-            return (false, SkipReason.NoAvailableBudget, 0, 0);
-        }
-        budgetUSD = totalAllocation - lifetimeSpentUSD;
-
-        // 2. Oracle must quote both legs; stETH (proxy for ETH) must clear the floor.
-        (bool quotable, uint256 stEthPriceUSD) = _quoteStEthUSD();
-        if (!quotable) return (false, SkipReason.QuotabilityFailed, 0, 0);
-        if (cfg.minEthPriceUSD > stEthPriceUSD) {
-            return (false, SkipReason.EthPriceBelowMin, 0, 0);
+        // Price gate.
+        uint256 stEthPriceUSD = _tryQuoteStEthUSD();
+        if (stEthPriceUSD == 0) return (AllocationStatus.QuoteUnavailable, 0, 0);
+        if (minStEthQuoteUSD > stEthPriceUSD) {
+            return (AllocationStatus.StEthPriceBelowMin, 0, 0);
         }
 
-        // 3. Clamp by spend caps, convert to stETH, clamp by balance.
-        budgetUSD = _clampByWindow(budgetUSD, annual, cfg.annualCapUSD);
-        budgetUSD = _clampByWindow(budgetUSD, daily, cfg.dailyCapUSD);
+        // Clamp by caps; convert to stETH; clamp by balance; restate in USD.
+        allocationUSD = _clampByWindow(allocationUSD, cycle, cycleCapUSD);
+        allocationUSD = _clampByWindow(allocationUSD, daily, dailyCapUSD);
+        allocationStEth =
+            Math.min(Math.mulDiv(allocationUSD, PRICE_SCALE, stEthPriceUSD), STETH.balanceOf(address(this)));
+        allocationUSD = Math.mulDiv(allocationStEth, stEthPriceUSD, PRICE_SCALE);
 
-        budgetStEth = Math.min(
-            (budgetUSD * PRICE_SCALE) / stEthPriceUSD,
-            STETH.balanceOf(address(this))
-        );
-        budgetUSD = (budgetStEth * stEthPriceUSD) / PRICE_SCALE;
-
-        // 4. Reject dust spends.
-        if (budgetUSD < cfg.minAllocationUSD) {
-            return (false, SkipReason.AllocationBelowMin, 0, 0);
+        // Reject any insignificant allocation
+        if (allocationUSD < minAllocationUSD) {
+            return (AllocationStatus.AllocationBelowMin, 0, 0);
         }
 
-        return (true, SkipReason.OK, budgetUSD, budgetStEth);
+        return (AllocationStatus.Eligible, allocationUSD, allocationStEth);
     }
 
-    /// @dev A reverting source contributes zero so it cannot brick allocation.
-    function _sumRevenueUSD() internal view returns (uint256 total) {
+    /// @dev Sums reported revenue across sources. Reverting sources contribute zero.
+    function _lifetimeRevenueUSD() internal view returns (uint256 revenueUSD) {
         address[] memory sources = _revenueSources.values();
         for (uint256 i = 0; i < sources.length; ++i) {
             try IRevenueSource(sources[i]).totalRevenueUSD() returns (uint256 sourceTotal) {
-                total += sourceTotal;
+                revenueUSD += sourceTotal;
             } catch {}
         }
     }
 
-    /// @dev ok=false on revert or any zero leg.
-    function _quoteStEthUSD() internal view returns (bool ok, uint256 stEthPriceUSD) {
-        try ORACLE_ROUTER.getUsdPrices(address(STETH), address(LDO)) returns (
+    /// @dev Sets the lifetime allocated total and emits. Used by both allocation and rebase.
+    function _setLifetimeAllocatedUSD(uint256 lifetimeAllocatedUSD_) internal {
+        lifetimeAllocatedUSD = lifetimeAllocatedUSD_;
+        emit LifetimeAllocatedUSDSet(lifetimeAllocatedUSD_);
+    }
+
+    /// @dev Soft-fail stETH/USD quote. Returns zero on oracle revert or a zero price.
+    function _tryQuoteStEthUSD() internal view returns (uint256 stEthPriceUSD) {
+        try ORACLE_ROUTER.getUsdPrices(address(STETH), address(STETH)) returns (
             uint256 stEthPrice,
-            uint256 ldoPrice
+            uint256 /* quoteUsdPrice */
         ) {
-            if (stEthPrice == 0 || ldoPrice == 0) return (false, 0);
-            return (true, stEthPrice);
-        } catch {
-            return (false, 0);
-        }
+            stEthPriceUSD = stEthPrice;
+        } catch {}
     }
 
-    /// @dev An expired window contributes zero spent.
-    function _clampByWindow(
-        uint256 budgetUSD_,
-        SpendWindow memory window_,
-        uint256 capUSD_
-    ) internal view returns (uint256) {
-        uint256 spent = block.timestamp >= window_.windowEnd ? 0 : window_.spentUSD;
-        if (spent >= capUSD_) return 0;
-        return Math.min(budgetUSD_, capUSD_ - spent);
+    /// @dev Clamps the budget by the window's remaining cap.
+    function _clampByWindow(uint256 allocationUSD_, AllocationWindow memory window_, uint256 capUSD_)
+        internal
+        view
+        returns (uint256)
+    {
+        return Math.min(allocationUSD_, capUSD_.saturatedSub(_allocatedUSD(window_)));
     }
 
-    function _updateWindow(
-        SpendWindow storage window_,
-        uint256 windowDuration_,
-        uint256 budgetUSD_
-    ) internal {
-        uint192 spent = window_.spentUSD;
+    /// @dev Allocation in the current window; zero when the window has expired.
+    function _allocatedUSD(AllocationWindow memory window_) internal view returns (uint256) {
+        return block.timestamp >= window_.windowEnd ? 0 : uint256(window_.allocatedUSD);
+    }
+
+    /// @dev Adds the budget to the window's allocation; rolls first if the window has expired.
+    function _advanceWindow(AllocationWindow storage window_, uint256 windowDurationSeconds_, uint256 allocationUSD_)
+        internal
+    {
+        uint128 allocated = window_.allocatedUSD;
         if (block.timestamp >= window_.windowEnd) {
-            uint64 newWindowEnd = uint64(block.timestamp + windowDuration_);
-            emit WindowRolled(windowDuration_, newWindowEnd, spent);
+            uint64 newWindowEnd = _nextWindowEnd(windowDurationSeconds_);
+            emit WindowRolled(windowDurationSeconds_, newWindowEnd, allocated);
             window_.windowEnd = newWindowEnd;
-            spent = 0;
+            allocated = 0;
         }
-        window_.spentUSD = spent + uint192(budgetUSD_);
+        window_.allocatedUSD = allocated + uint128(allocationUSD_);
     }
 
+    /// @dev Next window boundary after the current block, anchored at genesis.
+    function _nextWindowEnd(uint256 windowDurationSeconds_) internal view returns (uint64) {
+        uint256 secondsSinceGenesis = block.timestamp - GENESIS;
+        uint256 windowsSinceGenesis = secondsSinceGenesis / windowDurationSeconds_;
+        return uint64(GENESIS + (windowsSinceGenesis + 1) * windowDurationSeconds_);
+    }
+
+    /// @dev Probes the source's reachability, then registers it.
     function _registerRevenueSource(address source_) internal {
-        if (source_ == address(0)) revert InvalidRevenueSourceAddress(source_);
-        // Reachability check
+        if (source_ == address(0)) revert RevenueSourceZeroAddress();
         IRevenueSource(source_).totalRevenueUSD();
-        if (!_revenueSources.add(source_)) revert RevenueSourceAlreadyRegistered(source_);
+        if (!_revenueSources.add(source_)) revert RevenueSourceAlreadyRegistered();
         emit RevenueSourceAdded(source_);
     }
 
-    function _validateConfig(AllocatorConfig memory cfg_) internal pure {
-        if (cfg_.allocationShareBP == 0 || cfg_.allocationShareBP > MAX_BASIS_POINTS) {
-            revert InvalidConfig();
+    /// @dev Sets the recipient. Reverts on the zero address.
+    function _setRecipient(address recipient_) internal {
+        if (recipient_ == address(0)) revert RecipientZeroAddress();
+        recipient = recipient_;
+        emit RecipientSet(recipient_);
+    }
+
+    /// @dev Sets the daily cap: non-zero, within the cycle cap, and at least the minimum allocation.
+    function _setDailyCapUSD(uint128 dailyCapUSD_) internal {
+        if (dailyCapUSD_ == 0) revert DailyCapUSDZero();
+        if (dailyCapUSD_ > cycleCapUSD) revert DailyCapExceedsCycleCap();
+        if (minAllocationUSD > dailyCapUSD_) revert MinAllocationExceedsDailyCap();
+        dailyCapUSD = dailyCapUSD_;
+        emit DailyCapUSDSet(dailyCapUSD_);
+    }
+
+    /// @dev Sets the cycle cap: non-zero and at least the daily cap.
+    function _setCycleCapUSD(uint128 cycleCapUSD_) internal {
+        if (cycleCapUSD_ == 0) revert CycleCapUSDZero();
+        if (dailyCapUSD > cycleCapUSD_) revert DailyCapExceedsCycleCap();
+        cycleCapUSD = cycleCapUSD_;
+        emit CycleCapUSDSet(cycleCapUSD_);
+    }
+
+    /// @dev Sets the minimum allocation: non-zero and at most the daily cap.
+    function _setMinAllocationUSD(uint128 minAllocationUSD_) internal {
+        if (minAllocationUSD_ == 0) revert MinAllocationUSDZero();
+        if (minAllocationUSD_ > dailyCapUSD) revert MinAllocationExceedsDailyCap();
+        minAllocationUSD = minAllocationUSD_;
+        emit MinAllocationUSDSet(minAllocationUSD_);
+    }
+
+    /// @dev Sets the surplus share: within (0, 100%].
+    function _setSurplusShareBP(uint16 surplusShareBP_) internal {
+        if (surplusShareBP_ == 0 || surplusShareBP_ > MAX_BASIS_POINTS) {
+            revert SurplusShareBPInvalid();
         }
-        if (cfg_.dailyCapUSD == 0 || cfg_.annualCapUSD == 0 || cfg_.minAllocationUSD == 0) {
-            revert InvalidConfig();
-        }
-        if (cfg_.dailyCapUSD >= cfg_.annualCapUSD) revert InvalidConfig();
-        if (cfg_.minAllocationUSD > cfg_.dailyCapUSD) revert InvalidConfig();
+        surplusShareBP = surplusShareBP_;
+        emit SurplusShareBPSet(surplusShareBP_);
+    }
+
+    /// @dev Sets the per-day protected-revenue accrual rate. Unconstrained.
+    function _setProtectedPerDayUSD(uint128 protectedPerDayUSD_) internal {
+        protectedPerDayUSD = protectedPerDayUSD_;
+        emit ProtectedPerDayUSDSet(protectedPerDayUSD_);
+    }
+
+    /// @dev Sets the stETH/USD quote floor. Unconstrained (zero disables the gate).
+    function _setMinStEthQuoteUSD(uint128 minStEthQuoteUSD_) internal {
+        minStEthQuoteUSD = minStEthQuoteUSD_;
+        emit MinStEthQuoteUSDSet(minStEthQuoteUSD_);
+    }
+
+    /// @dev Cycle length in seconds.
+    function _cycleSeconds() internal view returns (uint256) {
+        return CYCLE_DAYS * ONE_DAY;
     }
 }
