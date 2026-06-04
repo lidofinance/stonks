@@ -9,7 +9,7 @@ pragma solidity 0.8.23;
  *         are intentionally omitted.
  */
 interface ILiquidityProvisioner {
-    /// @notice Snapshot mirroring the `placeOrder` preconditions.
+    /// @notice `getPlacementStatus` return, containing placement preconditions and the next sell sizing.
     struct PlacementStatus {
         bool canPlace;
         uint256 sellAmount;
@@ -22,7 +22,7 @@ interface ILiquidityProvisioner {
 
     function onStEthAllocated() external;
 
-    function setOperatingMode(bool lpModeEnabled_, address stonks_) external;
+    function setStonksAndOperatingMode(address stonks_) external;
 
     function placeOrder() external returns (address newOrder);
 

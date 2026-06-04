@@ -11,6 +11,7 @@ import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
 
 import {AssetRecovererACL} from "./AssetRecovererACL.sol";
 import {MathHelpers} from "../lib/MathHelpers.sol";
+import {ILiquidityProvisioner} from "../interfaces/ILiquidityProvisioner.sol";
 import {IStETH} from "../interfaces/IStETH.sol";
 import {IWstETH} from "../interfaces/IWstETH.sol";
 import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
@@ -25,7 +26,12 @@ import {IOrder} from "../interfaces/IOrder.sol";
  *         In LP mode deposits balanced LDO/wstETH into the Curve LDO/wstETH pool.
  *         In treasury mode forwards all stETH to Stonks and lets LDO settle to the treasury.
  */
-contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
+contract LiquidityProvisioner is
+    ILiquidityProvisioner,
+    AssetRecovererACL,
+    ReentrancyGuard,
+    Pausable
+{
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
@@ -37,7 +43,6 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     struct InitParams {
         address admin;
         address treasury;
-        address stEth;
         address wstEth;
         address ldo;
         address oracleRouter;
@@ -45,7 +50,6 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
         uint16 poolPriceDivergenceToleranceBps;
         uint128 minAllowedOrderAmount;
         uint128 maxAllowedOrderAmount;
-        bool lpModeEnabled;
         address stonks;
     }
 
@@ -56,6 +60,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
         OraclePriceUnavailable,
         PoolPriceDivergenceTooHigh,
         ZeroBalancedDepositAmount,
+        NotInLpMode,
         Eligible
     }
 
@@ -65,20 +70,9 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
         AddLiquidityStatus status;
         uint256 ldoAmount;
         uint256 stEthAmount;
-        uint256 poolEmaPrice;
+        uint256 poolEmaStEthInLdo;
         uint256 stEthPriceInLdo;
         uint256 divergenceBps;
-    }
-
-    /// @notice `getPlacementStatus` return, containing placement preconditions and the next sell sizing.
-    struct PlacementStatus {
-        bool canPlace;
-        uint256 sellAmount;
-        uint256 estimatedBuyAmount;
-        address activeOrder;
-        uint256 activeOrderValidTo;
-        bool isStonksCreationPaused;
-        bool isStonksKilled;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -88,14 +82,14 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     /// @notice Gates `onStEthAllocated`. Held by the NESTController.
     bytes32 public constant ALLOCATOR_ROLE = keccak256("NEST.LiquidityProvisioner.ALLOCATOR_ROLE");
 
+    /// @notice Gates pause and cancellation paths.
+    bytes32 public constant EMERGENCY_ROLE = keccak256("NEST.LiquidityProvisioner.EMERGENCY_ROLE");
+
     /// @notice 100% in basis points.
     uint256 public constant MAX_BASIS_POINTS = 10000;
 
     /// @notice Upper bound on `poolPriceDivergenceToleranceBps`.
     uint256 public constant MAX_POOL_DIVERGENCE_TOLERANCE_BPS = 1000;
-
-    /// @notice USD price scale used by `ORACLE_ROUTER`.
-    uint256 internal constant PRICE_SCALE = 1e18;
 
     /// @notice Minimum residual stETH on a swept order worth recovering.
     uint256 internal constant MIN_POSSIBLE_ORDER_BALANCE = 10;
@@ -116,6 +110,9 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     /// @notice USD oracle for LDO and stETH.
     IOracleRouter public immutable ORACLE_ROUTER;
 
+    /// @notice Price scale of `ORACLE_ROUTER`, read from it at deployment.
+    uint256 public immutable PRICE_SCALE;
+
     /// @notice Curve TwoCrypto LDO/wstETH pool, also the LP token.
     ICurvePool public immutable CURVE_POOL_AND_TOKEN;
 
@@ -131,10 +128,10 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     bool public lpModeEnabled;
 
     /// @notice Cached `ORDER_DURATION_IN_SECONDS` of the active Stonks. Refreshed by
-    ///         `_setOperatingMode` so order placement skips the per-call external read.
+    ///         `_setStonksAndOperatingMode` so order placement skips the per-call external read.
     uint32 public stonksOrderDurationSeconds;
 
-    /// @notice Active Stonks instance. Replaced via `setOperatingMode`.
+    /// @notice Active Stonks instance. Replaced via `setStonksAndOperatingMode`.
     IStonks public stonks;
 
     /// @notice Most recent order placed by this contract, or zero when none is tracked.
@@ -204,6 +201,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
         uint256 divergenceBps,
         uint256 toleranceBps
     );
+    error NotInLpMode();
     error OraclePriceUnavailable();
     error InvalidStEthAddress();
     error InvalidWstEthAddress();
@@ -212,12 +210,11 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     error InvalidCurvePoolAndTokenAddress();
     error InvalidPoolPriceDivergenceTolerance(uint256 poolPriceDivergenceToleranceBps);
     error InvalidOrderAmountLimits(uint256 minAllowedOrderAmount, uint256 maxAllowedOrderAmount);
-    error InvalidCurvePoolCoinOrdering();
-    error WstEthStEthMismatch(address declaredStEth, address boundStEth);
+    error InvalidCurvePool();
     error LiveOrderInPlace(address order, uint256 validTo);
     error InsufficientStonksBalance(uint256 balance);
     error InvalidStonksAddress();
-    error StonksReceiverMismatch(address stonks, address expectedReceiver, address actualReceiver);
+    error InvalidStonksReceiver(address stonks, address receiver);
 
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
@@ -230,10 +227,6 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     constructor(
         InitParams memory initParams_
     ) AssetRecovererACL(initParams_.admin, initParams_.treasury) {
-        if (initParams_.stEth == address(0)) {
-            revert InvalidStEthAddress();
-        }
-
         if (initParams_.wstEth == address(0)) {
             revert InvalidWstEthAddress();
         }
@@ -250,27 +243,31 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
             revert InvalidCurvePoolAndTokenAddress();
         }
 
-        address boundStEth = IWstETH(initParams_.wstEth).stETH();
-        if (boundStEth != initParams_.stEth) {
-            revert WstEthStEthMismatch(initParams_.stEth, boundStEth);
-        }
-
         if (
             ICurvePool(initParams_.curvePoolAndToken).coins(0) != initParams_.ldo ||
             ICurvePool(initParams_.curvePoolAndToken).coins(1) != initParams_.wstEth
         ) {
-            revert InvalidCurvePoolCoinOrdering();
+            revert InvalidCurvePool();
         }
 
-        STETH = IStETH(initParams_.stEth);
         WSTETH = IWstETH(initParams_.wstEth);
+
+        address stEthAddress = WSTETH.stETH();
+        if (stEthAddress == address(0)) {
+            revert InvalidStEthAddress();
+        }
+
+        STETH = IStETH(stEthAddress);
         LDO = IERC20(initParams_.ldo);
         ORACLE_ROUTER = IOracleRouter(initParams_.oracleRouter);
+        PRICE_SCALE = IOracleRouter(initParams_.oracleRouter).PRICE_UNIT();
         CURVE_POOL_AND_TOKEN = ICurvePool(initParams_.curvePoolAndToken);
 
         _setPoolPriceDivergenceToleranceBps(initParams_.poolPriceDivergenceToleranceBps);
-        _setOrderAmountLimits(initParams_.minAllowedOrderAmount, initParams_.maxAllowedOrderAmount);
-        _setOperatingMode(initParams_.lpModeEnabled, initParams_.stonks);
+        // Max first, then min: each setter validates against the other, and storage starts at zero.
+        _setMaxAllowedOrderAmount(initParams_.maxAllowedOrderAmount);
+        _setMinAllowedOrderAmount(initParams_.minAllowedOrderAmount);
+        _setStonksAndOperatingMode(initParams_.stonks);
 
         // `wrap` pulls stETH through wstETH, so grant a one-time max approval here.
         IERC20(address(STETH)).approve(address(WSTETH), type(uint256).max);
@@ -290,6 +287,10 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
         AddLiquidityEvaluation memory evaluation = _evaluateAddLiquidityGates();
         AddLiquidityStatus status = evaluation.status;
 
+        if (status == AddLiquidityStatus.NotInLpMode) {
+            revert NotInLpMode();
+        }
+
         if (status == AddLiquidityStatus.ZeroLdoBalance) {
             revert ZeroLdoBalance();
         }
@@ -304,7 +305,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
 
         if (status == AddLiquidityStatus.PoolPriceDivergenceTooHigh) {
             revert PoolPriceDivergenceTooHigh(
-                evaluation.poolEmaPrice,
+                evaluation.poolEmaStEthInLdo,
                 evaluation.stEthPriceInLdo,
                 evaluation.divergenceBps,
                 poolPriceDivergenceToleranceBps
@@ -327,15 +328,19 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
 
     /**
      * @notice Burns LP tokens, unwraps the wstETH, and sends LDO and stETH to the treasury.
-     * @dev    Callable while paused. Reverts when the pool's EMA price diverges from the oracle
-     *         beyond `poolPriceDivergenceToleranceBps`, or with `OraclePriceUnavailable` during an
-     *         oracle outage. If either blocks withdrawal, recover the LP token via `recoverERC20`.
+     * @dev    Callable while paused. Balanced removal returns both pool coins in proportion to
+     *         reserves. The caller-supplied floors guard against an unfavorable mix when the pool
+     *         is imbalanced or sandwiched, set by the committee from the current pool state.
      * @param  lpAmount_ LP tokens to burn. Non-zero and at most the held balance.
+     * @param  minLdoAmount_ Minimum LDO to withdraw. The pool reverts below this floor.
+     * @param  minWstEthAmount_ Minimum wstETH to withdraw before unwrap. The pool reverts below this floor.
      * @return ldoAmount LDO withdrawn from the pool.
      * @return stEthAmount stETH withdrawn after unwrap.
      */
     function removeLiquidityAndRecoverToTreasury(
-        uint256 lpAmount_
+        uint256 lpAmount_,
+        uint256 minLdoAmount_,
+        uint256 minWstEthAmount_
     )
         external
         nonReentrant
@@ -351,14 +356,9 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
             revert InsufficientLpTokenBalance(lpAmount_, lpBalance);
         }
 
-        _assertPoolPriceWithinDivergence();
-
-        // minAmounts is set to [0, 0] as balanced remove_liquidity returns both coins in proportion
-        // to pool reserves and moves no price. Zero price impact means no slippage for a sandwich
-        // to exploit. The off-peg case is handled upstream by `_assertPoolPriceWithinDivergence`.
         uint256[2] memory withdrawn = CURVE_POOL_AND_TOKEN.remove_liquidity(
             lpAmount_,
-            [uint256(0), uint256(0)]
+            [minLdoAmount_, minWstEthAmount_]
         );
 
         ldoAmount = withdrawn[0];
@@ -411,8 +411,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
 
         IStonks currentStonks = stonks;
         uint256 stonksBalance = STETH.balanceOf(address(currentStonks));
-        uint256 cachedMax = maxAllowedOrderAmount;
-        uint256 sellAmount = stonksBalance < cachedMax ? stonksBalance : cachedMax;
+        uint256 sellAmount = Math.min(stonksBalance, maxAllowedOrderAmount);
 
         if (sellAmount < minAllowedOrderAmount) {
             revert InsufficientStonksBalance(stonksBalance);
@@ -423,15 +422,12 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @notice Switches the operating mode and the active Stonks in one call.
-     * @param  lpModeEnabled_ True for LP mode, false for treasury mode.
-     * @param  stonks_ New Stonks address.
+     * @notice Sets the active Stonks and derives the operating mode from its receiver.
+     * @param  stonks_ New Stonks address. LP mode when its receiver is this contract, treasury
+     *         mode when it is `TREASURY`.
      */
-    function setOperatingMode(
-        bool lpModeEnabled_,
-        address stonks_
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setOperatingMode(lpModeEnabled_, stonks_);
+    function setStonksAndOperatingMode(address stonks_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setStonksAndOperatingMode(stonks_);
     }
 
     /**
@@ -498,14 +494,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     function setMinAllowedOrderAmount(
         uint128 minAllowedOrderAmount_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (minAllowedOrderAmount_ == 0 || minAllowedOrderAmount_ >= maxAllowedOrderAmount) {
-            revert InvalidOrderAmountLimits(minAllowedOrderAmount_, maxAllowedOrderAmount);
-        }
-
-        uint128 previousMinAllowedOrderAmount = minAllowedOrderAmount;
-        minAllowedOrderAmount = minAllowedOrderAmount_;
-
-        emit MinAllowedOrderAmountSet(previousMinAllowedOrderAmount, minAllowedOrderAmount_);
+        _setMinAllowedOrderAmount(minAllowedOrderAmount_);
     }
 
     /**
@@ -515,14 +504,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     function setMaxAllowedOrderAmount(
         uint128 maxAllowedOrderAmount_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (maxAllowedOrderAmount_ == 0 || maxAllowedOrderAmount_ <= minAllowedOrderAmount) {
-            revert InvalidOrderAmountLimits(minAllowedOrderAmount, maxAllowedOrderAmount_);
-        }
-
-        uint128 previousMaxAllowedOrderAmount = maxAllowedOrderAmount;
-        maxAllowedOrderAmount = maxAllowedOrderAmount_;
-
-        emit MaxAllowedOrderAmountSet(previousMaxAllowedOrderAmount, maxAllowedOrderAmount_);
+        _setMaxAllowedOrderAmount(maxAllowedOrderAmount_);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -597,9 +579,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
         }
 
         uint256 stonksBalance = STETH.balanceOf(address(currentStonks));
-        uint256 cachedMax = maxAllowedOrderAmount;
-
-        status.sellAmount = stonksBalance < cachedMax ? stonksBalance : cachedMax;
+        status.sellAmount = Math.min(stonksBalance, maxAllowedOrderAmount);
 
         if (status.sellAmount >= minAllowedOrderAmount) {
             try currentStonks.estimateTradeOutput(status.sellAmount) returns (uint256 estimate) {
@@ -607,18 +587,13 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
             } catch {}
         }
 
-        if (
-            paused() ||
-            status.isStonksCreationPaused ||
-            status.isStonksKilled ||
-            status.activeOrder != address(0)
-        ) {
-            return status;
-        }
-
+        // A non-zero estimate implies the minimum was met, since the estimate only runs above it.
         status.canPlace =
-            status.sellAmount >= minAllowedOrderAmount &&
-            status.estimatedBuyAmount > 0;
+            status.estimatedBuyAmount > 0 &&
+            !paused() &&
+            !status.isStonksCreationPaused &&
+            !status.isStonksKilled &&
+            status.activeOrder == address(0);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -641,7 +616,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
         }
 
         uint256 previousPoolPriceDivergenceToleranceBps = poolPriceDivergenceToleranceBps;
-        poolPriceDivergenceToleranceBps = uint16(poolPriceDivergenceToleranceBps_);
+        poolPriceDivergenceToleranceBps = poolPriceDivergenceToleranceBps_.toUint16();
 
         emit PoolPriceDivergenceToleranceBpsSet(
             previousPoolPriceDivergenceToleranceBps,
@@ -650,45 +625,55 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @notice Internal pair setter used by the constructor to set both limits atomically.
-     * @param  minAllowedOrderAmount_ New minimum. Non-zero and strictly below the maximum.
-     * @param  maxAllowedOrderAmount_ New maximum. Strictly above the minimum.
+     * @notice Validates and sets the minimum order size against the current maximum.
+     * @param  minAllowedOrderAmount_ New minimum. Non-zero and strictly below `maxAllowedOrderAmount`.
      */
-    function _setOrderAmountLimits(
-        uint128 minAllowedOrderAmount_,
-        uint128 maxAllowedOrderAmount_
-    ) internal {
-        if (minAllowedOrderAmount_ == 0 || minAllowedOrderAmount_ >= maxAllowedOrderAmount_) {
-            revert InvalidOrderAmountLimits(minAllowedOrderAmount_, maxAllowedOrderAmount_);
+    function _setMinAllowedOrderAmount(uint128 minAllowedOrderAmount_) internal {
+        if (minAllowedOrderAmount_ == 0 || minAllowedOrderAmount_ >= maxAllowedOrderAmount) {
+            revert InvalidOrderAmountLimits(minAllowedOrderAmount_, maxAllowedOrderAmount);
         }
 
         uint128 previousMinAllowedOrderAmount = minAllowedOrderAmount;
-        uint128 previousMaxAllowedOrderAmount = maxAllowedOrderAmount;
         minAllowedOrderAmount = minAllowedOrderAmount_;
-        maxAllowedOrderAmount = maxAllowedOrderAmount_;
 
         emit MinAllowedOrderAmountSet(previousMinAllowedOrderAmount, minAllowedOrderAmount_);
+    }
+
+    /**
+     * @notice Validates and sets the maximum order size against the current minimum.
+     * @param  maxAllowedOrderAmount_ New maximum. Strictly above `minAllowedOrderAmount`.
+     */
+    function _setMaxAllowedOrderAmount(uint128 maxAllowedOrderAmount_) internal {
+        if (maxAllowedOrderAmount_ == 0 || maxAllowedOrderAmount_ <= minAllowedOrderAmount) {
+            revert InvalidOrderAmountLimits(minAllowedOrderAmount, maxAllowedOrderAmount_);
+        }
+
+        uint128 previousMaxAllowedOrderAmount = maxAllowedOrderAmount;
+        maxAllowedOrderAmount = maxAllowedOrderAmount_;
+
         emit MaxAllowedOrderAmountSet(previousMaxAllowedOrderAmount, maxAllowedOrderAmount_);
     }
 
     /**
-     * @notice Internal mode swap shared by the constructor and the external setter.
+     * @notice Internal mode swap shared by the constructor and the external setter. Derives the
+     *         operating mode from the new Stonks's receiver.
      * @dev    Switching disconnects this contract from the previous Stonks. Drain it and sweep
      *         any tracked order before switching, or recover via governance afterwards.
-     * @param  lpModeEnabled_ True for LP mode, false for treasury mode.
-     * @param  stonks_ New Stonks address.
+     * @param  stonks_ New Stonks address. LP mode when its receiver is this contract, treasury
+     *         mode when it is `TREASURY`. Any other receiver reverts.
      */
-    function _setOperatingMode(bool lpModeEnabled_, address stonks_) internal {
+    function _setStonksAndOperatingMode(address stonks_) internal {
         if (stonks_ == address(0)) {
             revert InvalidStonksAddress();
         }
 
-        address expectedReceiver = lpModeEnabled_ ? address(this) : TREASURY;
-        address actualReceiver = IStonks(stonks_).RECEIVER();
+        address receiver = IStonks(stonks_).RECEIVER();
 
-        // Sanity-check the new Stonks's receiver to avoid misconfiguration.
-        if (actualReceiver != expectedReceiver) {
-            revert StonksReceiverMismatch(stonks_, expectedReceiver, actualReceiver);
+        bool lpModeEnabled_;
+        if (receiver == address(this)) {
+            lpModeEnabled_ = true;
+        } else if (receiver != TREASURY) {
+            revert InvalidStonksReceiver(stonks_, receiver);
         }
 
         bool previousLpModeEnabled = lpModeEnabled;
@@ -845,7 +830,6 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
         uint256 orderBalance = lastOrderAddress == address(0)
             ? 0
             : STETH.balanceOf(lastOrderAddress);
-
         uint256 freeAfterLdo = MathHelpers.saturatedSub(STETH.balanceOf(address(this)), ldoInStEth);
         uint256 freeAfterStonks = MathHelpers.saturatedSub(
             freeAfterLdo,
@@ -853,6 +837,56 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
         );
 
         return MathHelpers.saturatedSub(freeAfterStonks, orderBalance);
+    }
+
+    /**
+     * @notice Oracle-price and pool-EMA divergence gate for the `addLiquidity` path. Converts the
+     *         pool EMA from LDO/wstETH to LDO/stETH via the wstETH share rate and compares it
+     *         against the oracle ratio.
+     * @dev    Does not revert. The caller maps the returned status to an evaluation status.
+     *         Returns, in order: the divergence status (`OraclePriceUnavailable` on a missing or
+     *         truncated price, `PoolPriceDivergenceTooHigh` past tolerance, otherwise `Eligible`),
+     *         LDO/USD price, stETH/USD price, oracle LDO/stETH ratio, pool EMA in LDO/stETH, and
+     *         divergence in basis points. Prices are scaled by `PRICE_SCALE` and zero when
+     *         prices are unavailable.
+     */
+    function _evaluatePoolPriceDivergence()
+        internal
+        view
+        returns (AddLiquidityStatus, uint256, uint256, uint256, uint256, uint256)
+    {
+        (bool pricesValid, uint256 ldoUsdPrice, uint256 stEthUsdPrice) = _tryGetUsdPrices(
+            address(LDO),
+            address(STETH)
+        );
+
+        if (!pricesValid) {
+            return (AddLiquidityStatus.OraclePriceUnavailable, 0, 0, 0, 0, 0);
+        }
+
+        (
+            uint256 stEthPriceInLdo,
+            uint256 poolEmaStEthInLdo,
+            uint256 divergenceBps
+        ) = _computeOracleDivergence(ldoUsdPrice, stEthUsdPrice);
+
+        AddLiquidityStatus status;
+        if (stEthPriceInLdo == 0) {
+            status = AddLiquidityStatus.OraclePriceUnavailable;
+        } else if (divergenceBps > poolPriceDivergenceToleranceBps) {
+            status = AddLiquidityStatus.PoolPriceDivergenceTooHigh;
+        } else {
+            status = AddLiquidityStatus.Eligible;
+        }
+
+        return (
+            status,
+            ldoUsdPrice,
+            stEthUsdPrice,
+            stEthPriceInLdo,
+            poolEmaStEthInLdo,
+            divergenceBps
+        );
     }
 
     /**
@@ -865,6 +899,11 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
         view
         returns (AddLiquidityEvaluation memory evaluation)
     {
+        if (!lpModeEnabled) {
+            evaluation.status = AddLiquidityStatus.NotInLpMode;
+            return evaluation;
+        }
+
         uint256 ldoBalance = LDO.balanceOf(address(this));
         if (ldoBalance == 0) {
             evaluation.status = AddLiquidityStatus.ZeroLdoBalance;
@@ -877,33 +916,21 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
             return evaluation;
         }
 
-        (bool pricesValid, uint256 ldoUsdPrice, uint256 stEthUsdPrice) = _tryGetUsdPrices(
-            address(LDO),
-            address(STETH)
-        );
-
-        if (!pricesValid) {
-            evaluation.status = AddLiquidityStatus.OraclePriceUnavailable;
-            return evaluation;
-        }
-
         (
+            AddLiquidityStatus priceStatus,
+            uint256 ldoUsdPrice,
+            uint256 stEthUsdPrice,
             uint256 stEthPriceInLdo,
-            uint256 poolEmaInStEth,
+            uint256 poolEmaStEthInLdo,
             uint256 divergenceBps
-        ) = _computeOracleDivergence(ldoUsdPrice, stEthUsdPrice);
-
-        if (stEthPriceInLdo == 0) {
-            evaluation.status = AddLiquidityStatus.OraclePriceUnavailable;
-            return evaluation;
-        }
+        ) = _evaluatePoolPriceDivergence();
 
         evaluation.stEthPriceInLdo = stEthPriceInLdo;
-        evaluation.poolEmaPrice = poolEmaInStEth;
+        evaluation.poolEmaStEthInLdo = poolEmaStEthInLdo;
         evaluation.divergenceBps = divergenceBps;
 
-        if (divergenceBps > poolPriceDivergenceToleranceBps) {
-            evaluation.status = AddLiquidityStatus.PoolPriceDivergenceTooHigh;
+        if (priceStatus != AddLiquidityStatus.Eligible) {
+            evaluation.status = priceStatus;
             return evaluation;
         }
 
@@ -938,50 +965,13 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @notice Reverts when oracle prices are unavailable or the Curve pool's EMA diverges from
-     *         the oracle LDO/stETH ratio beyond `poolPriceDivergenceToleranceBps`. The pool EMA
-     *         is converted from LDO/wstETH to LDO/stETH via the wstETH share rate.
-     * @dev    Blocks a withdrawal while the pool is off-peg, where the returned token mix is
-     *         skewed.
-     */
-    function _assertPoolPriceWithinDivergence() internal view {
-        (bool pricesValid, uint256 ldoUsdPrice, uint256 stEthUsdPrice) = _tryGetUsdPrices(
-            address(LDO),
-            address(STETH)
-        );
-
-        if (!pricesValid) {
-            revert OraclePriceUnavailable();
-        }
-
-        (
-            uint256 stEthPriceInLdo,
-            uint256 poolEmaInStEth,
-            uint256 divergenceBps
-        ) = _computeOracleDivergence(ldoUsdPrice, stEthUsdPrice);
-
-        if (stEthPriceInLdo == 0) {
-            revert OraclePriceUnavailable();
-        }
-
-        if (divergenceBps > poolPriceDivergenceToleranceBps) {
-            revert PoolPriceDivergenceTooHigh(
-                poolEmaInStEth,
-                stEthPriceInLdo,
-                divergenceBps,
-                poolPriceDivergenceToleranceBps
-            );
-        }
-    }
-
-    /**
      * @notice Pool EMA and divergence vs the LDO/stETH oracle ratio. The pool EMA is converted
      *         from LDO/wstETH to LDO/stETH via the wstETH share rate. Returns zeros when either
      *         converted price rounds to zero.
      * @param  ldoUsdPrice_ LDO/USD price scaled by `PRICE_SCALE`. Non-zero.
      * @param  stEthUsdPrice_ stETH/USD price scaled by `PRICE_SCALE`. Non-zero.
      * @return stEthPriceInLdo Oracle LDO/stETH ratio scaled by `PRICE_SCALE`, or zero on truncation.
-     * @return poolEmaInStEth Pool EMA in LDO/stETH scaled by `PRICE_SCALE`.
+     * @return poolEmaStEthInLdo Pool EMA in LDO/stETH scaled by `PRICE_SCALE`.
      * @return divergenceBps Divergence between the pool EMA and the oracle ratio in basis points.
      */
     function _computeOracleDivergence(
@@ -990,23 +980,23 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
     )
         internal
         view
-        returns (uint256 stEthPriceInLdo, uint256 poolEmaInStEth, uint256 divergenceBps)
+        returns (uint256 stEthPriceInLdo, uint256 poolEmaStEthInLdo, uint256 divergenceBps)
     {
         stEthPriceInLdo = Math.mulDiv(stEthUsdPrice_, PRICE_SCALE, ldoUsdPrice_);
         if (stEthPriceInLdo == 0) {
             return (0, 0, 0);
         }
 
-        poolEmaInStEth = Math.mulDiv(
+        poolEmaStEthInLdo = Math.mulDiv(
             CURVE_POOL_AND_TOKEN.price_oracle(),
             PRICE_SCALE,
             WSTETH.stEthPerToken()
         );
-        if (poolEmaInStEth == 0) {
+        if (poolEmaStEthInLdo == 0) {
             return (0, 0, 0);
         }
 
-        divergenceBps = _computeDivergenceBps(poolEmaInStEth, stEthPriceInLdo);
+        divergenceBps = _computeDivergenceBps(poolEmaStEthInLdo, stEthPriceInLdo);
     }
 
     /**
@@ -1023,7 +1013,7 @@ contract LiquidityProvisioner is AssetRecovererACL, ReentrancyGuard, Pausable {
         uint256 stEthBalance_,
         uint256 ldoUsdPrice_,
         uint256 stEthUsdPrice_
-    ) internal pure returns (uint256 ldoAmount, uint256 stEthAmount) {
+    ) internal view returns (uint256 ldoAmount, uint256 stEthAmount) {
         // Compute the USD value of each side to find the smaller one.
         uint256 ldoUsdValue = Math.mulDiv(ldoBalance_, ldoUsdPrice_, PRICE_SCALE);
         uint256 stEthUsdValue = Math.mulDiv(stEthBalance_, stEthUsdPrice_, PRICE_SCALE);

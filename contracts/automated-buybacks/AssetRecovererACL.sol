@@ -21,13 +21,9 @@ abstract contract AssetRecovererACL is AccessControlEnumerable {
                                CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Gates asset recovery and operational actions. Held by the admin at construction,
-    ///         delegated to the Treasury Management Committee post-deployment.
+    /// @notice Gates asset recovery and operational actions.
     bytes32 public constant MANAGER_ROLE = keccak256("NEST.MANAGER_ROLE");
 
-    /// @notice Gates pause and cancellation paths. Held by the admin at construction,
-    ///         delegated to the Emergency Committee post-deployment.
-    bytes32 public constant EMERGENCY_ROLE = keccak256("NEST.EMERGENCY_ROLE");
     /*//////////////////////////////////////////////////////////////
                               IMMUTABLES
     //////////////////////////////////////////////////////////////*/
@@ -54,7 +50,7 @@ abstract contract AssetRecovererACL is AccessControlEnumerable {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Grants `DEFAULT_ADMIN_ROLE`, `MANAGER_ROLE`, and `EMERGENCY_ROLE` to `admin_`.
+     * @notice Constructor. Grants `DEFAULT_ADMIN_ROLE` to `admin_`.
      * @param  admin_ Initial role holder. Non-zero.
      * @param  treasury_ Treasury address. Non-zero.
      */
@@ -65,11 +61,10 @@ abstract contract AssetRecovererACL is AccessControlEnumerable {
         if (treasury_ == address(0)) {
             revert InvalidTreasuryAddress();
         }
+
         TREASURY = treasury_;
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
-        _grantRole(MANAGER_ROLE, admin_);
-        _grantRole(EMERGENCY_ROLE, admin_);
     }
 
     /*//////////////////////////////////////////////////////////////
