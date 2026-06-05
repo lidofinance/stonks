@@ -194,7 +194,7 @@ describe('StakingRevenueSource', function () {
 
     it('should initialize cumulative and pending accumulators at zero', async function () {
       expect(await subject.getCumulativeRevenueUSD()).to.equal(0n)
-      expect(await subject.getPendingRevenueStEth()).to.equal(0n)
+      expect(await subject.pendingRevenueStEth()).to.equal(0n)
     })
   })
 
@@ -260,7 +260,7 @@ describe('StakingRevenueSource', function () {
           .to.emit(subject, 'RevenueAccumulatedInStEth')
           .withArgs(expectedStEth, expectedStEth)
 
-        expect(await subject.getPendingRevenueStEth()).to.equal(expectedStEth)
+        expect(await subject.pendingRevenueStEth()).to.equal(expectedStEth)
       })
 
       it('should NOT touch the cumulative USD accumulator on pushTokenRate', async function () {
@@ -274,7 +274,7 @@ describe('StakingRevenueSource', function () {
         await oracleStub.setFailureMode(OracleFailureMode.EmptyRevert)
 
         await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)).to.not.be.reverted
-        expect(await subject.getPendingRevenueStEth()).to.equal(nominalTreasuryStEth())
+        expect(await subject.pendingRevenueStEth()).to.equal(nominalTreasuryStEth())
       })
 
       it('should sum pending across consecutive rebases', async function () {
@@ -284,7 +284,7 @@ describe('StakingRevenueSource', function () {
         await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
         await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
 
-        expect(await subject.getPendingRevenueStEth()).to.equal(perPushStEth * 3n)
+        expect(await subject.pendingRevenueStEth()).to.equal(perPushStEth * 3n)
       })
 
       it('should scale pending with pooledEthPerShare after a positive rebase', async function () {
@@ -351,7 +351,7 @@ describe('StakingRevenueSource', function () {
           subject,
           'RevenueAccumulatedInStEth'
         )
-        expect(await subject.getPendingRevenueStEth()).to.equal(0n)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
       })
 
       it('should be a no-op when totalFee is zero (defensive branch)', async function () {
@@ -361,7 +361,7 @@ describe('StakingRevenueSource', function () {
           subject,
           'RevenueAccumulatedInStEth'
         )
-        expect(await subject.getPendingRevenueStEth()).to.equal(0n)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
       })
 
       it('should emit RevenueAccumulatedInStEth(0, 0) when treasuryFee is zero but modulesFee is not', async function () {
@@ -370,7 +370,7 @@ describe('StakingRevenueSource', function () {
         await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
           .to.emit(subject, 'RevenueAccumulatedInStEth')
           .withArgs(0n, 0n)
-        expect(await subject.getPendingRevenueStEth()).to.equal(0n)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
       })
     })
 
@@ -413,7 +413,7 @@ describe('StakingRevenueSource', function () {
     describe('happy path:', function () {
       it('should convert pending to USD, append to cumulative, and reset pending', async function () {
         await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
-        const pending = await subject.getPendingRevenueStEth()
+        const pending = await subject.pendingRevenueStEth()
         const expectedUSD = expectedRevenueUSD(pending, STETH_USD_PRICE)
 
         await expect(subject.connect(stranger).convertPendingRevenueToUSD())
@@ -423,7 +423,7 @@ describe('StakingRevenueSource', function () {
           .withArgs(expectedUSD, expectedUSD)
 
         expect(await subject.getCumulativeRevenueUSD()).to.equal(expectedUSD)
-        expect(await subject.getPendingRevenueStEth()).to.equal(0n)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
       })
 
       it('should aggregate multiple rebases into a single conversion', async function () {
@@ -431,18 +431,18 @@ describe('StakingRevenueSource', function () {
           await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
         }
 
-        const pending = await subject.getPendingRevenueStEth()
+        const pending = await subject.pendingRevenueStEth()
         const expectedUSD = expectedRevenueUSD(pending, STETH_USD_PRICE)
 
         await subject.connect(stranger).convertPendingRevenueToUSD()
 
         expect(await subject.getCumulativeRevenueUSD()).to.equal(expectedUSD)
-        expect(await subject.getPendingRevenueStEth()).to.equal(0n)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
       })
 
       it('should use the current oracle price even if it moved since the rebases', async function () {
         await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
-        const pending = await subject.getPendingRevenueStEth()
+        const pending = await subject.pendingRevenueStEth()
 
         const newPrice = STETH_USD_PRICE / 2n
         await oracleStub.setUsdPrice(newPrice, newPrice)
@@ -463,7 +463,7 @@ describe('StakingRevenueSource', function () {
         const secondCumulative = await subject.getCumulativeRevenueUSD()
 
         expect(secondCumulative).to.equal(firstCumulative * 2n)
-        expect(await subject.getPendingRevenueStEth()).to.equal(0n)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
       })
     })
 
@@ -482,7 +482,7 @@ describe('StakingRevenueSource', function () {
 
       it('should preserve pending and revert with OracleReturnedZeroPrice when oracle returns 0', async function () {
         await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
-        const pendingBefore = await subject.getPendingRevenueStEth()
+        const pendingBefore = await subject.pendingRevenueStEth()
 
         await oracleStub.setUsdPrice(0n, 0n)
 
@@ -490,29 +490,29 @@ describe('StakingRevenueSource', function () {
           subject.connect(stranger).convertPendingRevenueToUSD()
         ).to.be.revertedWithCustomError(subject, 'OracleReturnedZeroPrice')
 
-        expect(await subject.getPendingRevenueStEth()).to.equal(pendingBefore)
+        expect(await subject.pendingRevenueStEth()).to.equal(pendingBefore)
         expect(await subject.getCumulativeRevenueUSD()).to.equal(0n)
       })
 
       it('should preserve pending when oracle reverts with a custom error', async function () {
         await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
-        const pendingBefore = await subject.getPendingRevenueStEth()
+        const pendingBefore = await subject.pendingRevenueStEth()
 
         await oracleStub.setFailureMode(OracleFailureMode.CustomError)
 
         await expect(subject.connect(stranger).convertPendingRevenueToUSD()).to.be.reverted
-        expect(await subject.getPendingRevenueStEth()).to.equal(pendingBefore)
+        expect(await subject.pendingRevenueStEth()).to.equal(pendingBefore)
         expect(await subject.getCumulativeRevenueUSD()).to.equal(0n)
       })
 
       it('should preserve pending when oracle reverts with empty data', async function () {
         await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
-        const pendingBefore = await subject.getPendingRevenueStEth()
+        const pendingBefore = await subject.pendingRevenueStEth()
 
         await oracleStub.setFailureMode(OracleFailureMode.EmptyRevert)
 
         await expect(subject.connect(stranger).convertPendingRevenueToUSD()).to.be.reverted
-        expect(await subject.getPendingRevenueStEth()).to.equal(pendingBefore)
+        expect(await subject.pendingRevenueStEth()).to.equal(pendingBefore)
       })
 
       it('should let the keeper retry successfully once the oracle recovers', async function () {
@@ -522,7 +522,7 @@ describe('StakingRevenueSource', function () {
         await expect(subject.connect(stranger).convertPendingRevenueToUSD()).to.be.reverted
 
         await oracleStub.setFailureMode(OracleFailureMode.None)
-        const pending = await subject.getPendingRevenueStEth()
+        const pending = await subject.pendingRevenueStEth()
         const expectedUSD = expectedRevenueUSD(pending, STETH_USD_PRICE)
 
         await expect(subject.connect(stranger).convertPendingRevenueToUSD())
@@ -530,7 +530,7 @@ describe('StakingRevenueSource', function () {
           .withArgs(pending, STETH_USD_PRICE, expectedUSD)
 
         expect(await subject.getCumulativeRevenueUSD()).to.equal(expectedUSD)
-        expect(await subject.getPendingRevenueStEth()).to.equal(0n)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
       })
     })
   })

@@ -45,10 +45,10 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
                            STORAGE VARIABLES
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Treasury stETH accrued from rebases since the last successful conversion.
-    ///         Grows on every non-trivial `pushTokenRate`; cleared by
+    /// @notice Treasury stETH accrued from rebases since the last successful conversion, awaiting
+    ///         USD conversion. Grows on every non-trivial `pushTokenRate`; cleared by
     ///         `convertPendingRevenueToUSD`.
-    uint256 private _pendingRevenueStEth;
+    uint256 public pendingRevenueStEth;
 
     /*//////////////////////////////////////////////////////////////
                                 EVENTS
@@ -151,8 +151,8 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
         // reflects the new period.
         uint256 treasuryStEth = IStETH(LIDO_LOCATOR.lido()).getPooledEthByShares(treasuryShares);
 
-        uint256 newPending = _pendingRevenueStEth + treasuryStEth;
-        _pendingRevenueStEth = newPending;
+        uint256 newPending = pendingRevenueStEth + treasuryStEth;
+        pendingRevenueStEth = newPending;
         emit RevenueAccumulatedInStEth(treasuryStEth, newPending);
     }
 
@@ -168,7 +168,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
      *         does not waste caller gas with reverts.
      */
     function convertPendingRevenueToUSD() external {
-        uint256 pending = _pendingRevenueStEth;
+        uint256 pending = pendingRevenueStEth;
         if (pending == 0) {
             return;
         }
@@ -181,20 +181,9 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
 
         uint256 revenueUSD = (pending * stEthUsdPrice) / PRICE_SCALE;
 
-        _pendingRevenueStEth = 0;
+        pendingRevenueStEth = 0;
         _addRevenueUSD(revenueUSD);
         emit PendingRevenueConverted(pending, stEthUsdPrice, revenueUSD);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        EXTERNAL VIEW FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Pending stETH awaiting USD conversion.
-     */
-    function getPendingRevenueStEth() external view returns (uint256) {
-        return _pendingRevenueStEth;
     }
 
     /**
