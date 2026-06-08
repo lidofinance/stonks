@@ -50,6 +50,8 @@ contract LiquidityProvisioner is
         uint16 poolPriceDivergenceToleranceBps;
         uint128 minAllowedOrderAmount;
         uint128 maxAllowedOrderAmount;
+        uint128 minDepositValueUsd;
+        uint128 maxDepositValueUsd;
         address stonks;
     }
 
@@ -59,17 +61,18 @@ contract LiquidityProvisioner is
         ZeroStEthBalance,
         OraclePriceUnavailable,
         PoolPriceDivergenceTooHigh,
-        ZeroBalancedDepositAmount,
+        DepositValueBelowMinimum,
         NotInLpMode,
         Eligible
     }
 
-    /// @notice `_evaluateAddLiquidityGates` output, containing status, balanced deposit amounts, and
-    ///         prices reused by `addLiquidity` for the divergence error.
+    /// @notice `_evaluateAddLiquidityGates` output, containing status, capped balanced deposit
+    ///         amounts, the deposit USD value, and prices reused by `addLiquidity` for its errors.
     struct AddLiquidityEvaluation {
         AddLiquidityStatus status;
         uint256 ldoAmount;
         uint256 stEthAmount;
+        uint256 depositValueUsd;
         uint256 poolEmaStEthInLdo;
         uint256 stEthPriceInLdo;
         uint256 divergenceBps;
@@ -92,7 +95,7 @@ contract LiquidityProvisioner is
     uint256 public constant MAX_POOL_DIVERGENCE_TOLERANCE_BPS = 1000;
 
     /// @notice Minimum residual stETH on a swept order worth recovering.
-    uint256 internal constant MIN_POSSIBLE_ORDER_BALANCE = 10;
+    uint256 public constant MIN_ORDER_RESIDUAL_TO_RECOVER = 10;
 
     /*//////////////////////////////////////////////////////////////
                               IMMUTABLES
@@ -146,6 +149,14 @@ contract LiquidityProvisioner is
     /// @notice Maximum stETH amount per order. `placeOrder` clamps its sell amount to this ceiling.
     uint128 public maxAllowedOrderAmount;
 
+    /// @notice Minimum total USD notional (LDO + wstETH, scaled to 1e18) for an `addLiquidity`
+    ///         deposit. Smaller balanced amounts are rejected and carry to the next call.
+    uint128 public minDepositValueUsd;
+
+    /// @notice Maximum total USD notional (LDO + wstETH, scaled to 1e18) per `addLiquidity` call.
+    ///         Larger balanced amounts scale down to this, adding the balance over successive calls.
+    uint128 public maxDepositValueUsd;
+
     /*//////////////////////////////////////////////////////////////
                                 EVENTS
     //////////////////////////////////////////////////////////////*/
@@ -162,8 +173,6 @@ contract LiquidityProvisioner is
         uint256 ldoAmount,
         uint256 stEthAmount
     );
-    event LdoWithdrawnToTreasury(address indexed caller, uint256 ldoAmount);
-    event StEthWithdrawnToTreasury(address indexed caller, uint256 stEthAmount);
     event PoolPriceDivergenceToleranceBpsSet(
         uint256 previousPoolPriceDivergenceToleranceBps,
         uint256 newPoolPriceDivergenceToleranceBps
@@ -176,15 +185,17 @@ contract LiquidityProvisioner is
         uint256 previousMaxAllowedOrderAmount,
         uint256 newMaxAllowedOrderAmount
     );
-    event OperatingModeAndStonksSet(
+    event MinDepositValueUsdSet(uint256 previousMinDepositValueUsd, uint256 newMinDepositValueUsd);
+    event MaxDepositValueUsdSet(uint256 previousMaxDepositValueUsd, uint256 newMaxDepositValueUsd);
+    event StonksAndOperatingModeSet(
         address indexed previousStonks,
         address indexed newStonks,
         bool previousLpModeEnabled,
         bool newLpModeEnabled
     );
     event OrderPlaced(address indexed order, uint256 sellAmount, uint256 minBuyAmount);
-    event AllocationProcessed(uint256 freeStEth, uint256 forwardedToStonks);
-    event StaleOrderRecovered(address indexed order);
+    event AllocationProcessed(address indexed stonks, uint256 freeStEth, uint256 forwardedToStonks);
+    event StaleOrderCleared(address indexed order);
 
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
@@ -193,7 +204,6 @@ contract LiquidityProvisioner is
     error ZeroLdoBalance();
     error ZeroStEthBalance();
     error ZeroLpAmount();
-    error ZeroBalancedDepositAmount(uint256 ldoAmount, uint256 stEthAmount);
     error InsufficientLpTokenBalance(uint256 requested, uint256 available);
     error PoolPriceDivergenceTooHigh(
         uint256 poolPrice,
@@ -210,9 +220,11 @@ contract LiquidityProvisioner is
     error InvalidCurvePoolAndTokenAddress();
     error InvalidPoolPriceDivergenceTolerance(uint256 poolPriceDivergenceToleranceBps);
     error InvalidOrderAmountLimits(uint256 minAllowedOrderAmount, uint256 maxAllowedOrderAmount);
-    error InvalidCurvePool();
+    error InvalidDepositValueLimits(uint256 minDepositValueUsd, uint256 maxDepositValueUsd);
+    error DepositValueBelowMinimum(uint256 depositValueUsd, uint256 minDepositValueUsd);
+    error InvalidCurvePool(address coin0, address coin1);
     error LiveOrderInPlace(address order, uint256 validTo);
-    error InsufficientStonksBalance(uint256 balance);
+    error InsufficientStonksBalance(uint256 balance, uint256 minAllowedOrderAmount);
     error InvalidStonksAddress();
     error InvalidStonksReceiver(address stonks, address receiver);
 
@@ -243,11 +255,10 @@ contract LiquidityProvisioner is
             revert InvalidCurvePoolAndTokenAddress();
         }
 
-        if (
-            ICurvePool(initParams_.curvePoolAndToken).coins(0) != initParams_.ldo ||
-            ICurvePool(initParams_.curvePoolAndToken).coins(1) != initParams_.wstEth
-        ) {
-            revert InvalidCurvePool();
+        address coin0 = ICurvePool(initParams_.curvePoolAndToken).coins(0);
+        address coin1 = ICurvePool(initParams_.curvePoolAndToken).coins(1);
+        if (coin0 != initParams_.ldo || coin1 != initParams_.wstEth) {
+            revert InvalidCurvePool(coin0, coin1);
         }
 
         WSTETH = IWstETH(initParams_.wstEth);
@@ -267,10 +278,12 @@ contract LiquidityProvisioner is
         // Max first, then min: each setter validates against the other, and storage starts at zero.
         _setMaxAllowedOrderAmount(initParams_.maxAllowedOrderAmount);
         _setMinAllowedOrderAmount(initParams_.minAllowedOrderAmount);
+        _setMaxDepositValueUsd(initParams_.maxDepositValueUsd);
+        _setMinDepositValueUsd(initParams_.minDepositValueUsd);
         _setStonksAndOperatingMode(initParams_.stonks);
 
         // `wrap` pulls stETH through wstETH, so grant a one-time max approval here.
-        IERC20(address(STETH)).approve(address(WSTETH), type(uint256).max);
+        IERC20(address(STETH)).forceApprove(address(WSTETH), type(uint256).max);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -279,8 +292,10 @@ contract LiquidityProvisioner is
 
     /**
      * @notice Wraps a balanced share of held stETH and deposits it with LDO into the Curve pool.
-     *         Surplus on the larger-USD side carries over to the next cycle.
-     * @dev    Permissionless. `_evaluateAddLiquidityGates` enforces eligibility before the deposit.
+     *         Deposits at most `maxDepositValueUsd` of total notional per call and reverts below
+     *         `minDepositValueUsd`, adding large balances over successive calls. Surplus on the
+     *         larger-USD side carries to the next call.
+     * @dev    Permissionless. `_evaluateAddLiquidityGates` enforces eligibility and the value bounds.
      * @return lpTokensMinted LP tokens minted by the pool.
      */
     function addLiquidity() external nonReentrant whenNotPaused returns (uint256 lpTokensMinted) {
@@ -312,8 +327,8 @@ contract LiquidityProvisioner is
             );
         }
 
-        if (status == AddLiquidityStatus.ZeroBalancedDepositAmount) {
-            revert ZeroBalancedDepositAmount(evaluation.ldoAmount, evaluation.stEthAmount);
+        if (status == AddLiquidityStatus.DepositValueBelowMinimum) {
+            revert DepositValueBelowMinimum(evaluation.depositValueUsd, minDepositValueUsd);
         }
 
         assert(status == AddLiquidityStatus.Eligible);
@@ -366,8 +381,6 @@ contract LiquidityProvisioner is
 
         stEthAmount = WSTETH.unwrap(wstEthReceived);
 
-        emit LdoWithdrawnToTreasury(msg.sender, ldoAmount);
-        emit StEthWithdrawnToTreasury(msg.sender, stEthAmount);
         emit LiquidityRemoved(msg.sender, lpAmount_, ldoAmount, stEthAmount);
 
         LDO.safeTransfer(TREASURY, ldoAmount);
@@ -382,20 +395,21 @@ contract LiquidityProvisioner is
     function onStEthAllocated() external nonReentrant whenNotPaused onlyRole(ALLOCATOR_ROLE) {
         _sweepExpiredOrder();
 
-        uint256 freeStEth = lpModeEnabled
-            ? _computeLpModeFreeStEth()
-            : STETH.balanceOf(address(this));
-        uint256 stEthAmountToSell = lpModeEnabled ? freeStEth / 2 : freeStEth;
+        bool lpMode = lpModeEnabled;
+        uint256 freeStEth = lpMode ? _computeLpModeFreeStEth() : STETH.balanceOf(address(this));
+        uint256 stEthAmountToSell = lpMode ? freeStEth / 2 : freeStEth;
+
+        address stonksAddress = address(stonks);
 
         if (stEthAmountToSell < minAllowedOrderAmount) {
-            emit AllocationProcessed(freeStEth, 0);
+            emit AllocationProcessed(stonksAddress, freeStEth, 0);
 
             return;
         }
 
-        emit AllocationProcessed(freeStEth, stEthAmountToSell);
+        emit AllocationProcessed(stonksAddress, freeStEth, stEthAmountToSell);
 
-        IERC20(address(STETH)).safeTransfer(address(stonks), stEthAmountToSell);
+        IERC20(address(STETH)).safeTransfer(stonksAddress, stEthAmountToSell);
     }
 
     /**
@@ -414,7 +428,7 @@ contract LiquidityProvisioner is
         uint256 sellAmount = Math.min(stonksBalance, maxAllowedOrderAmount);
 
         if (sellAmount < minAllowedOrderAmount) {
-            revert InsufficientStonksBalance(stonksBalance);
+            revert InsufficientStonksBalance(stonksBalance, minAllowedOrderAmount);
         }
 
         uint256 minBuyAmount = currentStonks.estimateTradeOutput(sellAmount);
@@ -507,21 +521,48 @@ contract LiquidityProvisioner is
         _setMaxAllowedOrderAmount(maxAllowedOrderAmount_);
     }
 
+    /**
+     * @notice Updates the minimum deposit value.
+     * @param  minDepositValueUsd_ New floor in total USD notional scaled to 1e18. Must be non-zero
+     *         and strictly below `maxDepositValueUsd`.
+     */
+    function setMinDepositValueUsd(
+        uint128 minDepositValueUsd_
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setMinDepositValueUsd(minDepositValueUsd_);
+    }
+
+    /**
+     * @notice Updates the maximum deposit value.
+     * @param  maxDepositValueUsd_ New cap in total USD notional scaled to 1e18. Must be strictly
+     *         above `minDepositValueUsd`.
+     */
+    function setMaxDepositValueUsd(
+        uint128 maxDepositValueUsd_
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setMaxDepositValueUsd(maxDepositValueUsd_);
+    }
+
     /*//////////////////////////////////////////////////////////////
                         EXTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @notice Current Curve LP-token balance.
+     * @return balance LP tokens held by this contract.
      */
-    function getLpTokenBalance() external view returns (uint256) {
-        return IERC20(address(CURVE_POOL_AND_TOKEN)).balanceOf(address(this));
+    function getLpTokenBalance() public view returns (uint256 balance) {
+        balance = IERC20(address(CURVE_POOL_AND_TOKEN)).balanceOf(address(this));
     }
 
     /**
-     * @notice Balanced LDO and stETH amounts for the next `addLiquidity` deposit at current
-     *         oracle prices. Gate on `canAddLiquidity` for full eligibility.
+     * @notice Total uncapped balanced LDO and stETH available to deposit at current oracle prices.
+     *         A single `addLiquidity` call deposits at most `maxDepositValueUsd` of this and nothing
+     *         below `minDepositValueUsd`, so the full amount is added over successive calls. Gate on
+     *         `canAddLiquidity` for eligibility.
      * @dev    Returns `(0, 0)` on zero balances or when the oracle is unavailable.
+     * @return ldoAmount Balanced LDO amount available to deposit.
+     * @return stEthAmount Balanced stETH amount available to deposit.
      */
     function getAvailableLiquidity()
         external
@@ -538,16 +579,13 @@ contract LiquidityProvisioner is
             return (0, 0);
         }
 
-        (bool pricesValid, uint256 ldoUsdPrice, uint256 stEthUsdPrice) = _tryGetUsdPrices(
-            address(LDO),
-            address(STETH)
-        );
+        (bool pricesValid, uint256 ldoUsdPrice, uint256 stEthUsdPrice) = _tryGetLdoStEthUsdPrices();
 
         if (!pricesValid) {
             return (0, 0);
         }
 
-        (ldoAmount, stEthAmount) = _computeBalancedAmounts(
+        (ldoAmount, stEthAmount, ) = _computeBalancedAmounts(
             ldoBalance,
             stEthBalance,
             ldoUsdPrice,
@@ -566,6 +604,7 @@ contract LiquidityProvisioner is
      * @notice Placement preconditions and next sell sizing for keepers.
      * @dev    `estimatedBuyAmount` falls back to zero on oracle revert. An expired tracked order
      *         is reported as `activeOrder == address(0)`.
+     * @return status Placement preconditions and the next sell sizing.
      */
     function getPlacementStatus() external view returns (PlacementStatus memory status) {
         IStonks currentStonks = stonks;
@@ -573,8 +612,9 @@ contract LiquidityProvisioner is
         status.isStonksCreationPaused = currentStonks.isCreationPaused();
         status.isStonksKilled = currentStonks.isKilled();
 
-        if (lastOrderAddress != address(0) && block.timestamp <= lastOrderValidTo) {
-            status.activeOrder = lastOrderAddress;
+        address trackedOrderAddress = lastOrderAddress;
+        if (trackedOrderAddress != address(0) && block.timestamp <= lastOrderValidTo) {
+            status.activeOrder = trackedOrderAddress;
             status.activeOrderValidTo = lastOrderValidTo;
         }
 
@@ -655,6 +695,38 @@ contract LiquidityProvisioner is
     }
 
     /**
+     * @notice Validates and sets the minimum deposit value against the current maximum.
+     * @param  minDepositValueUsd_ New floor in total USD notional scaled to 1e18. Non-zero and
+     *         strictly below `maxDepositValueUsd`.
+     */
+    function _setMinDepositValueUsd(uint128 minDepositValueUsd_) internal {
+        if (minDepositValueUsd_ == 0 || minDepositValueUsd_ >= maxDepositValueUsd) {
+            revert InvalidDepositValueLimits(minDepositValueUsd_, maxDepositValueUsd);
+        }
+
+        uint128 previousMinDepositValueUsd = minDepositValueUsd;
+        minDepositValueUsd = minDepositValueUsd_;
+
+        emit MinDepositValueUsdSet(previousMinDepositValueUsd, minDepositValueUsd_);
+    }
+
+    /**
+     * @notice Validates and sets the maximum deposit value against the current minimum.
+     * @param  maxDepositValueUsd_ New cap in total USD notional scaled to 1e18. Strictly above
+     *         `minDepositValueUsd`.
+     */
+    function _setMaxDepositValueUsd(uint128 maxDepositValueUsd_) internal {
+        if (maxDepositValueUsd_ == 0 || maxDepositValueUsd_ <= minDepositValueUsd) {
+            revert InvalidDepositValueLimits(minDepositValueUsd, maxDepositValueUsd_);
+        }
+
+        uint128 previousMaxDepositValueUsd = maxDepositValueUsd;
+        maxDepositValueUsd = maxDepositValueUsd_;
+
+        emit MaxDepositValueUsdSet(previousMaxDepositValueUsd, maxDepositValueUsd_);
+    }
+
+    /**
      * @notice Internal mode swap shared by the constructor and the external setter. Derives the
      *         operating mode from the new Stonks's receiver.
      * @dev    Switching disconnects this contract from the previous Stonks. Drain it and sweep
@@ -683,9 +755,10 @@ contract LiquidityProvisioner is
         stonks = IStonks(stonks_);
         stonksOrderDurationSeconds = IStonks(stonks_).ORDER_DURATION_IN_SECONDS().toUint32();
 
+        // Abandons any tracked order. Recover it before switching or via governance after.
         _setLastOrderTrackingData(address(0), 0);
 
-        emit OperatingModeAndStonksSet(
+        emit StonksAndOperatingModeSet(
             previousStonks,
             stonks_,
             previousLpModeEnabled,
@@ -708,9 +781,9 @@ contract LiquidityProvisioner is
 
         _setLastOrderTrackingData(address(0), 0);
 
-        emit StaleOrderRecovered(trackedOrderAddress);
+        emit StaleOrderCleared(trackedOrderAddress);
 
-        if (STETH.balanceOf(trackedOrderAddress) >= MIN_POSSIBLE_ORDER_BALANCE) {
+        if (STETH.balanceOf(trackedOrderAddress) >= MIN_ORDER_RESIDUAL_TO_RECOVER) {
             IOrder(trackedOrderAddress).recoverTokenFrom();
         }
     }
@@ -761,11 +834,8 @@ contract LiquidityProvisioner is
 
         uint256[2] memory amounts = [ldoAmount_, wstEthAmount_];
 
-        // min_mint_amount is set to 1 as any floor computed from the pool in this
-        // call tracks the same mint it is meant to bound. Protection comes from the upstream EMA
-        // divergence gate in `_evaluateAddLiquidityGates`. The EMA resists in-block manipulation,
-        // which is also why a same-block sandwich passes it, bounded by deposit size and the
-        // imbalance fee.
+        // min_mint_amount is 1. Slippage protection comes from the upstream EMA divergence gate
+        // in `_evaluateAddLiquidityGates`, which resists in-block price manipulation.
         lpTokensMinted = CURVE_POOL_AND_TOKEN.add_liquidity(amounts, 1);
     }
 
@@ -774,33 +844,35 @@ contract LiquidityProvisioner is
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Revert-safe `ORACLE_ROUTER.getUsdPrices`. Returns `pricesValid=false` on revert or a
-     *      zero price.
+     * @notice Revert-safe LDO and stETH USD prices. Returns `pricesValid = false` on revert or a
+     *         zero price.
      */
-    function _tryGetUsdPrices(
-        address base_,
-        address quote_
-    ) internal view returns (bool pricesValid, uint256 basePrice, uint256 quotePrice) {
-        try ORACLE_ROUTER.getUsdPrices(base_, quote_) returns (
-            uint256 baseUsdPrice,
-            uint256 quoteUsdPrice
+    function _tryGetLdoStEthUsdPrices()
+        internal
+        view
+        returns (bool pricesValid, uint256 ldoUsdPrice, uint256 stEthUsdPrice)
+    {
+        try ORACLE_ROUTER.getUsdPrices(address(LDO), address(STETH)) returns (
+            uint256 ldoPrice,
+            uint256 stEthPrice
         ) {
-            if (baseUsdPrice != 0 && quoteUsdPrice != 0) {
-                return (true, baseUsdPrice, quoteUsdPrice);
+            if (ldoPrice != 0 && stEthPrice != 0) {
+                return (true, ldoPrice, stEthPrice);
             }
         } catch {}
     }
 
     /**
-     * @notice Reverts when a live tracked order is in place. Callers invoke `_sweepExpiredOrder`
-     *         first, so by the time this runs the pointer is either cleared or points to a live one.
+     * @notice Reverts when the tracked order pointer is set. Callers run `_sweepExpiredOrder`
+     *         first, so a remaining pointer means a live order.
      */
     function _assertNoLiveOrder() internal view {
-        if (lastOrderAddress == address(0)) {
+        address trackedOrderAddress = lastOrderAddress;
+        if (trackedOrderAddress == address(0)) {
             return;
         }
 
-        revert LiveOrderInPlace(lastOrderAddress, lastOrderValidTo);
+        revert LiveOrderInPlace(trackedOrderAddress, lastOrderValidTo);
     }
 
     /**
@@ -815,10 +887,11 @@ contract LiquidityProvisioner is
         uint256 ldoBalance = LDO.balanceOf(address(this));
 
         if (ldoBalance > 0) {
-            (bool pricesValid, uint256 ldoUsdPrice, uint256 stEthUsdPrice) = _tryGetUsdPrices(
-                address(LDO),
-                address(STETH)
-            );
+            (
+                bool pricesValid,
+                uint256 ldoUsdPrice,
+                uint256 stEthUsdPrice
+            ) = _tryGetLdoStEthUsdPrices();
 
             if (!pricesValid) {
                 return 0;
@@ -855,10 +928,7 @@ contract LiquidityProvisioner is
         view
         returns (AddLiquidityStatus, uint256, uint256, uint256, uint256, uint256)
     {
-        (bool pricesValid, uint256 ldoUsdPrice, uint256 stEthUsdPrice) = _tryGetUsdPrices(
-            address(LDO),
-            address(STETH)
-        );
+        (bool pricesValid, uint256 ldoUsdPrice, uint256 stEthUsdPrice) = _tryGetLdoStEthUsdPrices();
 
         if (!pricesValid) {
             return (AddLiquidityStatus.OraclePriceUnavailable, 0, 0, 0, 0, 0);
@@ -890,9 +960,10 @@ contract LiquidityProvisioner is
     }
 
     /**
-     * @notice Runs every `addLiquidity` precondition and computes the balanced deposit pair.
+     * @notice Runs every `addLiquidity` precondition and computes the balanced pair bounded by the
+     *         `minDepositValueUsd` floor and the `maxDepositValueUsd` cap.
      * @dev    Does not revert on missing oracle prices. Pool reverts bubble up.
-     * @return evaluation Status, balanced deposit amounts, prices, and divergence values.
+     * @return evaluation Status, bounded balanced deposit amounts, prices, and divergence values.
      */
     function _evaluateAddLiquidityGates()
         internal
@@ -934,20 +1005,28 @@ contract LiquidityProvisioner is
             return evaluation;
         }
 
-        (uint256 ldoAmount, uint256 stEthAmount) = _computeBalancedAmounts(
+        (uint256 ldoAmount, uint256 stEthAmount, uint256 depositValueUsd) = _computeBalancedAmounts(
             ldoBalance,
             stEthBalance,
             ldoUsdPrice,
             stEthUsdPrice
         );
-        evaluation.ldoAmount = ldoAmount;
-        evaluation.stEthAmount = stEthAmount;
+        evaluation.depositValueUsd = depositValueUsd;
 
-        if (ldoAmount == 0 || stEthAmount == 0) {
-            evaluation.status = AddLiquidityStatus.ZeroBalancedDepositAmount;
+        if (depositValueUsd < minDepositValueUsd) {
+            evaluation.status = AddLiquidityStatus.DepositValueBelowMinimum;
             return evaluation;
         }
 
+        // Scale both sides by the same factor to respect the per-call cap, preserving the balance.
+        uint256 cap = maxDepositValueUsd;
+        if (depositValueUsd > cap) {
+            ldoAmount = Math.mulDiv(ldoAmount, cap, depositValueUsd);
+            stEthAmount = Math.mulDiv(stEthAmount, cap, depositValueUsd);
+        }
+
+        evaluation.ldoAmount = ldoAmount;
+        evaluation.stEthAmount = stEthAmount;
         evaluation.status = AddLiquidityStatus.Eligible;
     }
 
@@ -966,8 +1045,8 @@ contract LiquidityProvisioner is
 
     /**
      * @notice Pool EMA and divergence vs the LDO/stETH oracle ratio. The pool EMA is converted
-     *         from LDO/wstETH to LDO/stETH via the wstETH share rate. Returns zeros when either
-     *         converted price rounds to zero.
+     *         from LDO/wstETH to LDO/stETH via the wstETH share rate. Returns zeros when the oracle
+     *         ratio rounds to zero.
      * @param  ldoUsdPrice_ LDO/USD price scaled by `PRICE_SCALE`. Non-zero.
      * @param  stEthUsdPrice_ stETH/USD price scaled by `PRICE_SCALE`. Non-zero.
      * @return stEthPriceInLdo Oracle LDO/stETH ratio scaled by `PRICE_SCALE`, or zero on truncation.
@@ -992,10 +1071,8 @@ contract LiquidityProvisioner is
             PRICE_SCALE,
             WSTETH.stEthPerToken()
         );
-        if (poolEmaStEthInLdo == 0) {
-            return (0, 0, 0);
-        }
 
+        // A zero pool EMA scores as max divergence against the non-zero oracle ratio.
         divergenceBps = _computeDivergenceBps(poolEmaStEthInLdo, stEthPriceInLdo);
     }
 
@@ -1007,14 +1084,14 @@ contract LiquidityProvisioner is
      * @param  stEthUsdPrice_ stETH/USD price scaled by `PRICE_SCALE`.
      * @return ldoAmount Balanced LDO amount.
      * @return stEthAmount Balanced stETH amount.
+     * @return depositValueUsd Total notional of the balanced pair, twice the smaller-USD side.
      */
     function _computeBalancedAmounts(
         uint256 ldoBalance_,
         uint256 stEthBalance_,
         uint256 ldoUsdPrice_,
         uint256 stEthUsdPrice_
-    ) internal view returns (uint256 ldoAmount, uint256 stEthAmount) {
-        // Compute the USD value of each side to find the smaller one.
+    ) internal view returns (uint256 ldoAmount, uint256 stEthAmount, uint256 depositValueUsd) {
         uint256 ldoUsdValue = Math.mulDiv(ldoBalance_, ldoUsdPrice_, PRICE_SCALE);
         uint256 stEthUsdValue = Math.mulDiv(stEthBalance_, stEthUsdPrice_, PRICE_SCALE);
 
@@ -1022,9 +1099,11 @@ contract LiquidityProvisioner is
         if (ldoUsdValue <= stEthUsdValue) {
             ldoAmount = ldoBalance_;
             stEthAmount = Math.mulDiv(ldoBalance_, ldoUsdPrice_, stEthUsdPrice_);
+            depositValueUsd = ldoUsdValue * 2;
         } else {
             stEthAmount = stEthBalance_;
             ldoAmount = Math.mulDiv(stEthBalance_, stEthUsdPrice_, ldoUsdPrice_);
+            depositValueUsd = stEthUsdValue * 2;
         }
     }
 }
