@@ -366,7 +366,7 @@ contract LiquidityProvisioner is
             revert ZeroLpAmount();
         }
 
-        uint256 lpBalance = IERC20(address(CURVE_POOL_AND_TOKEN)).balanceOf(address(this));
+        uint256 lpBalance = getLpTokenBalance();
         if (lpBalance < lpAmount_) {
             revert InsufficientLpTokenBalance(lpAmount_, lpBalance);
         }
