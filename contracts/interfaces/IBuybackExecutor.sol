@@ -3,12 +3,12 @@
 pragma solidity 0.8.23;
 
 /**
- * @title ILiquidityProvisioner
+ * @title IBuybackExecutor
  * @notice External surface of the LiquidityProvisioner consumed by the NESTController, keepers,
  *         and operators. Liquidity-side calls (`addLiquidity`, `removeLiquidityAndRecoverToTreasury`)
  *         are intentionally omitted.
  */
-interface ILiquidityProvisioner {
+interface IBuybackExecutor {
     /// @notice `getPlacementStatus` return, containing placement preconditions and the next sell sizing.
     struct PlacementStatus {
         bool canPlace;

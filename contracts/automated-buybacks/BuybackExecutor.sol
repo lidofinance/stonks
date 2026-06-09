@@ -11,7 +11,7 @@ import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
 
 import {AssetRecovererACL} from "./AssetRecovererACL.sol";
 import {MathHelpers} from "../lib/MathHelpers.sol";
-import {ILiquidityProvisioner} from "../interfaces/ILiquidityProvisioner.sol";
+import {IBuybackExecutor} from "../interfaces/IBuybackExecutor.sol";
 import {IStETH} from "../interfaces/IStETH.sol";
 import {IWstETH} from "../interfaces/IWstETH.sol";
 import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
@@ -20,18 +20,13 @@ import {IStonks} from "../interfaces/IStonks.sol";
 import {IOrder} from "../interfaces/IOrder.sol";
 
 /**
- * @title LiquidityProvisioner
+ * @title BuybackExecutor
  * @author swissarmytowel <info@lido.fi>
- * @notice Receives stETH from the NESTController and LDO from Stonks settlements.
+ * @notice Receives stETH from the BuybackAllocator and LDO from Stonks settlements.
  *         In LP mode deposits balanced LDO/wstETH into the Curve LDO/wstETH pool.
  *         In treasury mode forwards all stETH to Stonks and lets LDO settle to the treasury.
  */
-contract LiquidityProvisioner is
-    ILiquidityProvisioner,
-    AssetRecovererACL,
-    ReentrancyGuard,
-    Pausable
-{
+contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
@@ -83,11 +78,11 @@ contract LiquidityProvisioner is
                                CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Gates `onStEthAllocated`. Held by the NESTController.
-    bytes32 public constant ALLOCATOR_ROLE = keccak256("NEST.LiquidityProvisioner.ALLOCATOR_ROLE");
+    /// @notice Gates `onStEthAllocated`. Held by the BuybackAllocator.
+    bytes32 public constant ALLOCATOR_ROLE = keccak256("NEST.BuybackExecutor.ALLOCATOR_ROLE");
 
     /// @notice Gates pause and cancellation paths.
-    bytes32 public constant EMERGENCY_ROLE = keccak256("NEST.LiquidityProvisioner.EMERGENCY_ROLE");
+    bytes32 public constant EMERGENCY_ROLE = keccak256("NEST.BuybackExecutor.EMERGENCY_ROLE");
 
     /// @notice 100% in basis points.
     uint256 public constant MAX_BASIS_POINTS = 10000;
@@ -396,7 +391,7 @@ contract LiquidityProvisioner is
     }
 
     /**
-     * @notice NESTController hook invoked after a stETH push. Sweeps an expired tracked order,
+     * @notice BuybackAllocator hook invoked after a stETH push. Sweeps an expired tracked order,
      *         then forwards free stETH to Stonks, half in LP mode and all in treasury mode.
      * @dev    Does not revert on missing oracle prices or sub-threshold forward amounts.
      */
