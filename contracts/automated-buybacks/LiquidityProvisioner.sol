@@ -60,6 +60,7 @@ contract LiquidityProvisioner is
         ZeroLdoBalance,
         ZeroStEthBalance,
         OraclePriceUnavailable,
+        InvalidOraclePrice,
         PoolPriceDivergenceTooHigh,
         DepositValueBelowMinimum,
         NotInLpMode,
@@ -73,8 +74,8 @@ contract LiquidityProvisioner is
         uint256 ldoAmount;
         uint256 stEthAmount;
         uint256 depositValueUsd;
-        uint256 poolEmaStEthInLdo;
-        uint256 stEthPriceInLdo;
+        uint256 poolEmaLdoPerStEth;
+        uint256 ldoPerStEth;
         uint256 divergenceBps;
     }
 
@@ -213,6 +214,7 @@ contract LiquidityProvisioner is
     );
     error NotInLpMode();
     error OraclePriceUnavailable();
+    error InvalidOraclePrice();
     error InvalidStEthAddress();
     error InvalidWstEthAddress();
     error InvalidLdoAddress();
@@ -291,11 +293,13 @@ contract LiquidityProvisioner is
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Wraps a balanced share of held stETH and deposits it with LDO into the Curve pool.
-     *         Deposits at most `maxDepositValueUsd` of total notional per call and reverts below
-     *         `minDepositValueUsd`, adding large balances over successive calls. Surplus on the
-     *         larger-USD side carries to the next call.
+     * @notice Deposits held LDO and stETH into the Curve pool, balanced to equal USD value.
+     *         The stETH portion is wrapped to wstETH before deposit.
      * @dev    Permissionless. `_evaluateAddLiquidityGates` enforces eligibility and the value bounds.
+     *         To avoid large deposits, at most `maxDepositValueUsd` can be  deposited in one call
+     *         and it reverts below `minDepositValueUsd` to prevent dust deposits.
+     *         So a large balance is split and added over several calls.
+     *         Asset that holds more USD value keeps its surplus for the deposit on the next call.
      * @return lpTokensMinted LP tokens minted by the pool.
      */
     function addLiquidity() external nonReentrant whenNotPaused returns (uint256 lpTokensMinted) {
@@ -318,10 +322,14 @@ contract LiquidityProvisioner is
             revert OraclePriceUnavailable();
         }
 
+        if (status == AddLiquidityStatus.InvalidOraclePrice) {
+            revert InvalidOraclePrice();
+        }
+
         if (status == AddLiquidityStatus.PoolPriceDivergenceTooHigh) {
             revert PoolPriceDivergenceTooHigh(
-                evaluation.poolEmaStEthInLdo,
-                evaluation.stEthPriceInLdo,
+                evaluation.poolEmaLdoPerStEth,
+                evaluation.ldoPerStEth,
                 evaluation.divergenceBps,
                 poolPriceDivergenceToleranceBps
             );
@@ -421,7 +429,12 @@ contract LiquidityProvisioner is
      */
     function placeOrder() external nonReentrant whenNotPaused returns (address newOrder) {
         _sweepExpiredOrder();
-        _assertNoLiveOrder();
+
+        // A pointer surviving the sweep is a live order. Revert to avoid placing overlapping orders
+        address trackedOrderAddress = lastOrderAddress;
+        if (trackedOrderAddress != address(0)) {
+            revert LiveOrderInPlace(trackedOrderAddress, lastOrderValidTo);
+        }
 
         IStonks currentStonks = stonks;
         uint256 stonksBalance = STETH.balanceOf(address(currentStonks));
@@ -431,8 +444,14 @@ contract LiquidityProvisioner is
             revert InsufficientStonksBalance(stonksBalance, minAllowedOrderAmount);
         }
 
+        // estimateTradeOutput applies the Stonks margin to the oracle estimate, so minBuyAmount
+        // already accounts for slippage and CoW fees.
         uint256 minBuyAmount = currentStonks.estimateTradeOutput(sellAmount);
-        newOrder = _executePlacement(currentStonks, sellAmount, minBuyAmount);
+
+        newOrder = currentStonks.placeOrderWithAmount(sellAmount, minBuyAmount);
+        _setLastOrderTrackingData(newOrder, block.timestamp + stonksOrderDurationSeconds);
+
+        emit OrderPlaced(newOrder, sellAmount, minBuyAmount);
     }
 
     /**
@@ -548,14 +567,6 @@ contract LiquidityProvisioner is
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Current Curve LP-token balance.
-     * @return balance LP tokens held by this contract.
-     */
-    function getLpTokenBalance() public view returns (uint256 balance) {
-        balance = IERC20(address(CURVE_POOL_AND_TOKEN)).balanceOf(address(this));
-    }
-
-    /**
      * @notice Total uncapped balanced LDO and stETH available to deposit at current oracle prices.
      *         A single `addLiquidity` call deposits at most `maxDepositValueUsd` of this and nothing
      *         below `minDepositValueUsd`, so the full amount is added over successive calls. Gate on
@@ -634,6 +645,14 @@ contract LiquidityProvisioner is
             !status.isStonksCreationPaused &&
             !status.isStonksKilled &&
             status.activeOrder == address(0);
+    }
+
+    /**
+     * @notice Current Curve LP-token balance.
+     * @return balance LP tokens held by this contract.
+     */
+    function getLpTokenBalance() public view returns (uint256 balance) {
+        balance = IERC20(address(CURVE_POOL_AND_TOKEN)).balanceOf(address(this));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -729,8 +748,9 @@ contract LiquidityProvisioner is
     /**
      * @notice Internal mode swap shared by the constructor and the external setter. Derives the
      *         operating mode from the new Stonks's receiver.
-     * @dev    Switching disconnects this contract from the previous Stonks. Drain it and sweep
-     *         any tracked order before switching, or recover via governance afterwards.
+     * @dev    Switching disconnects this contract from the previous Stonks. An expired tracked
+     *         order is swept and its residual recovered to the previous Stonks.
+     *         A still-live order is abandoned and must be recovered via governance.
      * @param  stonks_ New Stonks address. LP mode when its receiver is this contract, treasury
      *         mode when it is `TREASURY`. Any other receiver reverts.
      */
@@ -755,7 +775,9 @@ contract LiquidityProvisioner is
         stonks = IStonks(stonks_);
         stonksOrderDurationSeconds = IStonks(stonks_).ORDER_DURATION_IN_SECONDS().toUint32();
 
-        // Abandons any tracked order. Recover it before switching or via governance after.
+        // Sweep recovers an expired order's residual stETH. A still-live order is abandoned here
+        // and must be recovered through governance.
+        _sweepExpiredOrder();
         _setLastOrderTrackingData(address(0), 0);
 
         emit StonksAndOperatingModeSet(
@@ -796,27 +818,6 @@ contract LiquidityProvisioner is
     function _setLastOrderTrackingData(address newOrder_, uint256 validTo_) internal {
         lastOrderAddress = newOrder_;
         lastOrderValidTo = validTo_.toUint32();
-    }
-
-    /**
-     * @notice Places an order via `currentStonks_` and records its tracking metadata.
-     * @dev    Callers must hold `nonReentrant`. The tracking pointer is written only after the
-     *         external `placeOrderWithAmount` returns the order address.
-     * @param  currentStonks_ Active Stonks instance.
-     * @param  sellAmount_ stETH amount to sell.
-     * @param  minBuyAmount_ Minimum LDO amount the order must buy.
-     * @return newOrder Address of the new order.
-     */
-    function _executePlacement(
-        IStonks currentStonks_,
-        uint256 sellAmount_,
-        uint256 minBuyAmount_
-    ) internal returns (address newOrder) {
-        newOrder = currentStonks_.placeOrderWithAmount(sellAmount_, minBuyAmount_);
-
-        _setLastOrderTrackingData(newOrder, block.timestamp + stonksOrderDurationSeconds);
-
-        emit OrderPlaced(newOrder, sellAmount_, minBuyAmount_);
     }
 
     /**
@@ -863,19 +864,6 @@ contract LiquidityProvisioner is
     }
 
     /**
-     * @notice Reverts when the tracked order pointer is set. Callers run `_sweepExpiredOrder`
-     *         first, so a remaining pointer means a live order.
-     */
-    function _assertNoLiveOrder() internal view {
-        address trackedOrderAddress = lastOrderAddress;
-        if (trackedOrderAddress == address(0)) {
-            return;
-        }
-
-        revert LiveOrderInPlace(trackedOrderAddress, lastOrderValidTo);
-    }
-
-    /**
      * @notice LP-mode-only stETH available for forwarding to Stonks. Subtracts the stETH value of
      *         held LDO, the stETH on Stonks, and the residual on the tracked order. Held LDO is
      *         reserved to pair with the next Curve deposit. Returns 0 on missing oracle prices.
@@ -916,47 +904,70 @@ contract LiquidityProvisioner is
      * @notice Oracle-price and pool-EMA divergence gate for the `addLiquidity` path. Converts the
      *         pool EMA from LDO/wstETH to LDO/stETH via the wstETH share rate and compares it
      *         against the oracle ratio.
-     * @dev    Does not revert. The caller maps the returned status to an evaluation status.
-     *         Returns, in order: the divergence status (`OraclePriceUnavailable` on a missing or
-     *         truncated price, `PoolPriceDivergenceTooHigh` past tolerance, otherwise `Eligible`),
-     *         LDO/USD price, stETH/USD price, oracle LDO/stETH ratio, pool EMA in LDO/stETH, and
-     *         divergence in basis points. Prices are scaled by `PRICE_SCALE` and zero when
-     *         prices are unavailable.
+     * @dev    Does not revert. Returns respective status on error:
+     *         `OraclePriceUnavailable` on a missing price, `InvalidOraclePrice` when the
+     *         derived LDO/stETH ratio truncates to zero, `PoolPriceDivergenceTooHigh` past
+     *         tolerance, otherwise `Eligible`. Prices are scaled by `PRICE_SCALE` and zero when
+     *         unavailable.
+     * @return status Divergence status the caller maps to an evaluation status.
+     * @return ldoUsdPrice LDO/USD price.
+     * @return stEthUsdPrice stETH/USD price.
+     * @return oracleLdoPerStEth Oracle LDO/stETH ratio.
+     * @return poolEmaLdoPerStEth Pool EMA in LDO/stETH.
+     * @return divergenceBps Divergence between the pool EMA and the oracle ratio in basis points.
      */
     function _evaluatePoolPriceDivergence()
         internal
         view
-        returns (AddLiquidityStatus, uint256, uint256, uint256, uint256, uint256)
+        returns (
+            AddLiquidityStatus status,
+            uint256 ldoUsdPrice,
+            uint256 stEthUsdPrice,
+            uint256 oracleLdoPerStEth,
+            uint256 poolEmaLdoPerStEth,
+            uint256 divergenceBps
+        )
     {
-        (bool pricesValid, uint256 ldoUsdPrice, uint256 stEthUsdPrice) = _tryGetLdoStEthUsdPrices();
+        bool pricesValid;
+        (pricesValid, ldoUsdPrice, stEthUsdPrice) = _tryGetLdoStEthUsdPrices();
 
         if (!pricesValid) {
             return (AddLiquidityStatus.OraclePriceUnavailable, 0, 0, 0, 0, 0);
         }
 
-        (
-            uint256 stEthPriceInLdo,
-            uint256 poolEmaStEthInLdo,
-            uint256 divergenceBps
-        ) = _computeOracleDivergence(ldoUsdPrice, stEthUsdPrice);
-
-        AddLiquidityStatus status;
-        if (stEthPriceInLdo == 0) {
-            status = AddLiquidityStatus.OraclePriceUnavailable;
-        } else if (divergenceBps > poolPriceDivergenceToleranceBps) {
-            status = AddLiquidityStatus.PoolPriceDivergenceTooHigh;
-        } else {
-            status = AddLiquidityStatus.Eligible;
+        // LDO per stETH price from the OracleRouter
+        oracleLdoPerStEth = Math.mulDiv(stEthUsdPrice, PRICE_SCALE, ldoUsdPrice);
+        // A truncated ratio is unusable for the divergence division below
+        if (oracleLdoPerStEth == 0) {
+            return (AddLiquidityStatus.InvalidOraclePrice, ldoUsdPrice, stEthUsdPrice, 0, 0, 0);
         }
 
-        return (
-            status,
-            ldoUsdPrice,
-            stEthUsdPrice,
-            stEthPriceInLdo,
-            poolEmaStEthInLdo,
-            divergenceBps
+        /*
+         * Curve price_oracle returns coin[1] priced in coin[0]. That is how many LDO one wstETH
+         * is worth, so the units are LDO per wstETH. Divide by the wstETH share rate to get
+         * LDO per stETH.
+         *
+         *     LDO       stETH       LDO
+         *   ------  /  ------  =  -----
+         *   wstETH     wstETH     stETH
+         */
+        poolEmaLdoPerStEth = Math.mulDiv(
+            CURVE_POOL_AND_TOKEN.price_oracle(),
+            PRICE_SCALE,
+            WSTETH.stEthPerToken()
         );
+
+        // Absolute divergence of the pool EMA from the oracle ratio, in basis points, rounded up.
+        // A zero pool EMA scores as max divergence against the non-zero oracle ratio.
+        uint256 diff = poolEmaLdoPerStEth >= oracleLdoPerStEth
+            ? poolEmaLdoPerStEth - oracleLdoPerStEth
+            : oracleLdoPerStEth - poolEmaLdoPerStEth;
+
+        divergenceBps = Math.mulDiv(diff, MAX_BASIS_POINTS, oracleLdoPerStEth, Math.Rounding.Up);
+
+        status = divergenceBps > poolPriceDivergenceToleranceBps
+            ? AddLiquidityStatus.PoolPriceDivergenceTooHigh
+            : AddLiquidityStatus.Eligible;
     }
 
     /**
@@ -991,13 +1002,13 @@ contract LiquidityProvisioner is
             AddLiquidityStatus priceStatus,
             uint256 ldoUsdPrice,
             uint256 stEthUsdPrice,
-            uint256 stEthPriceInLdo,
-            uint256 poolEmaStEthInLdo,
+            uint256 ldoPerStEth,
+            uint256 poolEmaLdoPerStEth,
             uint256 divergenceBps
         ) = _evaluatePoolPriceDivergence();
 
-        evaluation.stEthPriceInLdo = stEthPriceInLdo;
-        evaluation.poolEmaStEthInLdo = poolEmaStEthInLdo;
+        evaluation.ldoPerStEth = ldoPerStEth;
+        evaluation.poolEmaLdoPerStEth = poolEmaLdoPerStEth;
         evaluation.divergenceBps = divergenceBps;
 
         if (priceStatus != AddLiquidityStatus.Eligible) {
@@ -1028,52 +1039,6 @@ contract LiquidityProvisioner is
         evaluation.ldoAmount = ldoAmount;
         evaluation.stEthAmount = stEthAmount;
         evaluation.status = AddLiquidityStatus.Eligible;
-    }
-
-    /**
-     * @notice Absolute divergence between two `PRICE_SCALE` prices, in basis points of `reference_`.
-     * @param  observed_ Price under check.
-     * @param  reference_ Reference price the divergence is normalized against. Must be non-zero.
-     */
-    function _computeDivergenceBps(
-        uint256 observed_,
-        uint256 reference_
-    ) internal pure returns (uint256) {
-        uint256 diff = observed_ >= reference_ ? observed_ - reference_ : reference_ - observed_;
-        return Math.mulDiv(diff, MAX_BASIS_POINTS, reference_, Math.Rounding.Up);
-    }
-
-    /**
-     * @notice Pool EMA and divergence vs the LDO/stETH oracle ratio. The pool EMA is converted
-     *         from LDO/wstETH to LDO/stETH via the wstETH share rate. Returns zeros when the oracle
-     *         ratio rounds to zero.
-     * @param  ldoUsdPrice_ LDO/USD price scaled by `PRICE_SCALE`. Non-zero.
-     * @param  stEthUsdPrice_ stETH/USD price scaled by `PRICE_SCALE`. Non-zero.
-     * @return stEthPriceInLdo Oracle LDO/stETH ratio scaled by `PRICE_SCALE`, or zero on truncation.
-     * @return poolEmaStEthInLdo Pool EMA in LDO/stETH scaled by `PRICE_SCALE`.
-     * @return divergenceBps Divergence between the pool EMA and the oracle ratio in basis points.
-     */
-    function _computeOracleDivergence(
-        uint256 ldoUsdPrice_,
-        uint256 stEthUsdPrice_
-    )
-        internal
-        view
-        returns (uint256 stEthPriceInLdo, uint256 poolEmaStEthInLdo, uint256 divergenceBps)
-    {
-        stEthPriceInLdo = Math.mulDiv(stEthUsdPrice_, PRICE_SCALE, ldoUsdPrice_);
-        if (stEthPriceInLdo == 0) {
-            return (0, 0, 0);
-        }
-
-        poolEmaStEthInLdo = Math.mulDiv(
-            CURVE_POOL_AND_TOKEN.price_oracle(),
-            PRICE_SCALE,
-            WSTETH.stEthPerToken()
-        );
-
-        // A zero pool EMA scores as max divergence against the non-zero oracle ratio.
-        divergenceBps = _computeDivergenceBps(poolEmaStEthInLdo, stEthPriceInLdo);
     }
 
     /**
