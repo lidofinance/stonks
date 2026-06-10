@@ -44,7 +44,7 @@ interface IBuybackAllocator {
 
     function surplusShareBP() external view returns (uint16);
 
-    function spender() external view returns (address);
+    function executor() external view returns (address);
 
     function activationTS() external view returns (uint256);
 
@@ -85,7 +85,7 @@ interface IBuybackAllocator {
 
     function setMinSpendPerCallUSD(uint128 minSpendPerCallUSD_) external;
 
-    function setSpender(address newSpender_) external;
+    function setExecutor(address newExecutor_) external;
 
     function addRevenueSource(address source_) external;
 

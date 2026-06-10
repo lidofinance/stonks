@@ -20,7 +20,7 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
 /**
  * @title BuybackAllocator
  * @notice Holds a pot of stETH and pays it out, piece by piece, to a single receiver (the
- *         `spender`) for buybacks — but only as fast as the protocol earns new revenue.
+ *         `executor`) for buybacks — but only as fast as the protocol earns new revenue.
  *         Anyone may call `allocate()`; the rules below decide how much (if anything) leaves
  *         the contract on each call.
  *
@@ -61,7 +61,7 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
  *   Every payout adds to `totalSpentUSD`, which never goes down and is never reset. What can go
  *   out right now is the allowance minus everything spent since the last accounting reset (see
  *   next section), never below zero. If the allowance falls behind — the set-aside keeps growing
- *   every day, or the share was lowered — nothing is taken back from the spender; payouts simply
+ *   every day, or the share was lowered — nothing is taken back from the executor; payouts simply
  *   pause until the allowance grows past the spent amount again.
  *
  * Resetting the accounting.
@@ -85,7 +85,7 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
  *
  * Paying out.
  *   On `allocate()` the contract asks the oracle for the stETH price, turns the spendable USD
- *   into stETH, sends it to the spender, and then notifies the spender so it can put the funds
+ *   into stETH, sends it to the executor, and then notifies the executor so it can put the funds
  *   to work. It can never send more stETH than it holds, and it records as spent exactly the
  *   USD value of what was actually sent. Instead of failing, the call quietly skips (with an
  *   `AllocationSkipped` event) when the contract is not activated yet, the price is unavailable
@@ -123,10 +123,10 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
  *    per dollar, and the floor is what limits how bad that can get — so it should be set above
  *    zero in production.
  * 4. Admin roles are trusted (Lido governance). The admin can redirect all future payouts
- *    (`setSpender`) and reshape every limit; the manager role (from the base contract) can sweep
+ *    (`setExecutor`) and reshape every limit; the manager role (from the base contract) can sweep
  *    any token to the treasury.
- * 5. The spender is a contract that accepts stETH and implements the `onStEthAllocated()` hook;
- *    if the hook reverts, payouts fail until the admin replaces the spender.
+ * 5. The executor is a contract that accepts stETH and implements the `onStEthAllocated()` hook;
+ *    if the hook reverts, payouts fail until the admin replaces the executor.
  * 6. stETH behaves like a regular 18-decimals token; its well-known 1-2 wei transfer rounding is
  *    tolerated.
  * 7. Block timestamps only move forward, and day boundaries are UTC.
@@ -176,7 +176,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         address treasury;
         address stEth;
         address oracleRouter;
-        address spender;
+        address executor;
         uint128 dailyCapUSD;
         uint128 yearlyCapUSD;
         uint128 minStEthPriceUSD;
@@ -200,7 +200,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     uint128 public minStEthPriceUSD;
     uint128 public minSpendPerCallUSD;
     uint16 public surplusShareBP;
-    address public spender;
+    address public executor;
 
     uint256 public activationTS;
     int256 public revenueBaselineUSD;
@@ -216,7 +216,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     event Activated(uint256 activationTS, int256 revenueBaselineUSD);
     event Allocated(
         address indexed triggeredBy,
-        address indexed spender,
+        address indexed executor,
         uint256 spendUSD,
         uint256 spendStEth
     );
@@ -228,7 +228,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     );
     event WindowRolled(uint256 windowDurationSeconds, uint256 newEndTS, uint256 previousSpentUSD);
     event ReserveAnchored(uint256 anchorTS, uint256 reserveBaseUSD);
-    event SpenderSet(address indexed spender);
+    event ExecutorSet(address indexed executor);
     event DailyCapUSDSet(uint128 dailyCapUSD);
     event YearlyCapUSDSet(uint128 yearlyCapUSD);
     event ReserveDailyRateUSDSet(uint128 reserveDailyRateUSD);
@@ -240,7 +240,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
 
     error StEthZeroAddress();
     error OracleRouterZeroAddress();
-    error SpenderZeroAddress();
+    error ExecutorZeroAddress();
     error AlreadyActivated();
     error NotActivated();
     error SurplusShareBPInvalid();
@@ -264,7 +264,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         STETH = IStETH(initParams_.stEth);
         ORACLE_ROUTER = IOracleRouter(initParams_.oracleRouter);
 
-        _setSpender(initParams_.spender);
+        _setExecutor(initParams_.executor);
         _setYearlyCapUSD(initParams_.yearlyCapUSD);
         _setDailyCapUSD(initParams_.dailyCapUSD);
         _setMinSpendPerCallUSD(initParams_.minSpendPerCallUSD);
@@ -305,11 +305,11 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         _rollWindow(yearly, ONE_YEAR, spendUSD);
         _rollWindow(daily, ONE_DAY, spendUSD);
 
-        IERC20(address(STETH)).safeTransfer(spender, spendStEth);
+        IERC20(address(STETH)).safeTransfer(executor, spendStEth);
 
-        emit Allocated(msg.sender, spender, spendUSD, spendStEth);
+        emit Allocated(msg.sender, executor, spendUSD, spendStEth);
 
-        IAllocationRecipient(spender).onStEthAllocated();
+        IAllocationRecipient(executor).onStEthAllocated();
     }
 
     function resetAccounting() external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -370,8 +370,8 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         _setMinSpendPerCallUSD(minSpendPerCallUSD_);
     }
 
-    function setSpender(address newSpender_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setSpender(newSpender_);
+    function setExecutor(address newExecutor_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setExecutor(newExecutor_);
     }
 
     function addRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -534,10 +534,10 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         emit RevenueSourceRemoved(source_);
     }
 
-    function _setSpender(address spender_) internal {
-        if (spender_ == address(0)) revert SpenderZeroAddress();
-        spender = spender_;
-        emit SpenderSet(spender_);
+    function _setExecutor(address executor_) internal {
+        if (executor_ == address(0)) revert ExecutorZeroAddress();
+        executor = executor_;
+        emit ExecutorSet(executor_);
     }
 
     function _setYearlyCapUSD(uint128 yearlyCapUSD_) internal {
