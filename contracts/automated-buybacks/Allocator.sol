@@ -397,11 +397,11 @@ contract Allocator is AssetRecovererACL, ReentrancyGuard {
         uint256 reserveUSD = _reserveCurrentUSD();
         int256 surplusUSD = revenueSumUSD.toInt256() - revenueBaselineUSD - reserveUSD.toInt256();
 
-        // STEP 5: Buyback Budget = Surplus * Surplus Share
-        uint256 budgetUSD = surplusUSD > 0 ? _mulBP(uint256(surplusUSD), surplusShareBP) : 0;
+        // STEP 5: Allowance = Surplus * Surplus Share
+        uint256 allowance = surplusUSD > 0 ? _mulBP(uint256(surplusUSD), surplusShareBP) : 0;
 
-        // STEP 6: Spendable now = Buyback Budget - Spent since the last accounting reset
-        spendableUSD = budgetUSD.saturatedSub(totalSpentUSD - spentBaselineUSD);
+        // STEP 6: Spendable now = Allowance - Spent since the last accounting reset - Spent Baseline
+        spendableUSD = allowance.saturatedSub(totalSpentUSD - spentBaselineUSD);
         if (spendableUSD == 0) {
             return (AllocationStatus.NoAvailableBudget, 0, 0);
         }
