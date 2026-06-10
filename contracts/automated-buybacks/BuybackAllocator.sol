@@ -330,6 +330,18 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         emit AccountingReset(forfeitedUSD, revenueBaselineUSD, spentBaselineUSD);
     }
 
+    /**
+     * @notice Sets the share of the revenue surplus that can be spent on buybacks.
+     * @dev The new share applies to the whole surplus history, not just to future revenue.
+     *      Decide whether to call `resetAccounting()` right after:
+     *      - Lowering the share without a reset can push the allowance below what was already
+     *        spent, which pauses buybacks until new revenue catches up. Call `resetAccounting()`
+     *        to start from a clean slate and keep buybacks flowing from new revenue.
+     *      - Raising the share without a reset also unlocks the higher share of the surplus
+     *        earned in the past. Call `resetAccounting()` to apply the new share only to
+     *        revenue earned from now on.
+     *      Skip the reset only when this retroactive effect is intended.
+     */
     function setSurplusShareBP(uint16 surplusShareBP_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setSurplusShareBP(surplusShareBP_);
     }
