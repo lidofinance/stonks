@@ -1,23 +1,17 @@
-// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
-// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
+// SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.23;
 
 import {RevenueSource} from "../automated-buybacks/revenue/RevenueSource.sol";
 
 /**
  * @title RevenueSourceHarness
- * @notice Test-only concretion of the abstract `RevenueSource`. Exposes `_updateRevenue`
- *         unrestricted so the base-class normalization logic can be exercised directly
- *         without a full subclass (e.g. `StakingRevenueSource`) in scope.
+ * @notice Test-only concretion of the abstract `RevenueSource`. Exposes `_addRevenueUSD`
+ *         unrestricted so the base-class accumulator can be exercised directly without a
+ *         full subclass (e.g. `StakingRevenueSource`) in scope.
  */
 contract RevenueSourceHarness is RevenueSource {
-    constructor(
-        address admin_,
-        uint256 stalenessWindowSeconds_,
-        uint256 minReportIntervalSeconds_
-    ) RevenueSource(admin_, stalenessWindowSeconds_, minReportIntervalSeconds_) {}
-
-    function updateRevenue(uint256 revenueUSD_, uint256 reportTimestamp_) external {
-        _updateRevenue(revenueUSD_, reportTimestamp_);
+    function addRevenueUSD(uint256 amountUSD_) external {
+        _addRevenueUSD(amountUSD_);
     }
 }
