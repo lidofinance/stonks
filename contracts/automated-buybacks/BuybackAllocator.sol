@@ -18,7 +18,7 @@ import {IAllocationRecipient} from "../interfaces/IAllocationRecipient.sol";
 import {MathHelpers} from "../lib/MathHelpers.sol";
 
 /**
- * @title Allocator
+ * @title BuybackAllocator
  * @notice Holds a pot of stETH and pays it out, piece by piece, to a single receiver (the
  *         `spender`) for buybacks — but only as fast as the protocol earns new revenue.
  *         Anyone may call `allocate()`; the rules below decide how much (if anything) leaves
@@ -30,7 +30,7 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
  * Counting revenue.
  *   A list of registered "revenue source" contracts each publish one number: the total USD value
  *   that source has earned for the protocol since it went live. These numbers only ever grow.
- *   The Allocator stores no revenue itself — whenever it needs the current total, it adds up all
+ *   The BuybackAllocator stores no revenue itself — whenever it needs the current total, it adds up all
  *   the sources' numbers on the spot. While computing a payout, a source that fails to answer
  *   simply counts as zero for that moment, which can only lower the payout, never raise it.
  *
@@ -151,7 +151,7 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
  *    so a rate cut steps the total down by the difference for that day.
  * 8. Before activation nothing can be spent, and activation can happen only once.
  */
-contract Allocator is AssetRecovererACL, ReentrancyGuard {
+contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using MathHelpers for uint256;
