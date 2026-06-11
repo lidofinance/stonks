@@ -14,7 +14,7 @@ import {AssetRecovererACL} from "./AssetRecovererACL.sol";
 import {IStETH} from "../interfaces/IStETH.sol";
 import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
 import {IRevenueSource} from "../interfaces/IRevenueSource.sol";
-import {IAllocationRecipient} from "../interfaces/IAllocationRecipient.sol";
+import {IBuybackExecutor} from "../interfaces/IBuybackExecutor.sol";
 import {MathHelpers} from "../lib/MathHelpers.sol";
 
 /**
@@ -309,7 +309,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
 
         emit Allocated(msg.sender, executor, spendUSD, spendStEth);
 
-        IAllocationRecipient(executor).onStEthAllocated();
+        IBuybackExecutor(executor).onStEthAllocated();
     }
 
     function resetAccounting() external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -446,7 +446,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         uint192 spent = window_.spentUSD;
         if (block.timestamp >= window_.endTS) {
             uint64 newEndTS = uint64(
-                activationTS + ((block.timestamp - activationTS) / windowDuration_ + 1) * windowDuration_
+                activationTS +
+                    ((block.timestamp - activationTS) / windowDuration_ + 1) *
+                    windowDuration_
             );
             emit WindowRolled(windowDuration_, newEndTS, spent);
             window_.endTS = newEndTS;
@@ -474,14 +476,14 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     function _revenueSumStrictUSD() internal view returns (uint256 revenueSumUSD) {
         address[] memory sources = _revenueSources.values();
         for (uint256 i = 0; i < sources.length; ++i) {
-            revenueSumUSD += IRevenueSource(sources[i]).totalRevenueUSD();
+            revenueSumUSD += IRevenueSource(sources[i]).getCumulativeRevenueUSD();
         }
     }
 
     function _revenueSumUSD() internal view returns (uint256 revenueSumUSD) {
         address[] memory sources = _revenueSources.values();
         for (uint256 i = 0; i < sources.length; ++i) {
-            try IRevenueSource(sources[i]).totalRevenueUSD() returns (uint256 revenue) {
+            try IRevenueSource(sources[i]).getCumulativeRevenueUSD() returns (uint256 revenue) {
                 revenueSumUSD += revenue;
             } catch {}
         }
@@ -518,7 +520,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         if (!_revenueSources.add(source_)) revert RevenueSourceAlreadyRegistered();
 
         if (activationTS != 0) {
-            revenueBaselineUSD += SafeCast.toInt256(IRevenueSource(source_).totalRevenueUSD());
+            revenueBaselineUSD += SafeCast.toInt256(
+                IRevenueSource(source_).getCumulativeRevenueUSD()
+            );
         }
 
         emit RevenueSourceAdded(source_);
@@ -528,7 +532,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         if (!_revenueSources.remove(source_)) revert RevenueSourceNotRegistered();
 
         if (activationTS != 0) {
-            revenueBaselineUSD -= SafeCast.toInt256(IRevenueSource(source_).totalRevenueUSD());
+            revenueBaselineUSD -= SafeCast.toInt256(
+                IRevenueSource(source_).getCumulativeRevenueUSD()
+            );
         }
 
         emit RevenueSourceRemoved(source_);
@@ -573,7 +579,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         if (activationTS != 0) {
             uint256 anchorTS = _todayStartTS();
             if (reserveAnchorTS != 0) {
-                reserveBaseUSD += uint256(reserveDailyRateUSD) * ((anchorTS - reserveAnchorTS) / ONE_DAY);
+                reserveBaseUSD +=
+                    uint256(reserveDailyRateUSD) *
+                    ((anchorTS - reserveAnchorTS) / ONE_DAY);
             }
             reserveAnchorTS = anchorTS;
             emit ReserveAnchored(anchorTS, reserveBaseUSD);

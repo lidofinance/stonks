@@ -35,6 +35,7 @@ const config: HardhatUserConfig = {
         url: process.env.RPC_URL!,
       },
     },
+    localhost: { gas: 'auto' },
   },
   etherscan: {
     apiKey: ETHERSCAN_API_KEY,
@@ -59,7 +60,7 @@ if (MAINNET_RPC_URL) {
   config.networks!.hardhat = {
     forking: {
       url: MAINNET_RPC_URL,
-      blockNumber: 18720000,
+      blockNumber: 25294406,
     },
   }
 }
