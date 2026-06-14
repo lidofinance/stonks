@@ -343,6 +343,25 @@ describe('StakingRevenueSource', function () {
           .to.emit(subject, 'RevenueAccumulatedInStEth')
           .withArgs(expectedStEth, expectedStEth)
       })
+
+      it('should pick up the new lido address if the locator is upgraded', async function () {
+        // Deploy a second stETH stub with a different share rate. After the locator is
+        // retargeted, the contract must convert shares using the new lido's rate.
+        const newRate = (INITIAL_POOLED_ETH_PER_SHARE * 105n) / 100n
+        const newStEth = await new StEthSharesStub__factory(admin).deploy(newRate)
+        await locatorStub.setLido(await newStEth.getAddress())
+
+        const expectedStEth = expectedTreasuryStEth(
+          NOMINAL_FEE_SHARES,
+          TREASURY_FEE,
+          MODULES_FEE,
+          newRate
+        )
+
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.emit(subject, 'RevenueAccumulatedInStEth')
+          .withArgs(expectedStEth, expectedStEth)
+      })
     })
 
     describe('zero-input fast paths:', function () {
