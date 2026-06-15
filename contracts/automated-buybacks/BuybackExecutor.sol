@@ -47,6 +47,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         uint128 maxAllowedOrderAmount;
         uint128 minDepositValueUsd;
         uint128 maxDepositValueUsd;
+        uint128 poolBootstrapMinTvlUsd;
         address stonks;
     }
 
@@ -63,7 +64,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     }
 
     /// @notice `_evaluateAddLiquidityGates` output, containing status, capped balanced deposit
-    ///         amounts, the deposit USD value, and prices reused by `addLiquidity` for its errors.
+    ///         amounts, the deposit USD value, the pool TVL, and prices reused by `addLiquidity` for
+    ///         its errors and the bootstrap latch.
     struct AddLiquidityEvaluation {
         AddLiquidityStatus status;
         uint256 ldoAmount;
@@ -72,6 +74,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         uint256 poolEmaLdoPerStEth;
         uint256 ldoPerStEth;
         uint256 divergenceBps;
+        uint256 poolTvlUsd;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -153,6 +156,13 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     ///         Larger balanced amounts scale down to this, adding the balance over successive calls.
     uint128 public maxDepositValueUsd;
 
+    /// @notice Pool TVL (LDO + wstETH valued at the oracle, scaled to 1e18) at which the divergence
+    ///         gate becomes active. It is sized in such a way that divergence no longer threatens deposits in a shallow pool.
+    uint128 public poolBootstrapMinTvlUsd;
+
+    /// @notice Divergence gate state. While false the gate is bypassed, when true enforces it.
+    bool public poolPriceDivergenceGateActive;
+
     /*//////////////////////////////////////////////////////////////
                                 EVENTS
     //////////////////////////////////////////////////////////////*/
@@ -183,6 +193,11 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     );
     event MinDepositValueUsdSet(uint256 previousMinDepositValueUsd, uint256 newMinDepositValueUsd);
     event MaxDepositValueUsdSet(uint256 previousMaxDepositValueUsd, uint256 newMaxDepositValueUsd);
+    event PoolBootstrapMinTvlUsdSet(
+        uint256 previousPoolBootstrapMinTvlUsd,
+        uint256 newPoolBootstrapMinTvlUsd
+    );
+    event PoolPriceDivergenceGateActivated(uint256 poolTvlUsd);
     event StonksAndOperatingModeSet(
         address indexed previousStonks,
         address indexed newStonks,
@@ -218,6 +233,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     error InvalidPoolPriceDivergenceTolerance(uint256 poolPriceDivergenceToleranceBps);
     error InvalidOrderAmountLimits(uint256 minAllowedOrderAmount, uint256 maxAllowedOrderAmount);
     error InvalidDepositValueLimits(uint256 minDepositValueUsd, uint256 maxDepositValueUsd);
+    error InvalidPoolBootstrapMinTvlUsd(uint256 poolBootstrapMinTvlUsd);
     error DepositValueBelowMinimum(uint256 depositValueUsd, uint256 minDepositValueUsd);
     error InvalidCurvePool(address coin0, address coin1);
     error LiveOrderInPlace(address order, uint256 validTo);
@@ -277,6 +293,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         _setMinAllowedOrderAmount(initParams_.minAllowedOrderAmount);
         _setMaxDepositValueUsd(initParams_.maxDepositValueUsd);
         _setMinDepositValueUsd(initParams_.minDepositValueUsd);
+        _setPoolBootstrapMinTvlUsd(initParams_.poolBootstrapMinTvlUsd);
         _setStonksAndOperatingMode(initParams_.stonks);
 
         // `wrap` pulls stETH through wstETH, so grant a one-time max approval here.
@@ -342,6 +359,19 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         lpTokensMinted = _depositToCurve(evaluation.ldoAmount, actualWstEthMinted);
 
         emit LiquidityAdded(msg.sender, evaluation.ldoAmount, actualWstEthMinted, lpTokensMinted);
+
+        // Latch the divergence gate on once the pool is deep enough that divergence no longer
+        // threatens deposits and its EMA tracks the oracle. The TVL floor
+        // stops a momentary EMA from latching a shallow pool, and the EMA being in tolerance stops a
+        // flash-inflated TVL from latching a mispriced pool.
+        if (
+            !poolPriceDivergenceGateActive &&
+            evaluation.poolTvlUsd >= poolBootstrapMinTvlUsd &&
+            evaluation.divergenceBps <= poolPriceDivergenceToleranceBps
+        ) {
+            poolPriceDivergenceGateActive = true;
+            emit PoolPriceDivergenceGateActivated(evaluation.poolTvlUsd);
+        }
     }
 
     /**
@@ -557,6 +587,16 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         _setMaxDepositValueUsd(maxDepositValueUsd_);
     }
 
+    /**
+     * @notice Updates the pool TVL target that latches the divergence gate on.
+     * @param  poolBootstrapMinTvlUsd_ New target in total USD notional scaled to 1e18. Non-zero.
+     */
+    function setPoolBootstrapMinTvlUsd(
+        uint128 poolBootstrapMinTvlUsd_
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setPoolBootstrapMinTvlUsd(poolBootstrapMinTvlUsd_);
+    }
+
     /*//////////////////////////////////////////////////////////////
                         EXTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -741,6 +781,21 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     }
 
     /**
+     * @notice Validates and sets the pool TVL bootstrap target.
+     * @param  poolBootstrapMinTvlUsd_ New target in total USD notional scaled to 1e18. Non-zero.
+     */
+    function _setPoolBootstrapMinTvlUsd(uint128 poolBootstrapMinTvlUsd_) internal {
+        if (poolBootstrapMinTvlUsd_ == 0) {
+            revert InvalidPoolBootstrapMinTvlUsd(poolBootstrapMinTvlUsd_);
+        }
+
+        uint128 previousPoolBootstrapMinTvlUsd = poolBootstrapMinTvlUsd;
+        poolBootstrapMinTvlUsd = poolBootstrapMinTvlUsd_;
+
+        emit PoolBootstrapMinTvlUsdSet(previousPoolBootstrapMinTvlUsd, poolBootstrapMinTvlUsd_);
+    }
+
+    /**
      * @notice Internal mode swap shared by the constructor and the external setter. Derives the
      *         operating mode from the new Stonks's receiver.
      * @dev    Switching disconnects this contract from the previous Stonks. An expired tracked
@@ -902,8 +957,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
      * @dev    Does not revert. Returns respective status on error:
      *         `OraclePriceUnavailable` on a missing price, `InvalidOraclePrice` when the
      *         derived LDO/stETH ratio truncates to zero, `PoolPriceDivergenceTooHigh` past
-     *         tolerance, otherwise `Eligible`. Prices are scaled by `PRICE_SCALE` and zero when
-     *         unavailable.
+     *         tolerance once `poolPriceDivergenceGateActive`, otherwise `Eligible`. While the gate is
+     *         inactive divergence is bypassed. Prices are scaled by `PRICE_SCALE` and zero when unavailable.
      * @return status Divergence status the caller maps to an evaluation status.
      * @return ldoUsdPrice LDO/USD price.
      * @return stEthUsdPrice stETH/USD price.
@@ -960,7 +1015,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
 
         divergenceBps = Math.mulDiv(diff, MAX_BASIS_POINTS, oracleLdoPerStEth, Math.Rounding.Up);
 
-        status = divergenceBps > poolPriceDivergenceToleranceBps
+        // Divergence blocks deposits only once the gate is active. Until then it is bypassed, since a
+        // stale EMA cannot converge without the deposits it would otherwise block.
+        status = poolPriceDivergenceGateActive && divergenceBps > poolPriceDivergenceToleranceBps
             ? AddLiquidityStatus.PoolPriceDivergenceTooHigh
             : AddLiquidityStatus.Eligible;
     }
@@ -1009,6 +1066,11 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         if (priceStatus != AddLiquidityStatus.Eligible) {
             evaluation.status = priceStatus;
             return evaluation;
+        }
+
+        // Only the bootstrap latch consumes the pool TVL, so skip the reads once the gate is active.
+        if (!poolPriceDivergenceGateActive) {
+            evaluation.poolTvlUsd = _poolTvlUsd(ldoUsdPrice, stEthUsdPrice);
         }
 
         (uint256 ldoAmount, uint256 stEthAmount, uint256 depositValueUsd) = _computeBalancedAmounts(
@@ -1065,5 +1127,25 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
             ldoAmount = Math.mulDiv(stEthBalance_, stEthUsdPrice_, ldoUsdPrice_);
             depositValueUsd = stEthUsdValue * 2;
         }
+    }
+
+    /**
+     * @notice Pool TVL valued at the oracle, scaled to 1e18. Reads the pool's internal `balances`, so
+     *         token donations to the pool do not inflate it.
+     * @param  ldoUsdPrice_ LDO/USD price scaled by `PRICE_SCALE`.
+     * @param  stEthUsdPrice_ stETH/USD price scaled by `PRICE_SCALE`.
+     * @return poolTvlUsd Total pool value in USD scaled to 1e18.
+     */
+    function _poolTvlUsd(
+        uint256 ldoUsdPrice_,
+        uint256 stEthUsdPrice_
+    ) internal view returns (uint256 poolTvlUsd) {
+        uint256 ldoReserve = CURVE_POOL_AND_TOKEN.balances(0);
+        uint256 stEthReserve = WSTETH.getStETHByWstETH(CURVE_POOL_AND_TOKEN.balances(1));
+
+        uint256 ldoUsdValue = Math.mulDiv(ldoReserve, ldoUsdPrice_, PRICE_SCALE);
+        uint256 stEthUsdValue = Math.mulDiv(stEthReserve, stEthUsdPrice_, PRICE_SCALE);
+
+        poolTvlUsd = ldoUsdValue + stEthUsdValue;
     }
 }
