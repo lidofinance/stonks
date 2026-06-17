@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.23;
 
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IRevenueSource} from "../../interfaces/IRevenueSource.sol";
 
 /**
@@ -9,6 +10,9 @@ import {IRevenueSource} from "../../interfaces/IRevenueSource.sol";
  * @author swissarmytowel <info@lido.fi>
  * @notice Base contract for revenue data providers. Maintains a monotonic cumulative USD
  *         revenue accumulator and exposes it as the sole read.
+ * @dev    Carries the ERC-165 advertisement for `IRevenueSource` so every concrete source is
+ *         registrable by consumers (e.g. `BuybackAllocator`) without re-declaring it. Children
+ *         that expose extra interfaces override `supportsInterface` and chain through `super`.
  */
 abstract contract RevenueSource is IRevenueSource {
     /*//////////////////////////////////////////////////////////////
@@ -34,6 +38,18 @@ abstract contract RevenueSource is IRevenueSource {
      */
     function getCumulativeRevenueUSD() external view returns (uint256) {
         return _cumulativeRevenueUSD;
+    }
+
+    /**
+     * @notice ERC-165 support. Advertises `IRevenueSource` and `IERC165` for every concrete
+     *         source. Children that add interfaces override and chain via `super`.
+     * @param  interfaceId_ Interface identifier to probe.
+     * @return `true` for `IRevenueSource` and `IERC165`.
+     */
+    function supportsInterface(bytes4 interfaceId_) public view virtual override returns (bool) {
+        return
+            interfaceId_ == type(IRevenueSource).interfaceId ||
+            interfaceId_ == type(IERC165).interfaceId;
     }
 
     /*//////////////////////////////////////////////////////////////
