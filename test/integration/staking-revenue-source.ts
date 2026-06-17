@@ -38,14 +38,24 @@ enum OracleFailureMode {
   EmptyRevert = 2,
 }
 
-const PUSH_IGNORED = [1n, 1n, 1n, 1n, 1n, 1n] as const
+// Unused rebase-payload params (timeElapsed, pre/post totals).
+const PUSH_IGNORED = [1n, 1n, 1n, 1n, 1n] as const
+
+// Monotonically increasing report timestamp — the contract dedupes on it, so each push must
+// carry a larger value. Global counter keeps every call strictly increasing; each test deploys a
+// fresh source (`lastReportTimestamp == 0`), so any positive value passes the first gate.
+let reportTsCounter = 0n
+function nextReportTs(): bigint {
+  reportTsCounter += 1n
+  return reportTsCounter
+}
 
 async function pushSharesMinted(
   revenueSource: StakingRevenueSource,
   caller: Signer,
   shares: bigint
 ) {
-  return revenueSource.connect(caller).pushTokenRate(...PUSH_IGNORED, shares)
+  return revenueSource.connect(caller).pushTokenRate(nextReportTs(), ...PUSH_IGNORED, shares)
 }
 
 function expectedTreasuryStEth(
