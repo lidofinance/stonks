@@ -4,6 +4,7 @@ pragma solidity 0.8.23;
 
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {RevenueSource} from "./RevenueSource.sol";
+import {IRevenueSource} from "../../interfaces/IRevenueSource.sol";
 import {ITokenRatePusherWithArgs} from "../../interfaces/ITokenRatePusherWithArgs.sol";
 import {IOracleRouter} from "../../interfaces/IOracleRouter.sol";
 import {ILidoLocator} from "../../interfaces/ILidoLocator.sol";
@@ -190,10 +191,13 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
      * @notice ERC165 entry point. Queried by `TokenRateNotifier.addObserver` during
      *         registration to detect the args-bearing observer flavor.
      * @param  interfaceId_ Interface identifier to probe.
-     * @return `true` for `ITokenRatePusherWithArgs` and `IERC165`.
+     * @return `true` for `IRevenueSource`, `ITokenRatePusherWithArgs`, and `IERC165`.
+     * @dev    `IRevenueSource` must be advertised so consumers like `BuybackAllocator` accept
+     *         this source via their ERC165 registration check.
      */
     function supportsInterface(bytes4 interfaceId_) external pure returns (bool) {
         return
+            interfaceId_ == type(IRevenueSource).interfaceId ||
             interfaceId_ == type(ITokenRatePusherWithArgs).interfaceId ||
             interfaceId_ == type(IERC165).interfaceId;
     }

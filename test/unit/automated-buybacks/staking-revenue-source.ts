@@ -566,6 +566,12 @@ describe('StakingRevenueSource', function () {
       await snapshot.restore()
     })
 
+    it('should return true for IRevenueSource.interfaceId', async function () {
+      // Single-function interface → interfaceId is the selector of getCumulativeRevenueUSD().
+      const interfaceId = ethers.id('getCumulativeRevenueUSD()').substring(0, 10) as `0x${string}`
+      expect(await subject.supportsInterface(interfaceId)).to.equal(true)
+    })
+
     it('should return true for ITokenRatePusherWithArgs.interfaceId', async function () {
       const interfaceId = ethers
         .id('pushTokenRate(uint256,uint256,uint256,uint256,uint256,uint256,uint256)')
