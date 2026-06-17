@@ -91,6 +91,10 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     /// @notice Upper bound on `poolPriceDivergenceToleranceBps`.
     uint256 public constant MAX_POOL_DIVERGENCE_TOLERANCE_BPS = 1000;
 
+    /// @notice Upper bound on `poolBootstrapMinTvlUsd` to prevent excessive TVL requirements.
+    ///         1,000,000 USD in total notional scaled to 1e18.
+    uint256 public constant MAX_POOL_BOOTSTRAP_MIN_TVL_USD = 1_000_000 * 1e18;
+
     /// @notice Minimum residual stETH on a swept order worth recovering.
     uint256 public constant MIN_ORDER_RESIDUAL_TO_RECOVER = 10;
 
@@ -202,6 +206,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     event OrderPlaced(address indexed order, uint256 sellAmount, uint256 minBuyAmount);
     event AllocationProcessed(address indexed stonks, uint256 freeStEth, uint256 forwardedToStonks);
     event StaleOrderCleared(address indexed order);
+    event OrderAbandoned(address indexed order, uint256 validTo);
 
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
@@ -307,6 +312,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
      *         and it reverts below `minDepositValueUsd` to prevent dust deposits.
      *         So a large balance is split and added over several calls.
      *         Asset that holds more USD value keeps its surplus for the deposit on the next call.
+     *         Pool to Market price divergence is enforced only when the pool TVL is at or above `poolBootstrapMinTvlUsd`.
+     *         This allows a shallow pool to bootstrap its EMA. Otherwise the first deposits into a shallow pool are deadlocked.
      * @return lpTokensMinted LP tokens minted by the pool.
      */
     function addLiquidity() external nonReentrant whenNotPaused returns (uint256 lpTokensMinted) {
@@ -466,7 +473,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
      * @param  stonks_ New Stonks address. LP mode when its receiver is this contract, treasury
      *         mode when it is `TREASURY`.
      */
-    function setStonksAndOperatingMode(address stonks_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setStonksAndOperatingMode(
+        address stonks_
+    ) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
         _setStonksAndOperatingMode(stonks_);
     }
 
@@ -571,7 +580,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
 
     /**
      * @notice Updates the pool TVL target at or above which the divergence gate is enforced.
-     * @param  poolBootstrapMinTvlUsd_ New target in total USD notional scaled to 1e18. Non-zero.
+     * @param  poolBootstrapMinTvlUsd_ New target in total USD notional scaled to 1e18.
+     *         In `(0, MAX_POOL_BOOTSTRAP_MIN_TVL_USD]`.
      */
     function setPoolBootstrapMinTvlUsd(
         uint128 poolBootstrapMinTvlUsd_
@@ -764,10 +774,13 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
 
     /**
      * @notice Validates and sets the pool TVL bootstrap target.
-     * @param  poolBootstrapMinTvlUsd_ New target in total USD notional scaled to 1e18. Non-zero.
+     * @param  poolBootstrapMinTvlUsd_ New target in total USD notional scaled to 1e18.
+     *         In `(0, MAX_POOL_BOOTSTRAP_MIN_TVL_USD]`.
      */
     function _setPoolBootstrapMinTvlUsd(uint128 poolBootstrapMinTvlUsd_) internal {
-        if (poolBootstrapMinTvlUsd_ == 0) {
+        if (
+            poolBootstrapMinTvlUsd_ == 0 || poolBootstrapMinTvlUsd_ > MAX_POOL_BOOTSTRAP_MIN_TVL_USD
+        ) {
             revert InvalidPoolBootstrapMinTvlUsd(poolBootstrapMinTvlUsd_);
         }
 
@@ -781,8 +794,10 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
      * @notice Internal mode swap shared by the constructor and the external setter. Derives the
      *         operating mode from the new Stonks's receiver.
      * @dev    Switching disconnects this contract from the previous Stonks. An expired tracked
-     *         order is swept and its residual recovered to the previous Stonks.
-     *         A still-live order is abandoned and must be recovered via governance.
+     *         order is swept and its residual recovered to the previous Stonks. A live order
+     *         survives the sweep and is abandoned, recorded by `OrderAbandoned`. After it expires
+     *         anyone can call its `recoverTokenFrom`, which returns the stETH to the previous
+     *         Stonks for governance to recover.
      * @param  stonks_ New Stonks address. LP mode when its receiver is this contract, treasury
      *         mode when it is `TREASURY`. Any other receiver reverts.
      */
@@ -807,9 +822,14 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         stonks = IStonks(stonks_);
         stonksOrderDurationSeconds = IStonks(stonks_).ORDER_DURATION_IN_SECONDS().toUint32();
 
-        // Sweep recovers an expired order's residual stETH. A still-live order is abandoned here
-        // and must be recovered through governance.
+        // Sweep recovers an expired order's residual stETH. A live order survives the sweep and is
+        // abandoned here, recorded by OrderAbandoned so it stays discoverable for later recovery.
         _sweepExpiredOrder();
+
+        if (lastOrderAddress != address(0)) {
+            emit OrderAbandoned(lastOrderAddress, lastOrderValidTo);
+        }
+
         _setLastOrderTrackingData(address(0), 0);
 
         emit StonksAndOperatingModeSet(
