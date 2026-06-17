@@ -30,10 +30,8 @@ const STETH_USD_PRICE = ethers.parseEther('3500')
 const NOMINAL_FEE_SHARES = ethers.parseEther('1000')
 
 // Placeholder values for the rebase-payload parameters that `StakingRevenueSource` does not
-// consume. Their values do not affect any branch of `pushTokenRate`; they exist only so the
-// call satisfies the 7-argument `ITokenRatePusherWithArgs` signature.
+// consume. Their values do not affect any branch of `pushTokenRate`.
 const PUSH_IGNORED = {
-  reportTimestamp: 1n,
   timeElapsed: 1n,
   preTotalShares: 1n,
   preTotalEther: 1n,
@@ -41,15 +39,26 @@ const PUSH_IGNORED = {
   postTotalEther: 1n,
 }
 
+// Monotonically increasing report timestamp. Rebase report timestamps strictly increase and the
+// contract dedupes on them, so each push must carry a fresh, larger value. A global counter keeps
+// every call across the suite strictly increasing; since each test deploys a fresh subject (with
+// `lastReportTimestamp == 0`), any positive value passes the first gate.
+let reportTsCounter = 0n
+function nextReportTs(): bigint {
+  reportTsCounter += 1n
+  return reportTsCounter
+}
+
 async function pushSharesMinted(
   subject: StakingRevenueSource,
   caller: Signer,
-  shares: bigint
+  shares: bigint,
+  reportTimestamp?: bigint
 ) {
   return subject
     .connect(caller)
     .pushTokenRate(
-      PUSH_IGNORED.reportTimestamp,
+      reportTimestamp ?? nextReportTs(),
       PUSH_IGNORED.timeElapsed,
       PUSH_IGNORED.preTotalShares,
       PUSH_IGNORED.preTotalEther,
@@ -188,8 +197,8 @@ describe('StakingRevenueSource', function () {
       expect(await subject.LIDO_LOCATOR()).to.equal(await locatorStub.getAddress())
     })
 
-    it('should cache PRICE_SCALE from the OracleRouter at construction', async function () {
-      expect(await subject.PRICE_SCALE()).to.equal(await oracleStub.PRICE_UNIT())
+    it('should cache PRICE_UNIT from the OracleRouter at construction', async function () {
+      expect(await subject.PRICE_UNIT()).to.equal(await oracleStub.PRICE_UNIT())
     })
 
     it('should initialize cumulative and pending accumulators at zero', async function () {
@@ -249,6 +258,54 @@ describe('StakingRevenueSource', function () {
         await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
           .to.be.revertedWithCustomError(subject, 'UnauthorizedCaller')
           .withArgs(notifierAddr)
+      })
+    })
+
+    describe('report-timestamp dedupe:', function () {
+      it('should advance lastReportTimestamp to the accepted report timestamp', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 100n)
+        expect(await subject.lastReportTimestamp()).to.equal(100n)
+      })
+
+      it('should skip a duplicate report timestamp without double-counting', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 100n)
+        const pendingAfterFirst = await subject.pendingRevenueStEth()
+
+        // Same timestamp again → treated as a replay, no emit, no state change.
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 100n)).to.not.emit(
+          subject,
+          'RevenueAccumulatedInStEth'
+        )
+        expect(await subject.pendingRevenueStEth()).to.equal(pendingAfterFirst)
+        expect(await subject.lastReportTimestamp()).to.equal(100n)
+      })
+
+      it('should skip an out-of-order (older) report timestamp', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 100n)
+        const pendingAfterFirst = await subject.pendingRevenueStEth()
+
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 50n)).to.not.emit(
+          subject,
+          'RevenueAccumulatedInStEth'
+        )
+        expect(await subject.pendingRevenueStEth()).to.equal(pendingAfterFirst)
+        expect(await subject.lastReportTimestamp()).to.equal(100n)
+      })
+
+      it('should accept a strictly increasing report timestamp', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 100n)
+        const expectedStEth = nominalTreasuryStEth()
+
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 101n))
+          .to.emit(subject, 'RevenueAccumulatedInStEth')
+          .withArgs(expectedStEth, expectedStEth * 2n)
+        expect(await subject.lastReportTimestamp()).to.equal(101n)
+      })
+
+      it('should advance the watermark even on a zero-fee rebase', async function () {
+        await pushSharesMinted(subject, notifier, 0n, 100n)
+        expect(await subject.lastReportTimestamp()).to.equal(100n)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
       })
     })
 
@@ -337,6 +394,25 @@ describe('StakingRevenueSource', function () {
           newTreasuryFee,
           newModulesFee,
           INITIAL_POOLED_ETH_PER_SHARE
+        )
+
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.emit(subject, 'RevenueAccumulatedInStEth')
+          .withArgs(expectedStEth, expectedStEth)
+      })
+
+      it('should pick up the new lido address if the locator is upgraded', async function () {
+        // Deploy a second stETH stub with a different share rate. After the locator is
+        // retargeted, the contract must convert shares using the new lido's rate.
+        const newRate = (INITIAL_POOLED_ETH_PER_SHARE * 105n) / 100n
+        const newStEth = await new StEthSharesStub__factory(admin).deploy(newRate)
+        await locatorStub.setLido(await newStEth.getAddress())
+
+        const expectedStEth = expectedTreasuryStEth(
+          NOMINAL_FEE_SHARES,
+          TREASURY_FEE,
+          MODULES_FEE,
+          newRate
         )
 
         await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
@@ -545,6 +621,12 @@ describe('StakingRevenueSource', function () {
 
     after(async function () {
       await snapshot.restore()
+    })
+
+    it('should return true for IRevenueSource.interfaceId', async function () {
+      // Single-function interface → interfaceId is the selector of getCumulativeRevenueUSD().
+      const interfaceId = ethers.id('getCumulativeRevenueUSD()').substring(0, 10) as `0x${string}`
+      expect(await subject.supportsInterface(interfaceId)).to.equal(true)
     })
 
     it('should return true for ITokenRatePusherWithArgs.interfaceId', async function () {

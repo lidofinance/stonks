@@ -4,6 +4,7 @@ pragma solidity 0.8.23;
 
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {RevenueSource} from "./RevenueSource.sol";
+import {IRevenueSource} from "../../interfaces/IRevenueSource.sol";
 import {ITokenRatePusherWithArgs} from "../../interfaces/ITokenRatePusherWithArgs.sol";
 import {IOracleRouter} from "../../interfaces/IOracleRouter.sol";
 import {ILidoLocator} from "../../interfaces/ILidoLocator.sol";
@@ -13,18 +14,19 @@ import {IStakingRouter} from "../../interfaces/IStakingRouter.sol";
 /**
  * @title StakingRevenueSource
  * @author swissarmytowel <info@lido.fi>
- * @notice Captures DAO treasury staking revenue from each Lido rebase in two stages. The rebase
- *         callback path (`pushTokenRate`) is oracle-free: it slices `sharesMintedAsFees` by the
- *         treasury portion of the current fee split, converts shares to stETH at the
+ * @notice Captures DAO treasury staking revenue from each fee-minting Lido rebase in two stages.
+ *         The rebase callback path (`pushTokenRate`) is oracle-free: it slices `sharesMintedAsFees`
+ *         by the treasury portion of the current fee split, converts shares to stETH at the
  *         post-rebase rate, and accumulates the result in a pending stETH bucket. A separate
  *         permissionless `convertPendingRevenueToUSD` call settles the bucket into the
  *         cumulative USD accumulator using `OracleRouter`. Decoupling keeps the rebase critical
  *         path free of Chainlink dependencies and turns oracle outages into deferred, retryable
  *         conversions rather than lost revenue.
+ * @dev    Rebases that mint no fees (`sharesMintedAsFees == 0`, or a zero fee split) are skipped.
  * @dev    Must be registered as an observer on the `TokenRateNotifier` referenced by
- *         `LidoLocator.postTokenRebaseReceiver`.
- *         ERC165 support for `ITokenRatePusherWithArgs.interfaceId` is required so
- *         `TokenRateNotifier.addObserver` auto-detects the args-bearing flavor.
+ *         `LidoLocator.postTokenRebaseReceiver`. ERC165 support for
+ *         `ITokenRatePusherWithArgs.interfaceId` is required so `TokenRateNotifier.addObserver`
+ *         auto-detects the args-bearing flavor.
  */
 contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC165 {
     /*//////////////////////////////////////////////////////////////
@@ -36,7 +38,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
     IOracleRouter public immutable ORACLE_ROUTER;
 
     /// @notice Price unit reported by `OracleRouter`.
-    uint256 public immutable PRICE_SCALE;
+    uint256 public immutable PRICE_UNIT;
 
     /// @notice `LidoLocator` instance.
     ILidoLocator public immutable LIDO_LOCATOR;
@@ -49,6 +51,11 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
     ///         USD conversion. Grows on every non-trivial `pushTokenRate`; cleared by
     ///         `convertPendingRevenueToUSD`.
     uint256 public pendingRevenueStEth;
+
+    /// @notice Highest rebase report timestamp accepted by `pushTokenRate`. Rebase report
+    ///         timestamps are strictly increasing, so this acts as a dedupe / replay guard: a
+    ///         callback whose timestamp is not greater than this value is ignored.
+    uint256 public lastReportTimestamp;
 
     /*//////////////////////////////////////////////////////////////
                                 EVENTS
@@ -87,7 +94,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
         }
 
         ORACLE_ROUTER = IOracleRouter(oracleRouter_);
-        PRICE_SCALE = IOracleRouter(oracleRouter_).PRICE_UNIT();
+        PRICE_UNIT = IOracleRouter(oracleRouter_).PRICE_UNIT();
         LIDO_LOCATOR = ILidoLocator(lidoLocator_);
     }
 
@@ -109,15 +116,19 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
      *         stETH owed to the DAO sits in the pending bucket until any caller settles it.
      *
      *         The signature mirrors `Lido.handlePostTokenRebase` so the notifier can forward
-     *         the full rebase payload to all observers uniformly. This source only consumes
-     *         `sharesMintedAsFees_`; the remaining parameters are accepted but ignored.
+     *         the full rebase payload to all observers uniformly. This source consumes
+     *         `reportTimestamp_` (dedupe guard) and `sharesMintedAsFees_`; the remaining
+     *         parameters are accepted but ignored.
+     * @param  reportTimestamp_ Timestamp of the oracle report behind this rebase. Strictly
+     *         increasing across rebases; a callback whose timestamp does not exceed the last
+     *         accepted one is treated as a replay and skipped.
      * @param  sharesMintedAsFees_ Total fee shares minted by the protocol on this rebase, as
      *         passed through `TokenRateNotifier` from `Lido.handlePostTokenRebase`. Zero on
      *         rebases where no fees were minted (e.g. negative CL delta offset by EL rewards
      *         that lift the rate but produce no protocol fees).
      */
     function pushTokenRate(
-        uint256 /* reportTimestamp_ */,
+        uint256 reportTimestamp_,
         uint256 /* timeElapsed_ */,
         uint256 /* preTotalShares_ */,
         uint256 /* preTotalEther_ */,
@@ -128,6 +139,13 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
         if (msg.sender != LIDO_LOCATOR.postTokenRebaseReceiver()) {
             revert UnauthorizedCaller(msg.sender);
         }
+
+        // Dedupe / replay guard: rebase report timestamps strictly increase, so a callback that
+        // does not advance the watermark is a repeat or stale delivery and is skipped.
+        if (reportTimestamp_ <= lastReportTimestamp) {
+            return;
+        }
+        lastReportTimestamp = reportTimestamp_;
 
         if (sharesMintedAsFees_ == 0) {
             return;
@@ -172,6 +190,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
         if (pending == 0) {
             return;
         }
+        pendingRevenueStEth = 0;
 
         address stEth = LIDO_LOCATOR.lido();
         (uint256 stEthUsdPrice, ) = ORACLE_ROUTER.getUsdPrices(stEth, stEth);
@@ -179,9 +198,8 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
             revert OracleReturnedZeroPrice();
         }
 
-        uint256 revenueUSD = (pending * stEthUsdPrice) / PRICE_SCALE;
+        uint256 revenueUSD = (pending * stEthUsdPrice) / PRICE_UNIT;
 
-        pendingRevenueStEth = 0;
         _addRevenueUSD(revenueUSD);
         emit PendingRevenueConverted(pending, stEthUsdPrice, revenueUSD);
     }
@@ -190,10 +208,13 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs, IERC16
      * @notice ERC165 entry point. Queried by `TokenRateNotifier.addObserver` during
      *         registration to detect the args-bearing observer flavor.
      * @param  interfaceId_ Interface identifier to probe.
-     * @return `true` for `ITokenRatePusherWithArgs` and `IERC165`.
+     * @return `true` for `IRevenueSource`, `ITokenRatePusherWithArgs`, and `IERC165`.
+     * @dev    `IRevenueSource` must be advertised so consumers like `BuybackAllocator` accept
+     *         this source via their ERC165 registration check.
      */
     function supportsInterface(bytes4 interfaceId_) external pure returns (bool) {
         return
+            interfaceId_ == type(IRevenueSource).interfaceId ||
             interfaceId_ == type(ITokenRatePusherWithArgs).interfaceId ||
             interfaceId_ == type(IERC165).interfaceId;
     }
