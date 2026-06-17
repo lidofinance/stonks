@@ -4,7 +4,7 @@ pragma solidity 0.8.23;
 
 /**
  * @title IBuybackExecutor
- * @notice External surface of the LiquidityProvisioner consumed by the NESTController, keepers,
+ * @notice External surface of the BuybackExecutor consumed by the BuybackAllocator, keepers,
  *         and operators. Liquidity-side calls (`addLiquidity`, `removeLiquidityAndRecoverToTreasury`)
  *         are intentionally omitted.
  */
