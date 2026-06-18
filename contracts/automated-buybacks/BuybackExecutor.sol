@@ -17,6 +17,7 @@ import {IWstETH} from "../interfaces/IWstETH.sol";
 import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
 import {ICurvePool} from "../interfaces/ICurvePool.sol";
 import {IStonks} from "../interfaces/IStonks.sol";
+import {IOwnable} from "../interfaces/IOwnable.sol";
 import {IOrder} from "../interfaces/IOrder.sol";
 
 /**
@@ -242,6 +243,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     error InsufficientStonksBalance(uint256 balance, uint256 minAllowedOrderAmount);
     error InvalidStonksAddress();
     error InvalidStonksReceiver(address stonks, address receiver);
+    error InvalidStonksTokenPair(address tokenFrom, address tokenTo);
+    error InvalidStonksManager(address manager);
 
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
@@ -313,6 +316,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         _setMaxDepositValueUsd(initParams_.maxDepositValueUsd);
         _setMinDepositValueUsd(initParams_.minDepositValueUsd);
         _setPoolBootstrapMinTvlUsd(initParams_.poolBootstrapMinTvlUsd);
+
+        // `_setStonksAndOperatingMode` validates the Stonks address and its receiver to set the operating mode, so the Stonks
+        // instance should be deployed using the CREATE2-predicted executor address before this constructor is called.
         _setStonksAndOperatingMode(initParams_.stonks);
 
         // `wrap` pulls stETH through wstETH, so grant a one-time max approval here.
@@ -812,11 +818,13 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     /**
      * @notice Internal mode swap shared by the constructor and the external setter. Derives the
      *         operating mode from the new Stonks's receiver.
-     * @dev    Switching disconnects this contract from the previous Stonks. An expired tracked
-     *         order is swept and its residual recovered to the previous Stonks. A live order
-     *         survives the sweep and is abandoned, recorded by `OrderAbandoned`. After it expires
-     *         anyone can call its `recoverTokenFrom`, which returns the stETH to the previous
-     *         Stonks for governance to recover.
+     * @dev    The new Stonks must sell stETH for LDO with this contract as its manager. Switching
+     *         disconnects this contract from the previous Stonks. An expired tracked order is swept
+     *         and its residual recovered to the previous Stonks. A live order survives the sweep and
+     *         is abandoned, recorded by `OrderAbandoned`; anyone can call its `recoverTokenFrom`
+     *         after expiry to return the stETH to the previous Stonks. In LP mode an abandoned order
+     *         no longer reserves stETH against new allocations, so pause allocations and recover it
+     *         before switching.
      * @param  stonks_ New Stonks address. LP mode when its receiver is this contract, treasury
      *         mode when it is `TREASURY`. Any other receiver reverts.
      */
@@ -836,6 +844,16 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
             lpModeEnabled_ = true;
         } else if (receiver != TREASURY) {
             revert InvalidStonksReceiver(stonks_, receiver);
+        }
+
+        (address tokenFrom, address tokenTo, ) = IStonks(stonks_).getOrderParameters();
+        if (tokenFrom != address(STETH) || tokenTo != address(LDO)) {
+            revert InvalidStonksTokenPair(tokenFrom, tokenTo);
+        }
+
+        address stonksManager = IOwnable(stonks_).manager();
+        if (stonksManager != address(this)) {
+            revert InvalidStonksManager(stonksManager);
         }
 
         bool previousLpModeEnabled = lpModeEnabled;
