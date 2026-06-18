@@ -59,3 +59,11 @@ To run the tests, open a new terminal tab and execute the following command:
 ```sh
 npm run test
 ```
+
+### Fork tests
+
+With the mainnet fork node running in a separate tab:
+
+```sh
+npm run test:fork
+```

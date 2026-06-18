@@ -19,6 +19,7 @@
   },
   "scripts": {
     "test": "hardhat test --network localhost",
+    "test:fork": "hardhat test test/fork/*.fork.ts --network localhost",
     "node": "dotenv -- npm run node-hardhat",
     "node-hardhat": "hardhat node --fork $RPC_URL"
   }
