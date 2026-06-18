@@ -82,7 +82,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     /// @notice Gates `onStEthAllocated`. Held by the BuybackAllocator.
     bytes32 public constant ALLOCATOR_ROLE = keccak256("NEST.BuybackExecutor.ALLOCATOR_ROLE");
 
-    /// @notice Gates pause and cancellation paths.
+    /// @notice Gates pausing and unpausing this contract and the active Stonks.
     bytes32 public constant EMERGENCY_ROLE = keccak256("NEST.BuybackExecutor.EMERGENCY_ROLE");
 
     /// @notice 100% in basis points.
@@ -92,7 +92,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     uint256 public constant MAX_POOL_DIVERGENCE_TOLERANCE_BPS = 1000;
 
     /// @notice Upper bound on `poolBootstrapMinTvlUsd` to prevent excessive TVL requirements.
-    ///         1,000,000 USD in total notional scaled to 1e18.
+    ///         1,000,000 USD of pool TVL scaled to 1e18.
     uint256 public constant MAX_POOL_BOOTSTRAP_MIN_TVL_USD = 1_000_000 * 1e18;
 
     /// @notice Minimum residual stETH on a swept order worth recovering.
@@ -115,7 +115,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     IOracleRouter public immutable ORACLE_ROUTER;
 
     /// @notice Price scale of `ORACLE_ROUTER`, read from it at deployment.
-    uint256 public immutable PRICE_SCALE;
+    uint256 public immutable PRICE_UNIT;
 
     /// @notice Curve TwoCrypto LDO/wstETH pool, also the LP token.
     ICurvePool public immutable CURVE_POOL_AND_TOKEN;
@@ -127,8 +127,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     /// @notice Maximum divergence between pool EMA and oracle LDO/stETH price, in basis points.
     uint16 public poolPriceDivergenceToleranceBps;
 
-    /// @notice True when Stonks settles LDO to this contract for LP deposits. False when it
-    ///         settles to the treasury.
+    /// @notice Operating mode, derived from the active Stonks receiver.
+    ///         When true (LP mode), Stonks settles bought LDO to this contract for pool deposits.
+    ///         When false (treasury mode), Stonks settles bought LDO to the treasury.
     bool public lpModeEnabled;
 
     /// @notice Cached `ORDER_DURATION_IN_SECONDS` of the active Stonks. Refreshed by
@@ -236,6 +237,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     error InvalidPoolBootstrapMinTvlUsd(uint256 poolBootstrapMinTvlUsd);
     error DepositValueBelowMinimum(uint256 depositValueUsd, uint256 minDepositValueUsd);
     error InvalidCurvePool(address coin0, address coin1);
+    error InvalidCurvePoolPriceOracle();
     error LiveOrderInPlace(address order, uint256 validTo);
     error InsufficientStonksBalance(uint256 balance, uint256 minAllowedOrderAmount);
     error InvalidStonksAddress();
@@ -274,6 +276,23 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
             revert InvalidCurvePool(coin0, coin1);
         }
 
+        ICurvePool pool = ICurvePool(initParams_.curvePoolAndToken);
+
+        // Confirm the pool is initialized and exposes the correct `price_oracle` signature.
+        // This confirms that the pool used is the intended TwocryptoNG pool, which has the correct price oracle and token order:
+        //          https://docs.curve.finance/developer/amm/twocrypto-ng/pools/oracles#price_oracle
+        // The TricryptoNG and the StableSwapNG pool have a different signature for their `price_oracle`:
+        //          https://docs.curve.finance/developer/amm/tricrypto-ng/pools/oracles#price_oracle
+        //          https://docs.curve.finance/developer/amm/stableswap-ng/pools/oracles#price_oracle
+        try pool.price_oracle() returns (uint256 poolPrice) {
+            // Check if the pool price is non-zero, which indicates that the pool is initialized and has a valid price oracle.
+            if (poolPrice == 0) {
+                revert InvalidCurvePoolPriceOracle();
+            }
+        } catch {
+            // If the call to `price_oracle` reverts, it indicates that the pool does not have the expected signature, which means it is not the intended TwocryptoNG pool.
+            revert InvalidCurvePoolPriceOracle();
+        }
         WSTETH = IWstETH(initParams_.wstEth);
 
         address stEthAddress = WSTETH.stETH();
@@ -284,8 +303,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         STETH = IStETH(stEthAddress);
         LDO = IERC20(initParams_.ldo);
         ORACLE_ROUTER = IOracleRouter(initParams_.oracleRouter);
-        PRICE_SCALE = IOracleRouter(initParams_.oracleRouter).PRICE_UNIT();
-        CURVE_POOL_AND_TOKEN = ICurvePool(initParams_.curvePoolAndToken);
+        PRICE_UNIT = IOracleRouter(initParams_.oracleRouter).PRICE_UNIT();
+        CURVE_POOL_AND_TOKEN = pool;
 
         _setPoolPriceDivergenceToleranceBps(initParams_.poolPriceDivergenceToleranceBps);
         // Max first, then min: each setter validates against the other, and storage starts at zero.
@@ -480,14 +499,14 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     }
 
     /**
-     * @notice Pauses `addLiquidity` and order placement. Reverts if already paused.
+     * @notice Pauses `addLiquidity`, `onStEthAllocated` and order placement. Reverts if already paused.
      */
     function pause() external onlyRole(EMERGENCY_ROLE) {
         _pause();
     }
 
     /**
-     * @notice Unpauses `addLiquidity` and order placement. Reverts if not paused.
+     * @notice Unpauses `addLiquidity`, `onStEthAllocated`, and order placement. Reverts if not paused.
      */
     function unpause() external onlyRole(EMERGENCY_ROLE) {
         _unpause();
@@ -580,7 +599,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
 
     /**
      * @notice Updates the pool TVL target at or above which the divergence gate is enforced.
-     * @param  poolBootstrapMinTvlUsd_ New target in total USD notional scaled to 1e18.
+     * @param  poolBootstrapMinTvlUsd_ New minimum pool TVL (bootstrap threshold) in USD scaled to 1e18
      *         In `(0, MAX_POOL_BOOTSTRAP_MIN_TVL_USD]`.
      */
     function setPoolBootstrapMinTvlUsd(
@@ -711,7 +730,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     }
 
     /**
-     * @notice Validates and sets the minimum order size against the current maximum.
+     * @notice Validates and sets the pool-EMA vs oracle divergence tolerance.
      * @param  minAllowedOrderAmount_ New minimum. Non-zero and strictly below `maxAllowedOrderAmount`.
      */
     function _setMinAllowedOrderAmount(uint128 minAllowedOrderAmount_) internal {
@@ -806,6 +825,10 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
             revert InvalidStonksAddress();
         }
 
+        if (stonks_ == address(stonks)) {
+            return;
+        }
+
         address receiver = IStonks(stonks_).RECEIVER();
 
         bool lpModeEnabled_;
@@ -858,6 +881,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         emit StaleOrderCleared(trackedOrderAddress);
 
         if (STETH.balanceOf(trackedOrderAddress) >= MIN_ORDER_RESIDUAL_TO_RECOVER) {
+            // Recover the residual stETH from the expired order.
             IOrder(trackedOrderAddress).recoverTokenFrom();
         }
     }
@@ -887,8 +911,13 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
 
         uint256[2] memory amounts = [ldoAmount_, wstEthAmount_];
 
-        // min_mint_amount is 1. Slippage protection comes from the upstream EMA divergence gate
-        // in `_evaluateAddLiquidityGates`, which resists in-block price manipulation.
+        // min_mint_amount is set to 1 for gas savings.
+        // An estimate for the floor would be derived from the pool state in this same transaction,
+        // therefore it will always use the state the deposit mints against.
+        // So it will always pass internally regardless of the estimation and setting it to the
+        // trivial value of 1 is cheaper and has the same effect.
+        // The slippage check is the EMA divergence gate in `_evaluateAddLiquidityGates`, which
+        // compares the pool to the oracle across blocks and resists in-block manipulation.
         lpTokensMinted = CURVE_POOL_AND_TOKEN.add_liquidity(amounts, 1);
     }
 
@@ -960,7 +989,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
      *         `OraclePriceUnavailable` on a missing price, `InvalidOraclePrice` when the
      *         derived LDO/stETH ratio truncates to zero, `PoolPriceDivergenceTooHigh` past
      *         tolerance when the pool TVL is at or above `poolBootstrapMinTvlUsd`, otherwise
-     *         `Eligible`. Below that TVL divergence is bypassed. Prices are scaled by `PRICE_SCALE`
+     *         `Eligible`. Below that TVL divergence is bypassed. Prices are scaled by `PRICE_UNIT`
      *         and zero when unavailable.
      * @return status Divergence status the caller maps to an evaluation status.
      * @return ldoUsdPrice LDO/USD price.
@@ -989,7 +1018,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         }
 
         // LDO per stETH price from the OracleRouter
-        oracleLdoPerStEth = Math.mulDiv(stEthUsdPrice, PRICE_SCALE, ldoUsdPrice);
+        oracleLdoPerStEth = Math.mulDiv(stEthUsdPrice, PRICE_UNIT, ldoUsdPrice);
         // A truncated ratio is unusable for the divergence division below
         if (oracleLdoPerStEth == 0) {
             return (AddLiquidityStatus.InvalidOraclePrice, ldoUsdPrice, stEthUsdPrice, 0, 0, 0);
@@ -1006,7 +1035,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
          */
         poolEmaLdoPerStEth = Math.mulDiv(
             CURVE_POOL_AND_TOKEN.price_oracle(),
-            PRICE_SCALE,
+            PRICE_UNIT,
             WSTETH.stEthPerToken()
         );
 
@@ -1102,8 +1131,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
      * @notice Balanced LDO/stETH deposit pair sized by the smaller-USD side.
      * @param  ldoBalance_ Current LDO balance.
      * @param  stEthBalance_ Current stETH balance.
-     * @param  ldoUsdPrice_ LDO/USD price scaled by `PRICE_SCALE`.
-     * @param  stEthUsdPrice_ stETH/USD price scaled by `PRICE_SCALE`.
+     * @param  ldoUsdPrice_ LDO/USD price scaled by `PRICE_UNIT`.
+     * @param  stEthUsdPrice_ stETH/USD price scaled by `PRICE_UNIT`.
      * @return ldoAmount Balanced LDO amount.
      * @return stEthAmount Balanced stETH amount.
      * @return depositValueUsd Total notional of the balanced pair, twice the smaller-USD side.
@@ -1114,8 +1143,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         uint256 ldoUsdPrice_,
         uint256 stEthUsdPrice_
     ) internal view returns (uint256 ldoAmount, uint256 stEthAmount, uint256 depositValueUsd) {
-        uint256 ldoUsdValue = Math.mulDiv(ldoBalance_, ldoUsdPrice_, PRICE_SCALE);
-        uint256 stEthUsdValue = Math.mulDiv(stEthBalance_, stEthUsdPrice_, PRICE_SCALE);
+        uint256 ldoUsdValue = Math.mulDiv(ldoBalance_, ldoUsdPrice_, PRICE_UNIT);
+        uint256 stEthUsdValue = Math.mulDiv(stEthBalance_, stEthUsdPrice_, PRICE_UNIT);
 
         // Size by the smaller-USD side. The larger side's surplus carries over to the next cycle.
         if (ldoUsdValue <= stEthUsdValue) {
@@ -1132,8 +1161,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     /**
      * @notice Pool TVL valued at the oracle, scaled to 1e18. Reads the pool's internal `balances`, so
      *         token donations to the pool do not inflate it.
-     * @param  ldoUsdPrice_ LDO/USD price scaled by `PRICE_SCALE`.
-     * @param  stEthUsdPrice_ stETH/USD price scaled by `PRICE_SCALE`.
+     * @param  ldoUsdPrice_ LDO/USD price scaled by `PRICE_UNIT`.
+     * @param  stEthUsdPrice_ stETH/USD price scaled by `PRICE_UNIT`.
      * @return poolTvlUsd Total pool value in USD scaled to 1e18.
      */
     function _poolTvlUsd(
@@ -1143,8 +1172,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         uint256 ldoReserve = CURVE_POOL_AND_TOKEN.balances(0);
         uint256 stEthReserve = WSTETH.getStETHByWstETH(CURVE_POOL_AND_TOKEN.balances(1));
 
-        uint256 ldoUsdValue = Math.mulDiv(ldoReserve, ldoUsdPrice_, PRICE_SCALE);
-        uint256 stEthUsdValue = Math.mulDiv(stEthReserve, stEthUsdPrice_, PRICE_SCALE);
+        uint256 ldoUsdValue = Math.mulDiv(ldoReserve, ldoUsdPrice_, PRICE_UNIT);
+        uint256 stEthUsdValue = Math.mulDiv(stEthReserve, stEthUsdPrice_, PRICE_UNIT);
 
         poolTvlUsd = ldoUsdValue + stEthUsdValue;
     }
