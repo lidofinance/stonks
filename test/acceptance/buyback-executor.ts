@@ -50,9 +50,9 @@ describe('BuybackExecutor: acceptance', function () {
     expect(await executor.stonks()).to.hexEqual(STONKS_ADDRESS)
     expect(await executor.TREASURY()).to.hexEqual(TREASURY_ADDRESS)
 
-    // PRICE_SCALE is cached from the oracle's PRICE_UNIT at construction.
+    // PRICE_UNIT is cached from the oracle's PRICE_UNIT at construction.
     const oracle = await ethers.getContractAt('IOracleRouter', contracts.ORACLE_ROUTER)
-    expect(await executor.PRICE_SCALE()).to.equal(await oracle.PRICE_UNIT())
+    expect(await executor.PRICE_UNIT()).to.equal(await oracle.PRICE_UNIT())
   })
 
   it('should hold the expected divergence-tolerance, order-amount, deposit-value, and bootstrap-TVL bounds', async function () {

@@ -1,6 +1,6 @@
 import { ethers, network } from 'hardhat'
-import { Signer } from 'ethers'
-import { time } from '@nomicfoundation/hardhat-network-helpers'
+import { Contract, Signer } from 'ethers'
+import { impersonateAccount, setBalance, time } from '@nomicfoundation/hardhat-network-helpers'
 
 import {
   BuybackExecutorHarness,
@@ -16,12 +16,21 @@ import {
   OracleRouterUsdStub,
   OracleRouterUsdStub__factory,
   OrderStub__factory,
+  OracleRouter,
+  IERC20,
+  IERC20__factory,
+  IWstETH,
+  IWstETH__factory,
+  ICurvePool,
+  ICurvePool__factory,
+  IStETH__factory,
 } from '../../typechain-types'
 import { getContracts } from '../../utils/contracts'
+import { deployAndConfigureOracleRouter } from '../../utils/oracle-router'
 
 // --- Scales and roles ---
 
-export const PRICE_SCALE = 10n ** 18n
+export const PRICE_UNIT = 10n ** 18n
 export const ALLOCATOR_ROLE = ethers.id('NEST.BuybackExecutor.ALLOCATOR_ROLE')
 export const EMERGENCY_ROLE = ethers.id('NEST.BuybackExecutor.EMERGENCY_ROLE')
 export const MANAGER_ROLE = ethers.id('NEST.MANAGER_ROLE')
@@ -56,15 +65,15 @@ export const saturatedSub = (a: bigint, b: bigint): bigint => (a > b ? a - b : 0
 
 // --- Default configuration ---
 
-// USD prices scaled to PRICE_SCALE. With a 1.2 stETH/wstETH rate the default pool EMA sits on the
+// USD prices scaled to PRICE_UNIT. With a 1.2 stETH/wstETH rate the default pool EMA sits on the
 // oracle ratio, so the divergence gate is satisfied and only the cases that move it observe a revert.
-export const DEFAULT_LDO_USD = 2n * PRICE_SCALE
-export const DEFAULT_STETH_USD = 3500n * PRICE_SCALE
-export const DEFAULT_SHARE_RATE = (12n * PRICE_SCALE) / 10n
+export const DEFAULT_LDO_USD = 2n * PRICE_UNIT
+export const DEFAULT_STETH_USD = 3500n * PRICE_UNIT
+export const DEFAULT_SHARE_RATE = (12n * PRICE_UNIT) / 10n
 // oracle LDO/stETH ratio = stEthUsd/ldoUsd; pool EMA (LDO/wstETH) = ratio * shareRate, so the
 // converted pool EMA lands back on the oracle ratio and the default divergence is zero.
-export const DEFAULT_ORACLE_LDO_PER_STETH = (DEFAULT_STETH_USD * PRICE_SCALE) / DEFAULT_LDO_USD
-const DEFAULT_POOL_EMA = (DEFAULT_ORACLE_LDO_PER_STETH * DEFAULT_SHARE_RATE) / PRICE_SCALE
+export const DEFAULT_ORACLE_LDO_PER_STETH = (DEFAULT_STETH_USD * PRICE_UNIT) / DEFAULT_LDO_USD
+const DEFAULT_POOL_EMA = (DEFAULT_ORACLE_LDO_PER_STETH * DEFAULT_SHARE_RATE) / PRICE_UNIT
 export const DEFAULT_ORDER_DURATION = 3600n
 
 // Pool reserves and balanced funding the executor tests share, all derived from the default prices
@@ -72,19 +81,19 @@ export const DEFAULT_ORDER_DURATION = 3600n
 
 // Reserves whose oracle-valued TVL (twice the LDO leg) sits above the 50000e18 bootstrap floor, so
 // the divergence gate is enforced.
-export const DEEP_LDO_RESERVE = 50_000n * PRICE_SCALE
-export const POOL_TVL_AT_DEEP_RESERVE = 100_000n * PRICE_SCALE
+export const DEEP_LDO_RESERVE = 50_000n * PRICE_UNIT
+export const POOL_TVL_AT_DEEP_RESERVE = 100_000n * PRICE_UNIT
 // Reserves whose TVL lands exactly on the floor.
-export const BOUNDARY_LDO_RESERVE = 25_000n * PRICE_SCALE
+export const BOUNDARY_LDO_RESERVE = 25_000n * PRICE_UNIT
 
 // Balanced funding: equal USD on both legs at the default prices, depositValueUsd 7000e18.
-export const BALANCED_LDO = 1750n * PRICE_SCALE
-export const BALANCED_STETH = 1n * PRICE_SCALE
+export const BALANCED_LDO = 1750n * PRICE_UNIT
+export const BALANCED_STETH = 1n * PRICE_UNIT
 
 // removeLiquidity scenario: held LP and the amounts the pool returns on withdrawal.
-export const LP_BALANCE = 1000n * PRICE_SCALE
-export const WITHDRAWN_LDO = 500n * PRICE_SCALE
-export const WITHDRAWN_WSTETH = 10n * PRICE_SCALE
+export const LP_BALANCE = 1000n * PRICE_UNIT
+export const WITHDRAWN_LDO = 500n * PRICE_UNIT
+export const WITHDRAWN_WSTETH = 10n * PRICE_UNIT
 
 export type InitParamOverrides = Partial<{
   poolPriceDivergenceToleranceBps: bigint
@@ -97,11 +106,11 @@ export type InitParamOverrides = Partial<{
 
 export const DEFAULT_BOUNDS = {
   poolPriceDivergenceToleranceBps: 100n,
-  minAllowedOrderAmount: 1n * PRICE_SCALE,
-  maxAllowedOrderAmount: 1000n * PRICE_SCALE,
-  minDepositValueUsd: 100n * PRICE_SCALE,
-  maxDepositValueUsd: 100_000n * PRICE_SCALE,
-  poolBootstrapMinTvlUsd: 50_000n * PRICE_SCALE,
+  minAllowedOrderAmount: 1n * PRICE_UNIT,
+  maxAllowedOrderAmount: 1000n * PRICE_UNIT,
+  minDepositValueUsd: 100n * PRICE_UNIT,
+  maxDepositValueUsd: 100_000n * PRICE_UNIT,
+  poolBootstrapMinTvlUsd: 50_000n * PRICE_UNIT,
 } as const
 
 export enum OracleFailureMode {
@@ -328,7 +337,7 @@ export async function setPoolEmaLdoPerStEth(
   ldoPerStEth: bigint
 ): Promise<void> {
   const shareRate = await ctx.stubs.wstEth.stEthPerToken()
-  await setPoolEma(ctx, (ldoPerStEth * shareRate) / PRICE_SCALE)
+  await setPoolEma(ctx, (ldoPerStEth * shareRate) / PRICE_UNIT)
 }
 
 // Scales the current pool EMA by percent/100, moving it off the oracle ratio.
@@ -401,36 +410,225 @@ export async function expireOrder(ctx: BuybackContext): Promise<void> {
 
 const FORK_NETWORKS = ['hardhat', 'mainnet', 'localhost']
 
-/// LDO/wstETH TwoCrypto pool address from the registry, or undefined when it is not yet listed.
-/// Fork and acceptance files skip while this is undefined.
-export function getBuybackPoolAddress(): string | undefined {
-  try {
-    const contracts = getContracts() as Record<string, string>
-    return contracts.CURVE_LDO_WSTETH_POOL
-  } catch {
-    return undefined
-  }
+// Curve TwoCrypto-NG factory deploy_pool, the one method the harness calls on the factory.
+const CURVE_FACTORY_ABI = [
+  'function deploy_pool(string,string,address[2],uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256) returns (address)',
+]
+// IStETH does not declare submit. Add it to stake ETH for the wstETH seed.
+const STETH_ABI = [...IStETH__factory.abi, 'function submit(address) payable returns (uint256)']
+
+// TwoCrypto-NG pool parameters for the intended LDO/wstETH deployment. A is the geometric midpoint of
+// the allowed 2-coin range, the rest are Curve volatile-pair defaults, and ma_exp_time gives a ~10 min
+// EMA half-life. Only `initial_price` varies per fixture.
+const CURVE_POOL_PARAMS = {
+  implementationId: 0n,
+  a: 400_000n,
+  gamma: 145_000_000_000_000n,
+  midFee: 500_000n,
+  outFee: 5_000_000n,
+  feeGamma: 230_000_000_000_000n,
+  allowedExtraProfit: 2_000_000_000_000n,
+  adjustmentStep: 146_000_000_000_000n,
+  maExpTime: 866n,
+} as const
+
+const FORK_BOUNDS = {
+  poolPriceDivergenceToleranceBps: 100n,
+  minAllowedOrderAmount: 1n * PRICE_UNIT,
+  maxAllowedOrderAmount: 1000n * PRICE_UNIT,
+  minDepositValueUsd: 10n * PRICE_UNIT,
+  maxDepositValueUsd: 1_000_000n * PRICE_UNIT,
+  poolBootstrapMinTvlUsd: 50_000n * PRICE_UNIT,
+} as const
+
+export interface ForkPrices {
+  ldoUsd: bigint
+  stEthUsd: bigint
+  shareRate: bigint
+  oracleLdoPerStEth: bigint
+  initialPrice: bigint
 }
 
-export interface ForkBuybackEnvironment {
-  ldo: string
-  stEth: string
-  wstEth: string
-  pool: string
+export interface ForkBuybackContext {
+  buybackExecutor: BuybackExecutorHarness
+  harness: BuybackExecutorHarness
+  oracle: OracleRouter
+  pool: ICurvePool
+  ldo: IERC20
+  stEth: Contract
+  wstEth: IWstETH
+  stonks: StonksStub
+  signers: BuybackSigners
+  params: InitParams
+  prices: ForkPrices
 }
 
-/// Returns the real token and pool addresses for fork tests, or undefined when the pool is absent
-/// from the registry or the current network is not a fork target.
-export function setupForkBuybackEnvironment(): ForkBuybackEnvironment | undefined {
+export interface ForkSetupOptions {
+  seedWstEth?: bigint
+  // Pool initial_price relative to the oracle ratio, in basis points. 10000 sits on the oracle.
+  priceSkewBps?: bigint
+  bounds?: InitParamOverrides
+}
+
+function buildDeployPoolArgs(ldo: string, wstEth: string, initialPrice: bigint) {
+  return [
+    'Buyback LDO/wstETH',
+    'bbLDOwstETH',
+    [ldo, wstEth],
+    CURVE_POOL_PARAMS.implementationId,
+    CURVE_POOL_PARAMS.a,
+    CURVE_POOL_PARAMS.gamma,
+    CURVE_POOL_PARAMS.midFee,
+    CURVE_POOL_PARAMS.outFee,
+    CURVE_POOL_PARAMS.feeGamma,
+    CURVE_POOL_PARAMS.allowedExtraProfit,
+    CURVE_POOL_PARAMS.adjustmentStep,
+    CURVE_POOL_PARAMS.maExpTime,
+    initialPrice,
+  ] as const
+}
+
+/// Builds a live fork environment: a real OracleRouter over the mainnet Chainlink registry, a freshly
+/// deployed and seeded LDO/wstETH TwoCrypto-NG pool, and a BuybackExecutorHarness wired to both with a
+/// StonksStub for the LP-mode receiver. Returns undefined off a fork target so fork tests skip cleanly.
+export async function setupForkBuyback(
+  options: ForkSetupOptions = {}
+): Promise<ForkBuybackContext | undefined> {
   if (!FORK_NETWORKS.includes(network.name)) {
     return undefined
   }
 
-  const pool = getBuybackPoolAddress()
-  if (pool === undefined) {
+  const contracts = getContracts()
+  const factoryAddress = (contracts as { CURVE_POOL_TWOCRYPTO_NG_FACTORY?: string })
+    .CURVE_POOL_TWOCRYPTO_NG_FACTORY
+  if (factoryAddress === undefined) {
     return undefined
   }
 
-  const contracts = getContracts()
-  return { ldo: contracts.LDO, stEth: contracts.STETH, wstEth: contracts.WSTETH, pool }
+  const seedWstEth = options.seedWstEth ?? 80n * PRICE_UNIT
+  const priceSkewBps = options.priceSkewBps ?? 10000n
+
+  const [deployer, admin, treasury, allocator, manager, emergency, stranger] =
+    await ethers.getSigners()
+  const signers: BuybackSigners = {
+    deployer,
+    admin,
+    treasury,
+    allocator,
+    manager,
+    emergency,
+    stranger,
+  }
+  const deployerAddress = await deployer.getAddress()
+
+  // Real OracleRouter over the mainnet Chainlink registry. LDO prices through the ETH/USD bridge.
+  const oracle = await deployAndConfigureOracleRouter({
+    feedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+    tokensUsd: [contracts.STETH],
+    tokensEth: [contracts.LDO],
+  })
+
+  const ldo = IERC20__factory.connect(contracts.LDO, deployer)
+  const stEth = new ethers.Contract(contracts.STETH, STETH_ABI, deployer)
+  const wstEth = IWstETH__factory.connect(contracts.WSTETH, deployer)
+
+  const [ldoUsd, stEthUsd] = await oracle.getUsdPrices(contracts.LDO, contracts.STETH)
+  const shareRate: bigint = await wstEth.stEthPerToken()
+  const oracleLdoPerStEth = (stEthUsd * PRICE_UNIT) / ldoUsd
+  // price_oracle is LDO per wstETH. Skew it off the oracle ratio for the divergence-gate fixtures.
+  const initialPrice = (((oracleLdoPerStEth * shareRate) / PRICE_UNIT) * priceSkewBps) / 10000n
+
+  // Acquire wstETH by staking ETH and wrapping, keeping spare stETH for executor funding.
+  const spareStEth = 40n * PRICE_UNIT
+  const wstEthToWrap = seedWstEth + 30n * PRICE_UNIT
+  const stEthToWrap = (wstEthToWrap * shareRate) / PRICE_UNIT + 2n
+  await stEth.submit(ethers.ZeroAddress, { value: stEthToWrap + spareStEth })
+  await stEth.approve(contracts.WSTETH, stEthToWrap)
+  await wstEth.wrap(stEthToWrap)
+
+  // Acquire LDO from the Aragon Agent treasury.
+  const ldoForSeed = (seedWstEth * initialPrice) / PRICE_UNIT
+  await impersonateAccount(contracts.AGENT)
+  await setBalance(contracts.AGENT, 10n * PRICE_UNIT)
+  const agent = await ethers.getSigner(contracts.AGENT)
+  await IERC20__factory.connect(contracts.LDO, agent).transfer(
+    deployerAddress,
+    ldoForSeed + 3_000_000n * PRICE_UNIT
+  )
+
+  // Deploy the pool at `initialPrice` and seed it balanced at that price.
+  const factory = new ethers.Contract(factoryAddress, CURVE_FACTORY_ABI, deployer)
+  const poolArgs = buildDeployPoolArgs(contracts.LDO, contracts.WSTETH, initialPrice)
+  const poolAddress: string = await factory.deploy_pool.staticCall(...poolArgs)
+  await (await factory.deploy_pool(...poolArgs)).wait()
+  const pool = ICurvePool__factory.connect(poolAddress, deployer)
+
+  await ldo.approve(poolAddress, ldoForSeed)
+  await wstEth.approve(poolAddress, seedWstEth)
+  await (await pool.add_liquidity([ldoForSeed, seedWstEth], 1n)).wait()
+
+  // Predict the executor address now that every deployer-funded tx is done, then wire the StonksStub
+  // receiver and manager to it before the executor deploys.
+  const predictedExecutorAddress = ethers.getCreateAddress({
+    from: deployerAddress,
+    nonce: await deployer.getNonce(),
+  })
+
+  const stonks = await new StonksStub__factory(admin).deploy()
+  await stonks.connect(admin).setReceiver(predictedExecutorAddress)
+  await stonks.connect(admin).setManager(predictedExecutorAddress)
+  await stonks.connect(admin).setTokenPair(contracts.STETH, contracts.LDO)
+  await stonks.connect(admin).setOrderDuration(DEFAULT_ORDER_DURATION)
+
+  const params: InitParams = {
+    admin: await admin.getAddress(),
+    treasury: await treasury.getAddress(),
+    wstEth: contracts.WSTETH,
+    ldo: contracts.LDO,
+    oracleRouter: await oracle.getAddress(),
+    curvePoolAndToken: poolAddress,
+    stonks: await stonks.getAddress(),
+    ...FORK_BOUNDS,
+    ...options.bounds,
+  }
+
+  const buybackExecutor = await new BuybackExecutorHarness__factory(deployer).deploy(params)
+  await buybackExecutor.waitForDeployment()
+
+  if ((await buybackExecutor.getAddress()) !== predictedExecutorAddress) {
+    throw new Error('executor address prediction missed; a deployer tx slipped in before deploy')
+  }
+
+  await buybackExecutor.connect(admin).grantRole(ALLOCATOR_ROLE, await allocator.getAddress())
+  await buybackExecutor.connect(admin).grantRole(EMERGENCY_ROLE, await emergency.getAddress())
+  await buybackExecutor.connect(admin).grantRole(MANAGER_ROLE, await manager.getAddress())
+
+  return {
+    buybackExecutor,
+    harness: buybackExecutor,
+    oracle,
+    pool,
+    ldo,
+    stEth,
+    wstEth,
+    stonks,
+    signers,
+    params,
+    prices: { ldoUsd, stEthUsd, shareRate, oracleLdoPerStEth, initialPrice },
+  }
+}
+
+/// Transfers real LDO and stETH from the deployer's fork holdings into the executor.
+export async function fundForkExecutor(
+  ctx: ForkBuybackContext,
+  amounts: { ldo?: bigint; stEth?: bigint }
+): Promise<void> {
+  const executorAddress = await ctx.buybackExecutor.getAddress()
+  // The token contracts are already connected to the deployer, which holds the fork balances.
+  if (amounts.ldo !== undefined) {
+    await ctx.ldo.transfer(executorAddress, amounts.ldo)
+  }
+  if (amounts.stEth !== undefined) {
+    await ctx.stEth.transfer(executorAddress, amounts.stEth)
+  }
 }

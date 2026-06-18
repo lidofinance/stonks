@@ -7,7 +7,7 @@ import {
   deployBuybackExecutorWithStubs,
   deployBuybackExecutorTreasuryMode,
   makeBuybackFixture,
-  PRICE_SCALE,
+  PRICE_UNIT,
   ALLOCATOR_ROLE,
   EMERGENCY_ROLE,
   MANAGER_ROLE,
@@ -29,7 +29,7 @@ const EXPECTED_MIN_ORDER_RESIDUAL_TO_RECOVER = 10n
 const TOLERANCE_ABOVE_MAX = EXPECTED_MAX_POOL_DIVERGENCE_TOLERANCE_BPS + 1n
 const ORDER_AMOUNT_ABOVE_MAX = DEFAULT_BOUNDS.maxAllowedOrderAmount * 2n
 const DEPOSIT_VALUE_ABOVE_MAX = DEFAULT_BOUNDS.maxDepositValueUsd * 2n
-const POOL_BOOTSTRAP_ABOVE_MAX = 1_000_000n * PRICE_SCALE + 1n
+const POOL_BOOTSTRAP_ABOVE_MAX = 1_000_000n * PRICE_UNIT + 1n
 
 // No-role variant. A module-level const keeps loadFixture's identity caching stable.
 const deployWithoutRoles = makeBuybackFixture({ grantRoles: false })
@@ -62,9 +62,9 @@ describe('BuybackExecutor — deployment', function () {
       expect(await buybackExecutor.CURVE_POOL_AND_TOKEN()).to.equal(await stubs.pool.getAddress())
     })
 
-    it('should store PRICE_SCALE from ORACLE_ROUTER.PRICE_UNIT()', async function () {
+    it('should store PRICE_UNIT from ORACLE_ROUTER.PRICE_UNIT()', async function () {
       const { buybackExecutor } = await loadFixture(deployBuybackExecutorWithStubs)
-      expect(await buybackExecutor.PRICE_SCALE()).to.equal(PRICE_SCALE)
+      expect(await buybackExecutor.PRICE_UNIT()).to.equal(PRICE_UNIT)
     })
 
     it('should set TREASURY from the treasury init address', async function () {

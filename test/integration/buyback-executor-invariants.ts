@@ -11,7 +11,7 @@ import {
   placeTrackedOrder,
   expireOrder,
   OracleFailureMode,
-  PRICE_SCALE,
+  PRICE_UNIT,
   DEFAULT_BOUNDS,
   DEFAULT_LDO_USD as LDO_USD,
   DEFAULT_STETH_USD as STETH_USD,
@@ -34,12 +34,12 @@ describe('BuybackExecutor — invariants', function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
       // Uncapped value 400000e18 is four times the cap, so four successive calls each deposit the
       // cap and the fourth drains the LDO leg to zero.
-      await fundExecutor(ctx, { ldo: 100_000n * PRICE_SCALE, stEth: 100n * PRICE_SCALE })
+      await fundExecutor(ctx, { ldo: 100_000n * PRICE_UNIT, stEth: 100n * PRICE_UNIT })
       await setPoolReserves(ctx, DEEP_LDO_RESERVE, 0n)
       const executorAddress = await ctx.buybackExecutor.getAddress()
 
       // The cap scales the LDO leg to 25000e18 on each of the four full-cap calls.
-      const cappedLdoLeg = 25_000n * PRICE_SCALE
+      const cappedLdoLeg = 25_000n * PRICE_UNIT
 
       for (let call = 0; call < 4; call += 1) {
         const evaluation = await ctx.harness.evaluateAddLiquidityGates()
@@ -69,9 +69,9 @@ describe('BuybackExecutor — invariants', function () {
 
   describe('free stETH accounting', function () {
     it('should keep _computeLpModeFreeStEth at or below the stETH balance across funding states', async function () {
-      const stEthBalance = 100n * PRICE_SCALE
-      const ldoBalance = 3500n * PRICE_SCALE
-      const stonksStEth = 10n * PRICE_SCALE
+      const stEthBalance = 100n * PRICE_UNIT
+      const ldoBalance = 3500n * PRICE_UNIT
+      const stonksStEth = 10n * PRICE_UNIT
 
       // Only stETH: nothing is reserved, so the free amount equals the balance.
       const onlyStEth = await loadFixture(deployBuybackExecutorWithStubs)
@@ -175,12 +175,12 @@ describe('BuybackExecutor — invariants', function () {
     })
 
     it('should size the order to a stonks balance between the bounds', async function () {
-      const balance = 500n * PRICE_SCALE
+      const balance = 500n * PRICE_UNIT
       expect(await placedSellAmount(balance)).to.equal(balance)
     })
 
     it('should clamp a stonks balance above the cap to maxAllowedOrderAmount', async function () {
-      expect(await placedSellAmount(2000n * PRICE_SCALE)).to.equal(MAX_ORDER)
+      expect(await placedSellAmount(2000n * PRICE_UNIT)).to.equal(MAX_ORDER)
     })
 
     it('should reject placement when the sized sell is below minAllowedOrderAmount', async function () {
@@ -202,10 +202,10 @@ describe('BuybackExecutor — invariants', function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
       const admin = ctx.signers.admin
 
-      const NEW_MAX_ORDER = 2000n * PRICE_SCALE
-      const NEW_MIN_ORDER = 5n * PRICE_SCALE
-      const NEW_MAX_DEPOSIT = 200_000n * PRICE_SCALE
-      const NEW_MIN_DEPOSIT = 50_000n * PRICE_SCALE
+      const NEW_MAX_ORDER = 2000n * PRICE_UNIT
+      const NEW_MIN_ORDER = 5n * PRICE_UNIT
+      const NEW_MAX_DEPOSIT = 200_000n * PRICE_UNIT
+      const NEW_MIN_DEPOSIT = 50_000n * PRICE_UNIT
 
       // Each setter lands the exact value while leaving its counterpart strictly on the other side,
       // so min stays below max by construction across the sequence.
@@ -240,7 +240,7 @@ describe('BuybackExecutor — invariants', function () {
   describe('divergence gate', function () {
     it('should never deposit when divergence exceeds tolerance and the pool TVL reaches the floor', async function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
-      await fundExecutor(ctx, { ldo: 1750n * PRICE_SCALE, stEth: 1n * PRICE_SCALE })
+      await fundExecutor(ctx, { ldo: 1750n * PRICE_UNIT, stEth: 1n * PRICE_UNIT })
       await setPoolReserves(ctx, DEEP_LDO_RESERVE, 0n)
 
       // A 5% deviation scores 500 bps, well past the 100 bps tolerance, on a deep pool.
@@ -261,7 +261,7 @@ describe('BuybackExecutor — invariants', function () {
     it('should never let divergence block a deposit while the pool TVL is below the floor', async function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
       // Default reserves are zero, so the TVL is below the floor and divergence is bypassed.
-      await fundExecutor(ctx, { ldo: 1750n * PRICE_SCALE, stEth: 1n * PRICE_SCALE })
+      await fundExecutor(ctx, { ldo: 1750n * PRICE_UNIT, stEth: 1n * PRICE_UNIT })
 
       await scalePoolEma(ctx, 105n)
       await expect(ctx.buybackExecutor.connect(ctx.signers.stranger).addLiquidity()).to.emit(
@@ -269,7 +269,7 @@ describe('BuybackExecutor — invariants', function () {
         'LiquidityAdded'
       )
 
-      await fundExecutor(ctx, { ldo: 1750n * PRICE_SCALE, stEth: 1n * PRICE_SCALE })
+      await fundExecutor(ctx, { ldo: 1750n * PRICE_UNIT, stEth: 1n * PRICE_UNIT })
       await scalePoolEma(ctx, 300n)
       await expect(ctx.buybackExecutor.connect(ctx.signers.stranger).addLiquidity()).to.emit(
         ctx.buybackExecutor,
@@ -279,7 +279,7 @@ describe('BuybackExecutor — invariants', function () {
 
     it('should decide the gate from current TVL and divergence alone, holding no state across calls', async function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
-      await fundExecutor(ctx, { ldo: 1750n * PRICE_SCALE, stEth: 1n * PRICE_SCALE })
+      await fundExecutor(ctx, { ldo: 1750n * PRICE_UNIT, stEth: 1n * PRICE_UNIT })
       await scalePoolEma(ctx, 105n)
 
       // Deep and divergent: gated.
@@ -296,7 +296,7 @@ describe('BuybackExecutor — invariants', function () {
       )
 
       // Deep and divergent again: the prior bypassed call left no latch, so it is gated again.
-      await fundExecutor(ctx, { ldo: 1750n * PRICE_SCALE, stEth: 1n * PRICE_SCALE })
+      await fundExecutor(ctx, { ldo: 1750n * PRICE_UNIT, stEth: 1n * PRICE_UNIT })
       await setPoolReserves(ctx, DEEP_LDO_RESERVE, 0n)
       await expect(
         ctx.buybackExecutor.connect(ctx.signers.stranger).addLiquidity()

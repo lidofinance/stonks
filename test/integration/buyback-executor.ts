@@ -11,7 +11,7 @@ import {
   scalePoolEma,
   placeTrackedOrder,
   expireOrder,
-  PRICE_SCALE,
+  PRICE_UNIT,
   ALLOCATOR_ROLE,
   missingRoleMessage,
   DEFAULT_LDO_USD as LDO_USD,
@@ -26,21 +26,21 @@ import {
 import { OrderStub__factory } from '../../typechain-types'
 
 // Pool TVL crosses the 50000e18 floor at an LDO reserve of 25000e18 (TVL = reserve * LDO_USD).
-const FLOOR_LDO_RESERVE = 25_000n * PRICE_SCALE
-const BELOW_FLOOR_LDO_RESERVE = FLOOR_LDO_RESERVE - 1n * PRICE_SCALE
+const FLOOR_LDO_RESERVE = 25_000n * PRICE_UNIT
+const BELOW_FLOOR_LDO_RESERVE = FLOOR_LDO_RESERVE - 1n * PRICE_UNIT
 
 // Small balanced funding for the divergence-gate flows. The LDO leg is the smaller-USD side, so a
 // successful deposit drains the LDO balance to zero and a refund re-arms the next call.
-const BOOTSTRAP_LDO = 1000n * PRICE_SCALE
-const BOOTSTRAP_STETH = 10n * PRICE_SCALE
+const BOOTSTRAP_LDO = 1000n * PRICE_UNIT
+const BOOTSTRAP_STETH = 10n * PRICE_UNIT
 
 // LP seeded for the remove-while-paused flow.
-const SEEDED_LP = 1000n * PRICE_SCALE
+const SEEDED_LP = 1000n * PRICE_UNIT
 
 // Reference integer math mirroring the contract and the wstETH stub, all floor.
-const usdValue = (amount: bigint, price: bigint): bigint => mulDiv(amount, price, PRICE_SCALE)
-const wstEthFromStEth = (stEth: bigint): bigint => mulDiv(stEth, PRICE_SCALE, SHARE_RATE)
-const stEthFromWstEth = (wstEth: bigint): bigint => mulDiv(wstEth, SHARE_RATE, PRICE_SCALE)
+const usdValue = (amount: bigint, price: bigint): bigint => mulDiv(amount, price, PRICE_UNIT)
+const wstEthFromStEth = (stEth: bigint): bigint => mulDiv(stEth, PRICE_UNIT, SHARE_RATE)
+const stEthFromWstEth = (wstEth: bigint): bigint => mulDiv(wstEth, SHARE_RATE, PRICE_UNIT)
 
 interface BalancedPair {
   ldoAmount: bigint
@@ -82,9 +82,9 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       const treasuryAddress = await ctx.signers.treasury.getAddress()
       const managerAddress = await ctx.signers.manager.getAddress()
 
-      // 1. The allocator pushes stETH. In LP mode half is forwarded to Stonks and half is reserved
-      //    to pair with the bought LDO on deposit.
-      const allocatedStEth = 100n * PRICE_SCALE
+      // The allocator pushes stETH. In LP mode half is forwarded to Stonks and half is reserved
+      // to pair with the bought LDO on deposit.
+      const allocatedStEth = 100n * PRICE_UNIT
       await fundExecutor(ctx, { stEth: allocatedStEth })
       const forwarded = allocatedStEth / 2n
 
@@ -94,7 +94,7 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       expect(await ctx.stubs.stEth.balanceOf(stonksAddress)).to.equal(forwarded)
       expect(await ctx.stubs.stEth.balanceOf(executorAddress)).to.equal(allocatedStEth - forwarded)
 
-      // 2. A keeper places the order selling the forwarded stETH.
+      // A keeper places the order selling the forwarded stETH.
       await ctx.stubs.stonks.connect(ctx.signers.admin).setEstimatedOutput(1n)
       await expect(ctx.buybackExecutor.connect(ctx.signers.stranger).placeOrder()).to.emit(
         ctx.buybackExecutor,
@@ -103,11 +103,11 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       expect(await ctx.stubs.stonks.lastSellAmount()).to.equal(forwarded)
       expect(await ctx.buybackExecutor.lastOrderAddress()).to.not.equal(ethers.ZeroAddress)
 
-      // 3. CoW settles the order, delivering LDO to the executor.
-      const settledLdo = 1000n * PRICE_SCALE
+      // CoW settles the order, delivering LDO to the executor.
+      const settledLdo = 1000n * PRICE_UNIT
       await fundExecutor(ctx, { ldo: settledLdo })
 
-      // 4. The deposit pairs the LDO with its balanced stETH share against the deep aligned pool.
+      // The deposit pairs the LDO with its balanced stETH share against the deep aligned pool.
       const heldStEth = allocatedStEth - forwarded
       const balanced = balancedLegs(settledLdo, heldStEth)
       const wstEthMinted = wstEthFromStEth(balanced.stEthAmount)
@@ -127,7 +127,7 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       )
       expect(await ctx.buybackExecutor.getLpTokenBalance()).to.equal(lpMinted)
 
-      // 5. The manager unwinds the LP claim entirely to the treasury.
+      // The manager unwinds the LP claim entirely to the treasury.
       await ctx.stubs.pool
         .connect(ctx.signers.admin)
         .setNextWithdrawn(WITHDRAWN_LDO, WITHDRAWN_WSTETH)
@@ -153,13 +153,13 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
 
       // Uncapped value 400000e18 is four times the cap, so the LDO leg drains over four full-cap
       // calls while the larger stETH leg keeps the surplus the deposits never consume.
-      const initialLdo = 100_000n * PRICE_SCALE
-      const initialStEth = 100n * PRICE_SCALE
+      const initialLdo = 100_000n * PRICE_UNIT
+      const initialStEth = 100n * PRICE_UNIT
       await fundExecutor(ctx, { ldo: initialLdo, stEth: initialStEth })
 
       // Each full-cap call deposits the capped 25000e18 LDO leg and its balanced stETH leg. The
       // 25000e18 leg is exactly half the 100000e18 cap, so the balanced deposit lands on the cap.
-      const cappedLdoLeg = 25_000n * PRICE_SCALE
+      const cappedLdoLeg = 25_000n * PRICE_UNIT
       const cappedStEthLeg = mulDiv(cappedLdoLeg, LDO_USD, STETH_USD)
 
       for (let call = 0; call < 4; call += 1) {
@@ -190,7 +190,7 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       const treasuryAddress = await ctx.signers.treasury.getAddress()
 
       // The allocator pushes stETH. In treasury mode the whole balance forwards to Stonks.
-      const allocatedStEth = 100n * PRICE_SCALE
+      const allocatedStEth = 100n * PRICE_UNIT
       await fundExecutor(ctx, { stEth: allocatedStEth })
 
       await expect(ctx.buybackExecutor.connect(ctx.signers.allocator).onStEthAllocated())
@@ -205,7 +205,7 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       expect(await ctx.stubs.stonks.lastSellAmount()).to.equal(allocatedStEth)
 
       // CoW settles LDO straight to the treasury, never to the executor.
-      const settledLdo = 1000n * PRICE_SCALE
+      const settledLdo = 1000n * PRICE_UNIT
       await ctx.stubs.ldo.connect(ctx.signers.admin).mint(treasuryAddress, settledLdo)
       expect(await ctx.stubs.ldo.balanceOf(treasuryAddress)).to.equal(settledLdo)
       expect(await ctx.stubs.ldo.balanceOf(executorAddress)).to.equal(0n)
@@ -332,7 +332,7 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
       const stonksAddress = await ctx.stubs.stonks.getAddress()
 
-      const allocatedStEth = 100n * PRICE_SCALE
+      const allocatedStEth = 100n * PRICE_UNIT
       await fundExecutor(ctx, { stEth: allocatedStEth })
 
       // A non-holder cannot push the allocation.

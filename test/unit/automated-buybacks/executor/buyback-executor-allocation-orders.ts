@@ -10,7 +10,7 @@ import {
   placeTrackedOrder,
   expireOrder,
   OracleFailureMode,
-  PRICE_SCALE,
+  PRICE_UNIT,
   DEFAULT_BOUNDS,
   DEFAULT_ORDER_DURATION,
   ALLOCATOR_ROLE,
@@ -28,21 +28,21 @@ const MIN_ORDER = DEFAULT_BOUNDS.minAllowedOrderAmount // 1e18
 const MAX_ORDER = DEFAULT_BOUNDS.maxAllowedOrderAmount // 1000e18
 
 // Free stETH that halves (LP) or forwards whole (treasury) to a sell above MIN_ORDER.
-const FREE_STETH = 100n * PRICE_SCALE
+const FREE_STETH = 100n * PRICE_UNIT
 // Halves to 0.5e18, below MIN_ORDER, so an LP-mode allocation forwards nothing.
-const LP_SUBTHRESHOLD_STETH = 1n * PRICE_SCALE
+const LP_SUBTHRESHOLD_STETH = 1n * PRICE_UNIT
 // Below MIN_ORDER, so a treasury-mode allocation forwards nothing.
-const BELOW_MIN = PRICE_SCALE / 2n
+const BELOW_MIN = PRICE_UNIT / 2n
 
 // LDO held against the next deposit. At the default 2/3500 LDO/stETH price this reserves 2e18 stETH.
-const RESERVED_LDO = 3500n * PRICE_SCALE
+const RESERVED_LDO = 3500n * PRICE_UNIT
 
 // Stonks stETH balance between MIN_ORDER and MAX_ORDER, so the sell sizes to the balance itself.
-const SELL_BELOW_CAP = 500n * PRICE_SCALE
+const SELL_BELOW_CAP = 500n * PRICE_UNIT
 // Above MAX_ORDER, so the sell clamps to the cap.
-const SELL_ABOVE_CAP = 2000n * PRICE_SCALE
+const SELL_ABOVE_CAP = 2000n * PRICE_UNIT
 // Non-zero trade estimate, the minBuyAmount the order carries.
-const ESTIMATE = 42n * PRICE_SCALE
+const ESTIMATE = 42n * PRICE_UNIT
 
 async function fundStonks(ctx: BuybackContext, amount: bigint): Promise<void> {
   await ctx.stubs.stEth.connect(ctx.signers.admin).mint(await ctx.stubs.stonks.getAddress(), amount)

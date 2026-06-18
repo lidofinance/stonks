@@ -7,7 +7,7 @@ import {
   fundExecutor,
   setPoolReserves,
   setPoolEmaLdoPerStEth,
-  PRICE_SCALE,
+  PRICE_UNIT,
   DEFAULT_BOUNDS,
   ADD_LIQUIDITY_STATUS as STATUS,
   DEFAULT_LDO_USD as LDO_USD,
@@ -39,8 +39,8 @@ function balancedReference(
   ldoUsdPrice: bigint,
   stEthUsdPrice: bigint
 ): BalancedPair {
-  const ldoUsdValue = mulDiv(ldoBalance, ldoUsdPrice, PRICE_SCALE)
-  const stEthUsdValue = mulDiv(stEthBalance, stEthUsdPrice, PRICE_SCALE)
+  const ldoUsdValue = mulDiv(ldoBalance, ldoUsdPrice, PRICE_UNIT)
+  const stEthUsdValue = mulDiv(stEthBalance, stEthUsdPrice, PRICE_UNIT)
 
   if (ldoUsdValue <= stEthUsdValue) {
     return {
@@ -58,7 +58,10 @@ function balancedReference(
 
 // Reference for _evaluateAddLiquidityGates at the default eligible-divergence state. Returns the
 // status and the bounded amounts the contract would store.
-function evaluateGatesReference(ldoBalance: bigint, stEthBalance: bigint): BalancedPair & { status: bigint } {
+function evaluateGatesReference(
+  ldoBalance: bigint,
+  stEthBalance: bigint
+): BalancedPair & { status: bigint } {
   if (ldoBalance === 0n) {
     return { status: STATUS.ZeroLdoBalance, ldoAmount: 0n, stEthAmount: 0n, depositValueUsd: 0n }
   }
@@ -83,7 +86,12 @@ function evaluateGatesReference(ldoBalance: bigint, stEthBalance: bigint): Balan
     stEthAmount = mulDiv(stEthAmount, MAX_DEPOSIT_VALUE, balanced.depositValueUsd)
   }
 
-  return { status: STATUS.Eligible, ldoAmount, stEthAmount, depositValueUsd: balanced.depositValueUsd }
+  return {
+    status: STATUS.Eligible,
+    ldoAmount,
+    stEthAmount,
+    depositValueUsd: balanced.depositValueUsd,
+  }
 }
 
 describe('BuybackExecutor - Fuzz Tests', function () {
@@ -193,7 +201,7 @@ describe('BuybackExecutor - Fuzz Tests', function () {
       await fc.assert(
         fc.asyncProperty(
           // LDO reserve spans the floor: TVL = reserve * 2, crossing 50000e18 around reserve 25000e18.
-          fc.bigInt({ min: 0n, max: 50_000n * PRICE_SCALE }),
+          fc.bigInt({ min: 0n, max: 50_000n * PRICE_UNIT }),
           // EMA spans the tolerance: 0 to 1000 bps of divergence around the 100 bps tolerance.
           fc.bigInt({
             min: (ORACLE_LDO_PER_STETH * 9n) / 10n,

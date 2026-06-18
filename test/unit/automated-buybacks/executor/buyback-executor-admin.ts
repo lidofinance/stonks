@@ -1,6 +1,6 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
-import { loadFixture } from '@nomicfoundation/hardhat-toolbox/network-helpers'
+import { loadFixture, setBalance } from '@nomicfoundation/hardhat-toolbox/network-helpers'
 
 import {
   deployBuybackExecutorWithStubs,
@@ -12,11 +12,12 @@ import {
   placeTrackedOrder,
   expireOrder,
   recoverTokenFromCalls,
-  PRICE_SCALE,
+  PRICE_UNIT,
   DEFAULT_BOUNDS,
   DEFAULT_ORDER_DURATION,
   DEFAULT_ADMIN_ROLE,
   EMERGENCY_ROLE,
+  MANAGER_ROLE,
   missingRoleMessage,
   PAUSED_REVERT,
   NOT_PAUSED_REVERT,
@@ -41,7 +42,7 @@ const DEFAULT_BOOTSTRAP = DEFAULT_BOUNDS.poolBootstrapMinTvlUsd // 50000e18
 
 // Contract upper bounds, mirrored from BuybackExecutor.
 const MAX_TOLERANCE_BPS = 1000n
-const MAX_BOOTSTRAP = 1_000_000n * PRICE_SCALE
+const MAX_BOOTSTRAP = 1_000_000n * PRICE_UNIT
 
 // Order duration the swapped-in Stonks reports, distinct from the default so the refresh is visible.
 const SWAPPED_ORDER_DURATION = 7200n
@@ -147,7 +148,9 @@ describe('BuybackExecutor — admin, mode, setters', function () {
 
       expect(await ctx.buybackExecutor.lpModeEnabled()).to.equal(true)
       expect(await ctx.buybackExecutor.stonks()).to.equal(newStonks)
-      expect(await ctx.buybackExecutor.stonksOrderDurationSeconds()).to.equal(SWAPPED_ORDER_DURATION)
+      expect(await ctx.buybackExecutor.stonksOrderDurationSeconds()).to.equal(
+        SWAPPED_ORDER_DURATION
+      )
     })
 
     it('should derive treasury mode when the receiver is TREASURY', async function () {
@@ -166,10 +169,10 @@ describe('BuybackExecutor — admin, mode, setters', function () {
       const orderAddress = await placeTrackedOrder(ctx)
       await ctx.stubs.stEth.connect(ctx.signers.admin).mint(orderAddress, ORDER_RESIDUAL)
       await expireOrder(ctx)
-      const sameStonks = await ctx.stubs.stonks.getAddress()
+      const newStonks = await deployStonks(ctx, await ctx.buybackExecutor.getAddress())
 
       await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(sameStonks)
+        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
       )
         .to.emit(ctx.buybackExecutor, 'StaleOrderCleared')
         .withArgs(orderAddress)
@@ -182,15 +185,35 @@ describe('BuybackExecutor — admin, mode, setters', function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
       const orderAddress = await placeTrackedOrder(ctx)
       const validTo = await ctx.buybackExecutor.lastOrderValidTo()
-      const sameStonks = await ctx.stubs.stonks.getAddress()
+      const newStonks = await deployStonks(ctx, await ctx.buybackExecutor.getAddress())
 
       await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(sameStonks)
+        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
       )
         .to.emit(ctx.buybackExecutor, 'OrderAbandoned')
         .withArgs(orderAddress, validTo)
 
       expect(await ctx.buybackExecutor.lastOrderAddress()).to.equal(ZERO_ADDRESS)
+      expect(await recoverTokenFromCalls(orderAddress)).to.equal(0n)
+    })
+
+    it('should be a no-op when the new Stonks equals the current one', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const orderAddress = await placeTrackedOrder(ctx)
+      await ctx.stubs.stEth.connect(ctx.signers.admin).mint(orderAddress, ORDER_RESIDUAL)
+      await expireOrder(ctx)
+      const sameStonks = await ctx.stubs.stonks.getAddress()
+
+      // Passing the current Stonks hits the address(stonks) short-circuit, so the sweep never runs
+      // and the expired order survives untouched.
+      const tx = await ctx.buybackExecutor
+        .connect(ctx.signers.admin)
+        .setStonksAndOperatingMode(sameStonks)
+      await expect(tx).to.not.emit(ctx.buybackExecutor, 'StonksAndOperatingModeSet')
+      await expect(tx).to.not.emit(ctx.buybackExecutor, 'StaleOrderCleared')
+
+      expect(await ctx.buybackExecutor.stonks()).to.equal(sameStonks)
+      expect(await ctx.buybackExecutor.lastOrderAddress()).to.equal(orderAddress)
       expect(await recoverTokenFromCalls(orderAddress)).to.equal(0n)
     })
 
@@ -240,9 +263,9 @@ describe('BuybackExecutor — admin, mode, setters', function () {
     it('should revert unpause when not paused', async function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
 
-      await expect(
-        ctx.buybackExecutor.connect(ctx.signers.emergency).unpause()
-      ).to.be.revertedWith(NOT_PAUSED_REVERT)
+      await expect(ctx.buybackExecutor.connect(ctx.signers.emergency).unpause()).to.be.revertedWith(
+        NOT_PAUSED_REVERT
+      )
     })
 
     it('should block addLiquidity, onStEthAllocated, and placeOrder while paused', async function () {
@@ -379,9 +402,7 @@ describe('BuybackExecutor — admin, mode, setters', function () {
       const aboveMax = MAX_TOLERANCE_BPS + 1n
 
       await expect(
-        ctx.buybackExecutor
-          .connect(ctx.signers.admin)
-          .setPoolPriceDivergenceToleranceBps(aboveMax)
+        ctx.buybackExecutor.connect(ctx.signers.admin).setPoolPriceDivergenceToleranceBps(aboveMax)
       )
         .to.be.revertedWithCustomError(ctx.buybackExecutor, 'InvalidPoolPriceDivergenceTolerance')
         .withArgs(aboveMax)
@@ -398,7 +419,9 @@ describe('BuybackExecutor — admin, mode, setters', function () {
         .to.emit(ctx.buybackExecutor, 'PoolPriceDivergenceToleranceBpsSet')
         .withArgs(DEFAULT_TOLERANCE, MAX_TOLERANCE_BPS)
 
-      expect(await ctx.buybackExecutor.poolPriceDivergenceToleranceBps()).to.equal(MAX_TOLERANCE_BPS)
+      expect(await ctx.buybackExecutor.poolPriceDivergenceToleranceBps()).to.equal(
+        MAX_TOLERANCE_BPS
+      )
     })
 
     it('should set and emit at the lower boundary of one', async function () {
@@ -635,6 +658,59 @@ describe('BuybackExecutor — admin, mode, setters', function () {
         ctx.buybackExecutor,
         'LiquidityAdded'
       )
+    })
+  })
+
+  describe('recoverEther and recoverERC20', function () {
+    const RECOVER_AMOUNT = 10n * PRICE_UNIT
+
+    it('should follow the AssetRecovererACL checklist', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const executorAddress = await ctx.buybackExecutor.getAddress()
+      const treasuryAddress = await ctx.signers.treasury.getAddress()
+      const strangerAddress = await ctx.signers.stranger.getAddress()
+
+      // Both recover functions are gated by MANAGER_ROLE.
+      await expect(
+        ctx.buybackExecutor.connect(ctx.signers.stranger).recoverEther()
+      ).to.be.revertedWith(missingRoleMessage(strangerAddress, MANAGER_ROLE))
+      await expect(
+        ctx.buybackExecutor
+          .connect(ctx.signers.stranger)
+          .recoverERC20(await ctx.stubs.ldo.getAddress(), RECOVER_AMOUNT)
+      ).to.be.revertedWith(missingRoleMessage(strangerAddress, MANAGER_ROLE))
+
+      // The executor has no receive/payable, so ETH only arrives force-sent. recoverEther sweeps
+      // the whole balance to TREASURY and emits EtherRecovered.
+      await setBalance(executorAddress, RECOVER_AMOUNT)
+      const treasuryBefore = await ethers.provider.getBalance(treasuryAddress)
+
+      await expect(ctx.buybackExecutor.connect(ctx.signers.manager).recoverEther())
+        .to.emit(ctx.buybackExecutor, 'EtherRecovered')
+        .withArgs(RECOVER_AMOUNT)
+
+      expect(await ethers.provider.getBalance(executorAddress)).to.equal(0n)
+      expect(await ethers.provider.getBalance(treasuryAddress)).to.equal(
+        treasuryBefore + RECOVER_AMOUNT
+      )
+    })
+
+    it('should recover the LP token to TREASURY and emit ERC20Recovered', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const executorAddress = await ctx.buybackExecutor.getAddress()
+      const treasuryAddress = await ctx.signers.treasury.getAddress()
+      const lpAddress = await ctx.stubs.pool.getAddress()
+
+      await ctx.stubs.pool.connect(ctx.signers.admin).mint(executorAddress, RECOVER_AMOUNT)
+
+      await expect(
+        ctx.buybackExecutor.connect(ctx.signers.manager).recoverERC20(lpAddress, RECOVER_AMOUNT)
+      )
+        .to.emit(ctx.buybackExecutor, 'ERC20Recovered')
+        .withArgs(lpAddress, RECOVER_AMOUNT)
+
+      expect(await ctx.stubs.pool.balanceOf(executorAddress)).to.equal(0n)
+      expect(await ctx.stubs.pool.balanceOf(treasuryAddress)).to.equal(RECOVER_AMOUNT)
     })
   })
 })

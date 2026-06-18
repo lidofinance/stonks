@@ -315,6 +315,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         _setMaxDepositValueUsd(initParams_.maxDepositValueUsd);
         _setMinDepositValueUsd(initParams_.minDepositValueUsd);
         _setPoolBootstrapMinTvlUsd(initParams_.poolBootstrapMinTvlUsd);
+
         // `_setStonksAndOperatingMode` validates the Stonks address and its receiver to set the operating mode, so the Stonks
         // instance should be deployed using the CREATE2-predicted executor address before this constructor is called.
         _setStonksAndOperatingMode(initParams_.stonks);

@@ -10,7 +10,7 @@ import {
   setPoolReserves,
   makePoolDivergent,
   OracleFailureMode,
-  PRICE_SCALE,
+  PRICE_UNIT,
   DEFAULT_BOUNDS,
   MANAGER_ROLE,
   missingRoleMessage,
@@ -27,7 +27,7 @@ import {
 } from '../../../helpers/buyback-executor'
 
 // Deterministic pool mint, decoupled from the deposit legs, for the return-value assertion.
-const LP_MINT = 777n * PRICE_SCALE
+const LP_MINT = 777n * PRICE_UNIT
 
 async function fundBalanced(ctx: BuybackContext): Promise<void> {
   await fundExecutor(ctx, { ldo: BALANCED_LDO, stEth: BALANCED_STETH })
@@ -109,7 +109,7 @@ describe('BuybackExecutor — liquidity', function () {
       it('should revert OraclePriceUnavailable when an oracle price is 0', async function () {
         const ctx = await loadFixture(deployBuybackExecutorWithStubs)
         await fundBalanced(ctx)
-        await setOraclePrices(ctx, 0n, PRICE_SCALE)
+        await setOraclePrices(ctx, 0n, PRICE_UNIT)
 
         await expect(
           ctx.buybackExecutor.connect(ctx.signers.stranger).addLiquidity()
@@ -119,8 +119,8 @@ describe('BuybackExecutor — liquidity', function () {
       it('should revert InvalidOraclePrice when the LDO/stETH ratio truncates to 0', async function () {
         const ctx = await loadFixture(deployBuybackExecutorWithStubs)
         await fundBalanced(ctx)
-        // stEthUsd far below ldoUsd makes mulDiv(stEthUsd, PRICE_SCALE, ldoUsd) floor to 0.
-        await setOraclePrices(ctx, 2n * PRICE_SCALE, 1n)
+        // stEthUsd far below ldoUsd makes mulDiv(stEthUsd, PRICE_UNIT, ldoUsd) floor to 0.
+        await setOraclePrices(ctx, 2n * PRICE_UNIT, 1n)
 
         await expect(
           ctx.buybackExecutor.connect(ctx.signers.stranger).addLiquidity()
@@ -203,13 +203,17 @@ describe('BuybackExecutor — liquidity', function () {
         await ctx.stubs.wstEth.connect(ctx.signers.admin).setRoundDownWrap(true)
 
         const evaluation = await ctx.harness.evaluateAddLiquidityGates()
-        const roundedWstEth =
-          (await ctx.stubs.wstEth.getWstETHByStETH(evaluation.stEthAmount)) - 1n
+        const roundedWstEth = (await ctx.stubs.wstEth.getWstETHByStETH(evaluation.stEthAmount)) - 1n
         const strangerAddress = await ctx.signers.stranger.getAddress()
 
         await expect(ctx.buybackExecutor.connect(ctx.signers.stranger).addLiquidity())
           .to.emit(ctx.buybackExecutor, 'LiquidityAdded')
-          .withArgs(strangerAddress, evaluation.ldoAmount, roundedWstEth, evaluation.ldoAmount + roundedWstEth)
+          .withArgs(
+            strangerAddress,
+            evaluation.ldoAmount,
+            roundedWstEth,
+            evaluation.ldoAmount + roundedWstEth
+          )
 
         expect(await ctx.stubs.pool.lastAddLiquidityWstEth()).to.equal(roundedWstEth)
       })
@@ -217,8 +221,8 @@ describe('BuybackExecutor — liquidity', function () {
       it('should size by the smaller-USD side and leave the larger side surplus untouched', async function () {
         const ctx = await loadFixture(deployBuybackExecutorWithStubs)
         // LDO is the smaller USD leg (200e18 vs 3500e18), so all LDO deposits and stETH carries over.
-        const ldoFunded = 100n * PRICE_SCALE
-        const stEthFunded = 1n * PRICE_SCALE
+        const ldoFunded = 100n * PRICE_UNIT
+        const stEthFunded = 1n * PRICE_UNIT
         await fundExecutor(ctx, { ldo: ldoFunded, stEth: stEthFunded })
 
         const divergence = await ctx.harness.evaluatePoolPriceDivergence()
@@ -247,7 +251,7 @@ describe('BuybackExecutor — liquidity', function () {
       it('should deposit at exactly minDepositValueUsd', async function () {
         const ctx = await loadFixture(deployBuybackExecutorWithStubs)
         // ldoUsdValue = 50e18 is the smaller leg, so depositValueUsd = 100e18 = the floor.
-        await fundExecutor(ctx, { ldo: 25n * PRICE_SCALE, stEth: 1n * PRICE_SCALE })
+        await fundExecutor(ctx, { ldo: 25n * PRICE_UNIT, stEth: 1n * PRICE_UNIT })
 
         const evaluation = await ctx.harness.evaluateAddLiquidityGates()
         expect(evaluation.depositValueUsd).to.equal(DEFAULT_BOUNDS.minDepositValueUsd)
@@ -261,8 +265,8 @@ describe('BuybackExecutor — liquidity', function () {
       it('should deposit at exactly maxDepositValueUsd without scaling', async function () {
         const ctx = await loadFixture(deployBuybackExecutorWithStubs)
         // ldoUsdValue = 50000e18 is the smaller leg, so depositValueUsd = 100000e18 = the cap.
-        const ldoFunded = 25_000n * PRICE_SCALE
-        await fundExecutor(ctx, { ldo: ldoFunded, stEth: 20n * PRICE_SCALE })
+        const ldoFunded = 25_000n * PRICE_UNIT
+        await fundExecutor(ctx, { ldo: ldoFunded, stEth: 20n * PRICE_UNIT })
 
         const evaluation = await ctx.harness.evaluateAddLiquidityGates()
         expect(evaluation.depositValueUsd).to.equal(DEFAULT_BOUNDS.maxDepositValueUsd)
@@ -275,10 +279,10 @@ describe('BuybackExecutor — liquidity', function () {
       it('should scale both legs down above maxDepositValueUsd and emit the capped amounts', async function () {
         const ctx = await loadFixture(deployBuybackExecutorWithStubs)
         // Uncapped depositValueUsd = 400000e18, four times the cap, so both legs scale to a quarter.
-        await fundExecutor(ctx, { ldo: 100_000n * PRICE_SCALE, stEth: 100n * PRICE_SCALE })
+        await fundExecutor(ctx, { ldo: 100_000n * PRICE_UNIT, stEth: 100n * PRICE_UNIT })
 
         const evaluation = await ctx.harness.evaluateAddLiquidityGates()
-        expect(evaluation.ldoAmount).to.equal(25_000n * PRICE_SCALE)
+        expect(evaluation.ldoAmount).to.equal(25_000n * PRICE_UNIT)
         const mintedWstEth = await ctx.stubs.wstEth.getWstETHByStETH(evaluation.stEthAmount)
         const strangerAddress = await ctx.signers.stranger.getAddress()
 
@@ -364,9 +368,7 @@ describe('BuybackExecutor — liquidity', function () {
           ctx.buybackExecutor.connect(ctx.signers.stranger).addLiquidity()
         ).to.be.revertedWithCustomError(ctx.buybackExecutor, 'PoolPriceDivergenceTooHigh')
 
-        await ctx.buybackExecutor
-          .connect(ctx.signers.admin)
-          .setPoolBootstrapMinTvlUsd(poolTvl + 1n)
+        await ctx.buybackExecutor.connect(ctx.signers.admin).setPoolBootstrapMinTvlUsd(poolTvl + 1n)
         await expect(ctx.buybackExecutor.connect(ctx.signers.stranger).addLiquidity()).to.emit(
           ctx.buybackExecutor,
           'LiquidityAdded'
@@ -566,7 +568,7 @@ describe('BuybackExecutor — liquidity', function () {
     it('should return (0, 0) when an oracle price is 0', async function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
       await fundBalanced(ctx)
-      await setOraclePrices(ctx, PRICE_SCALE, 0n)
+      await setOraclePrices(ctx, PRICE_UNIT, 0n)
 
       const [ldoAmount, stEthAmount] = await ctx.buybackExecutor.getAvailableLiquidity()
       expect(ldoAmount).to.equal(0n)
@@ -576,8 +578,8 @@ describe('BuybackExecutor — liquidity', function () {
     it('should return the uncapped balanced amounts when balances and prices are valid', async function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
       // depositValueUsd here is 400000e18, four times the cap, yet the view returns the full legs.
-      const ldoFunded = 100_000n * PRICE_SCALE
-      const stEthFunded = 100n * PRICE_SCALE
+      const ldoFunded = 100_000n * PRICE_UNIT
+      const stEthFunded = 100n * PRICE_UNIT
       await fundExecutor(ctx, { ldo: ldoFunded, stEth: stEthFunded })
 
       const divergence = await ctx.harness.evaluatePoolPriceDivergence()
@@ -597,8 +599,8 @@ describe('BuybackExecutor — liquidity', function () {
 
     it('should size by the LDO side when the LDO leg holds less USD', async function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
-      const ldoFunded = 100n * PRICE_SCALE
-      const stEthFunded = 1n * PRICE_SCALE
+      const ldoFunded = 100n * PRICE_UNIT
+      const stEthFunded = 1n * PRICE_UNIT
       await fundExecutor(ctx, { ldo: ldoFunded, stEth: stEthFunded })
 
       const divergence = await ctx.harness.evaluatePoolPriceDivergence()
@@ -616,8 +618,8 @@ describe('BuybackExecutor — liquidity', function () {
 
     it('should size by the stETH side when the stETH leg holds less USD', async function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
-      const ldoFunded = 10_000n * PRICE_SCALE
-      const stEthFunded = PRICE_SCALE / 1000n
+      const ldoFunded = 10_000n * PRICE_UNIT
+      const stEthFunded = PRICE_UNIT / 1000n
       await fundExecutor(ctx, { ldo: ldoFunded, stEth: stEthFunded })
 
       const divergence = await ctx.harness.evaluatePoolPriceDivergence()
