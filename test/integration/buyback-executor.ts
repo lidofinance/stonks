@@ -3,31 +3,27 @@ import { expect } from 'chai'
 import { loadFixture } from '@nomicfoundation/hardhat-toolbox/network-helpers'
 
 import {
+  deployStonksStub,
   deployBuybackExecutorWithStubs,
   deployBuybackExecutorTreasuryMode,
   fundExecutor,
   setPoolReserves,
-  setPoolEma,
+  scalePoolEma,
   placeTrackedOrder,
   expireOrder,
   PRICE_SCALE,
-  DEFAULT_BOUNDS,
   ALLOCATOR_ROLE,
   missingRoleMessage,
+  DEFAULT_LDO_USD as LDO_USD,
+  DEFAULT_STETH_USD as STETH_USD,
+  DEFAULT_SHARE_RATE as SHARE_RATE,
+  DEEP_LDO_RESERVE,
+  WITHDRAWN_LDO,
+  WITHDRAWN_WSTETH,
+  mulDiv,
   BuybackContext,
 } from '../helpers/buyback-executor'
-import { StonksStub__factory, OrderStub__factory } from '../../typechain-types'
-
-// Default oracle USD prices and share rate the stub fixture configures.
-const LDO_USD = 2n * PRICE_SCALE
-const STETH_USD = 3500n * PRICE_SCALE
-const SHARE_RATE = (12n * PRICE_SCALE) / 10n
-
-const MAX_DEPOSIT_USD = DEFAULT_BOUNDS.maxDepositValueUsd
-
-// Reserves whose oracle TVL (100000e18) sits above the 50000e18 bootstrap floor, paired with the
-// default EMA on the oracle ratio. This is the healthy deep pool the LP-mode deposits target.
-const DEEP_LDO_RESERVE = 50_000n * PRICE_SCALE
+import { OrderStub__factory } from '../../typechain-types'
 
 // Pool TVL crosses the 50000e18 floor at an LDO reserve of 25000e18 (TVL = reserve * LDO_USD).
 const FLOOR_LDO_RESERVE = 25_000n * PRICE_SCALE
@@ -38,13 +34,10 @@ const BELOW_FLOOR_LDO_RESERVE = FLOOR_LDO_RESERVE - 1n * PRICE_SCALE
 const BOOTSTRAP_LDO = 1000n * PRICE_SCALE
 const BOOTSTRAP_STETH = 10n * PRICE_SCALE
 
-// LP seeded for the remove-while-paused flow and the amounts the pool returns on withdrawal.
+// LP seeded for the remove-while-paused flow.
 const SEEDED_LP = 1000n * PRICE_SCALE
-const WITHDRAWN_LDO = 500n * PRICE_SCALE
-const WITHDRAWN_WSTETH = 10n * PRICE_SCALE
 
 // Reference integer math mirroring the contract and the wstETH stub, all floor.
-const mulDiv = (a: bigint, b: bigint, denominator: bigint): bigint => (a * b) / denominator
 const usdValue = (amount: bigint, price: bigint): bigint => mulDiv(amount, price, PRICE_SCALE)
 const wstEthFromStEth = (stEth: bigint): bigint => mulDiv(stEth, PRICE_SCALE, SHARE_RATE)
 const stEthFromWstEth = (wstEth: bigint): bigint => mulDiv(wstEth, SHARE_RATE, PRICE_SCALE)
@@ -71,12 +64,6 @@ function balancedLegs(ldoBalance: bigint, stEthBalance: bigint): BalancedPair {
     stEthAmount: stEthBalance,
     depositValueUsd: stEthUsd * 2n,
   }
-}
-
-// Moves the pool EMA off the oracle ratio by the given percent of its current value.
-async function scalePoolEma(ctx: BuybackContext, percent: bigint): Promise<void> {
-  const currentEma = await ctx.stubs.pool.priceOracleValue()
-  await setPoolEma(ctx, (currentEma * percent) / 100n)
 }
 
 // Sets the deep reserves the LP-mode deposits target, leaving the EMA on the oracle ratio.
@@ -170,31 +157,25 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       const initialStEth = 100n * PRICE_SCALE
       await fundExecutor(ctx, { ldo: initialLdo, stEth: initialStEth })
 
-      let depositedStEth = 0n
+      // Each full-cap call deposits the capped 25000e18 LDO leg and its balanced stETH leg. The
+      // 25000e18 leg is exactly half the 100000e18 cap, so the balanced deposit lands on the cap.
+      const cappedLdoLeg = 25_000n * PRICE_SCALE
+      const cappedStEthLeg = mulDiv(cappedLdoLeg, LDO_USD, STETH_USD)
+
       for (let call = 0; call < 4; call += 1) {
-        const evaluation = await ctx.buybackExecutor.evaluateAddLiquidityGates()
         const ldoBefore = await ctx.stubs.ldo.balanceOf(executorAddress)
 
         await ctx.buybackExecutor.connect(ctx.signers.stranger).addLiquidity()
 
-        // The capped LDO leg leaves the balance and the deposit never exceeds the cap.
-        expect(await ctx.stubs.pool.lastAddLiquidityLdo()).to.equal(evaluation.ldoAmount)
-        expect(await ctx.stubs.ldo.balanceOf(executorAddress)).to.equal(
-          ldoBefore - evaluation.ldoAmount
-        )
-        const depositedUsd =
-          usdValue(evaluation.ldoAmount, LDO_USD) + usdValue(evaluation.stEthAmount, STETH_USD)
-        expect(depositedUsd <= MAX_DEPOSIT_USD).to.equal(true)
-
-        depositedStEth += evaluation.stEthAmount
+        expect(await ctx.stubs.pool.lastAddLiquidityLdo()).to.equal(cappedLdoLeg)
+        expect(await ctx.stubs.ldo.balanceOf(executorAddress)).to.equal(ldoBefore - cappedLdoLeg)
       }
 
-      // The LDO leg is fully drained, the stETH surplus remains, and a further call has no LDO.
+      // The LDO leg drains to zero, the larger stETH leg keeps its surplus, and a further call has
+      // no LDO.
+      const expectedSurplus = initialStEth - 4n * cappedStEthLeg
       expect(await ctx.stubs.ldo.balanceOf(executorAddress)).to.equal(0n)
-      expect(await ctx.stubs.stEth.balanceOf(executorAddress)).to.equal(
-        initialStEth - depositedStEth
-      )
-      expect(initialStEth - depositedStEth > 0n).to.equal(true)
+      expect(await ctx.stubs.stEth.balanceOf(executorAddress)).to.equal(expectedSurplus)
       await expect(
         ctx.buybackExecutor.connect(ctx.signers.stranger).addLiquidity()
       ).to.be.revertedWithCustomError(ctx.buybackExecutor, 'ZeroLdoBalance')
@@ -247,9 +228,9 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       await expireOrder(ctx)
 
       const previousStonks = await ctx.stubs.stonks.getAddress()
-      const newStonks = await new StonksStub__factory(ctx.signers.deployer).deploy()
-      await newStonks.setReceiver(await ctx.buybackExecutor.getAddress())
-      await newStonks.setOrderDuration(3600n)
+      const newStonks = await deployStonksStub(ctx, {
+        receiver: await ctx.buybackExecutor.getAddress(),
+      })
       const newStonksAddress = await newStonks.getAddress()
 
       await expect(
@@ -274,9 +255,9 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       // Residual on a still-live order proves the switch abandons it without recovering.
       await ctx.stubs.stEth.connect(ctx.signers.admin).mint(orderAddress, 1000n)
 
-      const newStonks = await new StonksStub__factory(ctx.signers.deployer).deploy()
-      await newStonks.setReceiver(await ctx.buybackExecutor.getAddress())
-      await newStonks.setOrderDuration(3600n)
+      const newStonks = await deployStonksStub(ctx, {
+        receiver: await ctx.buybackExecutor.getAddress(),
+      })
       const newStonksAddress = await newStonks.getAddress()
 
       const tx = ctx.buybackExecutor

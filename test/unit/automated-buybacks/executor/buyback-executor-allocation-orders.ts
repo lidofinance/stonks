@@ -15,13 +15,14 @@ import {
   DEFAULT_ORDER_DURATION,
   ALLOCATOR_ROLE,
   missingRoleMessage,
+  PAUSED_REVERT,
+  DEFAULT_LDO_USD as LDO_USD,
+  DEFAULT_STETH_USD as STETH_USD,
+  mulDiv,
   BuybackContext,
 } from '../../../helpers/buyback-executor'
 
 const ZERO_ADDRESS = ethers.ZeroAddress
-
-// OZ v4.9.3 reverts with a string, not the v5 custom error `EnforcedPause`.
-const PAUSED_REVERT = 'Pausable: paused'
 
 const MIN_ORDER = DEFAULT_BOUNDS.minAllowedOrderAmount // 1e18
 const MAX_ORDER = DEFAULT_BOUNDS.maxAllowedOrderAmount // 1000e18
@@ -110,9 +111,9 @@ describe('BuybackExecutor — allocation and orders', function () {
         await fundExecutor(ctx, { ldo: RESERVED_LDO, stEth: FREE_STETH })
         const stonksAddress = await ctx.stubs.stonks.getAddress()
 
-        // freeStEth excludes the stETH value of the held LDO, so it sits below the raw balance.
-        const freeStEth = await ctx.harness.computeLpModeFreeStEth()
-        expect(freeStEth).to.be.lessThan(FREE_STETH)
+        // freeStEth excludes the stETH value of the held LDO, reserved at the oracle price.
+        const reservedStEth = mulDiv(RESERVED_LDO, LDO_USD, STETH_USD)
+        const freeStEth = FREE_STETH - reservedStEth
         const sellAmount = freeStEth / 2n
 
         await expect(ctx.buybackExecutor.connect(ctx.signers.allocator).onStEthAllocated())

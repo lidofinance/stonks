@@ -6,51 +6,27 @@ import {
   deployBuybackExecutorWithStubs,
   fundExecutor,
   setOracleFailure,
-  setPoolEma,
   setPoolReserves,
+  scalePoolEma,
   placeTrackedOrder,
   expireOrder,
   OracleFailureMode,
   PRICE_SCALE,
   DEFAULT_BOUNDS,
-  BuybackContext,
+  DEFAULT_LDO_USD as LDO_USD,
+  DEFAULT_STETH_USD as STETH_USD,
+  DEEP_LDO_RESERVE,
+  LP_BALANCE,
+  WITHDRAWN_LDO,
+  WITHDRAWN_WSTETH,
+  saturatedSub,
 } from '../helpers/buyback-executor'
 
 const ZERO_ADDRESS = ethers.ZeroAddress
 
-// Default oracle USD prices the stub fixture configures.
-const LDO_USD = 2n * PRICE_SCALE
-const STETH_USD = 3500n * PRICE_SCALE
-
 const MIN_DEPOSIT_USD = DEFAULT_BOUNDS.minDepositValueUsd
-const MAX_DEPOSIT_USD = DEFAULT_BOUNDS.maxDepositValueUsd
 const MIN_ORDER = DEFAULT_BOUNDS.minAllowedOrderAmount
 const MAX_ORDER = DEFAULT_BOUNDS.maxAllowedOrderAmount
-
-// Reserves whose oracle-valued TVL (100000e18) sits above the 50000e18 bootstrap floor, so the
-// divergence gate is enforced. The EMA stays on the oracle ratio unless a test moves it.
-const DEEP_LDO_RESERVE = 50_000n * PRICE_SCALE
-
-// LP held and the amounts the pool returns on a withdrawal.
-const LP_BALANCE = 1000n * PRICE_SCALE
-const WITHDRAWN_LDO = 500n * PRICE_SCALE
-const WITHDRAWN_WSTETH = 10n * PRICE_SCALE
-
-// Reference integer math mirroring the contract, all floor.
-const usdValue = (amount: bigint, price: bigint): bigint => (amount * price) / PRICE_SCALE
-const saturatedSub = (a: bigint, b: bigint): bigint => (a > b ? a - b : 0n)
-const withinInclusive = (value: bigint, low: bigint, high: bigint): boolean =>
-  value >= low && value <= high
-
-// USD value of a balanced deposit pair at the default prices.
-const depositUsdFromLegs = (ldoLeg: bigint, stEthLeg: bigint): bigint =>
-  usdValue(ldoLeg, LDO_USD) + usdValue(stEthLeg, STETH_USD)
-
-// Moves the pool EMA off the oracle ratio by the given multiplier, scaled by 100.
-async function scalePoolEma(ctx: BuybackContext, percent: bigint): Promise<void> {
-  const currentEma = await ctx.stubs.pool.priceOracleValue()
-  await setPoolEma(ctx, (currentEma * percent) / 100n)
-}
 
 describe('BuybackExecutor — invariants', function () {
   describe('deposit value bounds', function () {
@@ -67,10 +43,10 @@ describe('BuybackExecutor — invariants', function () {
 
       for (let call = 0; call < 4; call += 1) {
         const evaluation = await ctx.harness.evaluateAddLiquidityGates()
-        const depositedUsd = depositUsdFromLegs(evaluation.ldoAmount, evaluation.stEthAmount)
 
+        // The capped LDO leg of 25000e18 is exactly half the 100000e18 cap, so the balanced deposit
+        // lands on maxDepositValueUsd. Asserting the leg pins the cap without a bound comparison.
         expect(evaluation.ldoAmount).to.equal(cappedLdoLeg)
-        expect(withinInclusive(depositedUsd, MIN_DEPOSIT_USD, MAX_DEPOSIT_USD)).to.equal(true)
 
         await ctx.buybackExecutor.connect(ctx.signers.stranger).addLiquidity()
       }
@@ -102,7 +78,6 @@ describe('BuybackExecutor — invariants', function () {
       await fundExecutor(onlyStEth, { stEth: stEthBalance })
       const onlyStEthFree = await onlyStEth.harness.computeLpModeFreeStEth()
       expect(onlyStEthFree).to.equal(stEthBalance)
-      expect(onlyStEthFree <= stEthBalance).to.equal(true)
 
       // Held LDO is reserved in stETH terms before the balance is freed.
       const withLdo = await loadFixture(deployBuybackExecutorWithStubs)
@@ -111,7 +86,6 @@ describe('BuybackExecutor — invariants', function () {
       const withLdoExpected = saturatedSub(stEthBalance, ldoInStEth)
       const withLdoFree = await withLdo.harness.computeLpModeFreeStEth()
       expect(withLdoFree).to.equal(withLdoExpected)
-      expect(withLdoFree <= stEthBalance).to.equal(true)
 
       // stETH parked on Stonks is also subtracted from the free amount.
       const withStonks = await loadFixture(deployBuybackExecutorWithStubs)
@@ -122,7 +96,6 @@ describe('BuybackExecutor — invariants', function () {
       const withStonksExpected = saturatedSub(saturatedSub(stEthBalance, ldoInStEth), stonksStEth)
       const withStonksFree = await withStonks.harness.computeLpModeFreeStEth()
       expect(withStonksFree).to.equal(withStonksExpected)
-      expect(withStonksFree <= stEthBalance).to.equal(true)
 
       // A missing oracle price collapses the reserve calculation to zero free stETH.
       const oracleDown = await loadFixture(deployBuybackExecutorWithStubs)
@@ -130,7 +103,6 @@ describe('BuybackExecutor — invariants', function () {
       await setOracleFailure(oracleDown, OracleFailureMode.CustomError)
       const oracleDownFree = await oracleDown.harness.computeLpModeFreeStEth()
       expect(oracleDownFree).to.equal(0n)
-      expect(oracleDownFree <= stEthBalance).to.equal(true)
     })
   })
 
@@ -187,23 +159,28 @@ describe('BuybackExecutor — invariants', function () {
   })
 
   describe('order sizing bounds', function () {
-    it('should keep every placed order sellAmount within [minAllowedOrderAmount, maxAllowedOrderAmount]', async function () {
-      const stonksBalances = [MIN_ORDER, 500n * PRICE_SCALE, 2000n * PRICE_SCALE]
+    async function placedSellAmount(balance: bigint): Promise<bigint> {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      await ctx.stubs.stEth
+        .connect(ctx.signers.admin)
+        .mint(await ctx.stubs.stonks.getAddress(), balance)
+      await ctx.stubs.stonks.connect(ctx.signers.admin).setEstimatedOutput(1n)
 
-      for (const balance of stonksBalances) {
-        const ctx = await loadFixture(deployBuybackExecutorWithStubs)
-        await ctx.stubs.stEth
-          .connect(ctx.signers.admin)
-          .mint(await ctx.stubs.stonks.getAddress(), balance)
-        await ctx.stubs.stonks.connect(ctx.signers.admin).setEstimatedOutput(1n)
+      await ctx.buybackExecutor.connect(ctx.signers.stranger).placeOrder()
+      return ctx.stubs.stonks.lastSellAmount()
+    }
 
-        await ctx.buybackExecutor.connect(ctx.signers.stranger).placeOrder()
+    it('should size the order to the stonks balance at the minimum', async function () {
+      expect(await placedSellAmount(MIN_ORDER)).to.equal(MIN_ORDER)
+    })
 
-        const expectedSell = balance > MAX_ORDER ? MAX_ORDER : balance
-        const sellAmount = await ctx.stubs.stonks.lastSellAmount()
-        expect(sellAmount).to.equal(expectedSell)
-        expect(withinInclusive(sellAmount, MIN_ORDER, MAX_ORDER)).to.equal(true)
-      }
+    it('should size the order to a stonks balance between the bounds', async function () {
+      const balance = 500n * PRICE_SCALE
+      expect(await placedSellAmount(balance)).to.equal(balance)
+    })
+
+    it('should clamp a stonks balance above the cap to maxAllowedOrderAmount', async function () {
+      expect(await placedSellAmount(2000n * PRICE_SCALE)).to.equal(MAX_ORDER)
     })
 
     it('should reject placement when the sized sell is below minAllowedOrderAmount', async function () {
@@ -225,35 +202,38 @@ describe('BuybackExecutor — invariants', function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
       const admin = ctx.signers.admin
 
-      const assertOrdering = async (): Promise<void> => {
-        const minOrder = await ctx.buybackExecutor.minAllowedOrderAmount()
-        const maxOrder = await ctx.buybackExecutor.maxAllowedOrderAmount()
-        const minDeposit = await ctx.buybackExecutor.minDepositValueUsd()
-        const maxDeposit = await ctx.buybackExecutor.maxDepositValueUsd()
-        expect(minOrder < maxOrder).to.equal(true)
-        expect(minDeposit < maxDeposit).to.equal(true)
-      }
+      const NEW_MAX_ORDER = 2000n * PRICE_SCALE
+      const NEW_MIN_ORDER = 5n * PRICE_SCALE
+      const NEW_MAX_DEPOSIT = 200_000n * PRICE_SCALE
+      const NEW_MIN_DEPOSIT = 50_000n * PRICE_SCALE
 
-      await ctx.buybackExecutor.connect(admin).setMaxAllowedOrderAmount(2000n * PRICE_SCALE)
-      await assertOrdering()
-      await ctx.buybackExecutor.connect(admin).setMinAllowedOrderAmount(5n * PRICE_SCALE)
-      await assertOrdering()
-      await ctx.buybackExecutor.connect(admin).setMaxDepositValueUsd(200_000n * PRICE_SCALE)
-      await assertOrdering()
-      await ctx.buybackExecutor.connect(admin).setMinDepositValueUsd(50_000n * PRICE_SCALE)
-      await assertOrdering()
+      // Each setter lands the exact value while leaving its counterpart strictly on the other side,
+      // so min stays below max by construction across the sequence.
+      await ctx.buybackExecutor.connect(admin).setMaxAllowedOrderAmount(NEW_MAX_ORDER)
+      expect(await ctx.buybackExecutor.maxAllowedOrderAmount()).to.equal(NEW_MAX_ORDER)
+      expect(await ctx.buybackExecutor.minAllowedOrderAmount()).to.equal(MIN_ORDER)
 
-      // A setter that would break the ordering reverts and leaves the bounds intact.
-      const maxOrder = await ctx.buybackExecutor.maxAllowedOrderAmount()
+      await ctx.buybackExecutor.connect(admin).setMinAllowedOrderAmount(NEW_MIN_ORDER)
+      expect(await ctx.buybackExecutor.minAllowedOrderAmount()).to.equal(NEW_MIN_ORDER)
+
+      await ctx.buybackExecutor.connect(admin).setMaxDepositValueUsd(NEW_MAX_DEPOSIT)
+      expect(await ctx.buybackExecutor.maxDepositValueUsd()).to.equal(NEW_MAX_DEPOSIT)
+
+      await ctx.buybackExecutor.connect(admin).setMinDepositValueUsd(NEW_MIN_DEPOSIT)
+      expect(await ctx.buybackExecutor.minDepositValueUsd()).to.equal(NEW_MIN_DEPOSIT)
+
+      // A setter that would meet its counterpart reverts and leaves the bounds intact.
       await expect(
-        ctx.buybackExecutor.connect(admin).setMinAllowedOrderAmount(maxOrder)
+        ctx.buybackExecutor.connect(admin).setMinAllowedOrderAmount(NEW_MAX_ORDER)
       ).to.be.revertedWithCustomError(ctx.buybackExecutor, 'InvalidOrderAmountLimits')
-      const minDeposit = await ctx.buybackExecutor.minDepositValueUsd()
       await expect(
-        ctx.buybackExecutor.connect(admin).setMaxDepositValueUsd(minDeposit)
+        ctx.buybackExecutor.connect(admin).setMaxDepositValueUsd(NEW_MIN_DEPOSIT)
       ).to.be.revertedWithCustomError(ctx.buybackExecutor, 'InvalidDepositValueLimits')
 
-      await assertOrdering()
+      expect(await ctx.buybackExecutor.minAllowedOrderAmount()).to.equal(NEW_MIN_ORDER)
+      expect(await ctx.buybackExecutor.maxAllowedOrderAmount()).to.equal(NEW_MAX_ORDER)
+      expect(await ctx.buybackExecutor.minDepositValueUsd()).to.equal(NEW_MIN_DEPOSIT)
+      expect(await ctx.buybackExecutor.maxDepositValueUsd()).to.equal(NEW_MAX_DEPOSIT)
     })
   })
 

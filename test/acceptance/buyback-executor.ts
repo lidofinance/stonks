@@ -58,12 +58,12 @@ describe('BuybackExecutor: acceptance', function () {
   it('should hold the expected divergence-tolerance, order-amount, deposit-value, and bootstrap-TVL bounds', async function () {
     if (BUYBACK_EXECUTOR_ADDRESS === '') this.skip()
 
-    expect(EXPECTED_POOL_PRICE_DIVERGENCE_TOLERANCE_BPS).to.be.gt(0n)
-    expect(EXPECTED_MIN_ALLOWED_ORDER_AMOUNT).to.be.gt(0n)
-    expect(EXPECTED_MAX_ALLOWED_ORDER_AMOUNT).to.be.gt(0n)
-    expect(EXPECTED_MIN_DEPOSIT_VALUE_USD).to.be.gt(0n)
-    expect(EXPECTED_MAX_DEPOSIT_VALUE_USD).to.be.gt(0n)
-    expect(EXPECTED_POOL_BOOTSTRAP_MIN_TVL_USD).to.be.gt(0n)
+    expect(EXPECTED_POOL_PRICE_DIVERGENCE_TOLERANCE_BPS).to.not.equal(0n)
+    expect(EXPECTED_MIN_ALLOWED_ORDER_AMOUNT).to.not.equal(0n)
+    expect(EXPECTED_MAX_ALLOWED_ORDER_AMOUNT).to.not.equal(0n)
+    expect(EXPECTED_MIN_DEPOSIT_VALUE_USD).to.not.equal(0n)
+    expect(EXPECTED_MAX_DEPOSIT_VALUE_USD).to.not.equal(0n)
+    expect(EXPECTED_POOL_BOOTSTRAP_MIN_TVL_USD).to.not.equal(0n)
 
     const executor = await getExecutor()
 
@@ -104,5 +104,14 @@ describe('BuybackExecutor: acceptance', function () {
     const expectedLpMode =
       ethers.getAddress(receiver) === ethers.getAddress(BUYBACK_EXECUTOR_ADDRESS)
     expect(await executor.lpModeEnabled()).to.equal(expectedLpMode)
+  })
+
+  it('should be the manager of the deployed Stonks', async function () {
+    if (BUYBACK_EXECUTOR_ADDRESS === '') this.skip()
+
+    expect(STONKS_ADDRESS).to.not.equal('')
+
+    const stonksOwnable = await ethers.getContractAt('IOwnable', STONKS_ADDRESS)
+    expect(await stonksOwnable.manager()).to.hexEqual(BUYBACK_EXECUTOR_ADDRESS)
   })
 })

@@ -98,7 +98,14 @@ describe('BuybackExecutor — deployment', function () {
 
   describe('Curve coin validation:', function () {
     it('should accept the pool when coins(0) == ldo and coins(1) == wstEth', async function () {
-      const { signers, params } = await loadFixture(deployBuybackExecutorTreasuryMode)
+      const { stubs, signers, params } = await loadFixture(deployBuybackExecutorTreasuryMode)
+      // The constructor requires the executor to be the Stonks manager. Point the stub at the
+      // address this redeploy lands on.
+      const predictedExecutorAddress = ethers.getCreateAddress({
+        from: await signers.deployer.getAddress(),
+        nonce: await signers.deployer.getNonce(),
+      })
+      await stubs.stonks.connect(signers.admin).setManager(predictedExecutorAddress)
       const executor = await deployHarness(signers, params)
       await executor.waitForDeployment()
       expect(await executor.CURVE_POOL_AND_TOKEN()).to.equal(params.curvePoolAndToken)
@@ -326,6 +333,43 @@ describe('BuybackExecutor — deployment', function () {
       await expect(deployHarness(signers, params))
         .to.be.revertedWithCustomError(buybackExecutor, 'InvalidStonksReceiver')
         .withArgs(params.stonks, strangerAddress)
+    })
+
+    it('should revert InvalidStonksTokenPair when stonks sells a token other than stETH', async function () {
+      const { buybackExecutor, stubs, signers, params } = await loadFixture(
+        deployBuybackExecutorTreasuryMode
+      )
+      const strangerAddress = await signers.stranger.getAddress()
+      await stubs.stonks.connect(signers.admin).setTokenPair(strangerAddress, params.ldo)
+
+      await expect(deployHarness(signers, params))
+        .to.be.revertedWithCustomError(buybackExecutor, 'InvalidStonksTokenPair')
+        .withArgs(strangerAddress, params.ldo)
+    })
+
+    it('should revert InvalidStonksTokenPair when stonks buys a token other than LDO', async function () {
+      const { buybackExecutor, stubs, signers, params } = await loadFixture(
+        deployBuybackExecutorTreasuryMode
+      )
+      const strangerAddress = await signers.stranger.getAddress()
+      const stEthAddress = await stubs.stEth.getAddress()
+      await stubs.stonks.connect(signers.admin).setTokenPair(stEthAddress, strangerAddress)
+
+      await expect(deployHarness(signers, params))
+        .to.be.revertedWithCustomError(buybackExecutor, 'InvalidStonksTokenPair')
+        .withArgs(stEthAddress, strangerAddress)
+    })
+
+    it('should revert InvalidStonksManager when the stonks manager is not the executor', async function () {
+      const { buybackExecutor, stubs, signers, params } = await loadFixture(
+        deployBuybackExecutorTreasuryMode
+      )
+      const strangerAddress = await signers.stranger.getAddress()
+      await stubs.stonks.connect(signers.admin).setManager(strangerAddress)
+
+      await expect(deployHarness(signers, params))
+        .to.be.revertedWithCustomError(buybackExecutor, 'InvalidStonksManager')
+        .withArgs(strangerAddress)
     })
   })
 

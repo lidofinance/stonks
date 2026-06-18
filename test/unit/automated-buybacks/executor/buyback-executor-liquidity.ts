@@ -7,45 +7,27 @@ import {
   fundExecutor,
   setOraclePrices,
   setOracleFailure,
-  setPoolEma,
   setPoolReserves,
+  makePoolDivergent,
   OracleFailureMode,
   PRICE_SCALE,
   DEFAULT_BOUNDS,
   MANAGER_ROLE,
   missingRoleMessage,
+  PAUSED_REVERT,
+  REENTRANCY_REVERT,
+  BALANCED_LDO,
+  BALANCED_STETH,
+  DEEP_LDO_RESERVE,
+  BOUNDARY_LDO_RESERVE,
+  LP_BALANCE,
+  WITHDRAWN_LDO,
+  WITHDRAWN_WSTETH,
   BuybackContext,
 } from '../../../helpers/buyback-executor'
 
-// OZ v4.9.3 reverts with strings, not the v5 custom errors `EnforcedPause` and
-// `ReentrancyGuardReentrantCall`.
-const PAUSED_REVERT = 'Pausable: paused'
-const REENTRANCY_REVERT = 'ReentrancyGuard: reentrant call'
-
-// Balanced funding: equal USD on both legs at the default prices, so a single deposit consumes
-// both balances fully and nothing carries over. depositValueUsd lands at 7000e18, inside the bounds.
-const BALANCED_LDO = 1750n * PRICE_SCALE
-const BALANCED_STETH = 1n * PRICE_SCALE
-
 // Deterministic pool mint, decoupled from the deposit legs, for the return-value assertion.
 const LP_MINT = 777n * PRICE_SCALE
-
-// Deep pool reserves put the TVL (100000e18) above the 50000e18 bootstrap floor so the gate fires.
-const DEEP_LDO_RESERVE = 50_000n * PRICE_SCALE
-// Boundary reserves put the TVL at exactly 50000e18, read back and pinned as the floor in the tests.
-const BOUNDARY_LDO_RESERVE = 25_000n * PRICE_SCALE
-
-// removeLiquidity setup: held LP and the amounts the pool returns on withdrawal.
-const LP_BALANCE = 1000n * PRICE_SCALE
-const WITHDRAWN_LDO = 500n * PRICE_SCALE
-const WITHDRAWN_WSTETH = 10n * PRICE_SCALE
-
-// A 5% pool-EMA deviation from the oracle ratio, scoring 500 bps, well past the 100 bps default
-// tolerance. Derived from the configured EMA so it holds regardless of the default prices.
-async function makePoolDivergent(ctx: BuybackContext): Promise<void> {
-  const currentEma = await ctx.stubs.pool.priceOracleValue()
-  await setPoolEma(ctx, (currentEma * 105n) / 100n)
-}
 
 async function fundBalanced(ctx: BuybackContext): Promise<void> {
   await fundExecutor(ctx, { ldo: BALANCED_LDO, stEth: BALANCED_STETH })
@@ -239,9 +221,17 @@ describe('BuybackExecutor — liquidity', function () {
         const stEthFunded = 1n * PRICE_SCALE
         await fundExecutor(ctx, { ldo: ldoFunded, stEth: stEthFunded })
 
+        const divergence = await ctx.harness.evaluatePoolPriceDivergence()
+        const expected = await ctx.harness.computeBalancedAmounts(
+          ldoFunded,
+          stEthFunded,
+          divergence.ldoUsdPrice,
+          divergence.stEthUsdPrice
+        )
+
         const evaluation = await ctx.harness.evaluateAddLiquidityGates()
         expect(evaluation.ldoAmount).to.equal(ldoFunded)
-        expect(evaluation.stEthAmount).to.be.lessThan(stEthFunded)
+        expect(evaluation.stEthAmount).to.equal(expected.stEthAmount)
 
         const executorAddress = await ctx.buybackExecutor.getAddress()
         await ctx.buybackExecutor.connect(ctx.signers.stranger).addLiquidity()
@@ -611,9 +601,17 @@ describe('BuybackExecutor — liquidity', function () {
       const stEthFunded = 1n * PRICE_SCALE
       await fundExecutor(ctx, { ldo: ldoFunded, stEth: stEthFunded })
 
+      const divergence = await ctx.harness.evaluatePoolPriceDivergence()
+      const expected = await ctx.harness.computeBalancedAmounts(
+        ldoFunded,
+        stEthFunded,
+        divergence.ldoUsdPrice,
+        divergence.stEthUsdPrice
+      )
+
       const [ldoAmount, stEthAmount] = await ctx.buybackExecutor.getAvailableLiquidity()
       expect(ldoAmount).to.equal(ldoFunded)
-      expect(stEthAmount).to.be.lessThan(stEthFunded)
+      expect(stEthAmount).to.equal(expected.stEthAmount)
     })
 
     it('should size by the stETH side when the stETH leg holds less USD', async function () {
@@ -622,9 +620,17 @@ describe('BuybackExecutor — liquidity', function () {
       const stEthFunded = PRICE_SCALE / 1000n
       await fundExecutor(ctx, { ldo: ldoFunded, stEth: stEthFunded })
 
+      const divergence = await ctx.harness.evaluatePoolPriceDivergence()
+      const expected = await ctx.harness.computeBalancedAmounts(
+        ldoFunded,
+        stEthFunded,
+        divergence.ldoUsdPrice,
+        divergence.stEthUsdPrice
+      )
+
       const [ldoAmount, stEthAmount] = await ctx.buybackExecutor.getAvailableLiquidity()
       expect(stEthAmount).to.equal(stEthFunded)
-      expect(ldoAmount).to.be.lessThan(ldoFunded)
+      expect(ldoAmount).to.equal(expected.ldoAmount)
     })
   })
 

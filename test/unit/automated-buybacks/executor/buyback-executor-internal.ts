@@ -1,8 +1,6 @@
 import { expect } from 'chai'
-import { ethers } from 'hardhat'
 import { loadFixture } from '@nomicfoundation/hardhat-toolbox/network-helpers'
 
-import { OrderStub__factory } from '../../../../typechain-types'
 import {
   deployBuybackExecutorWithStubs,
   deployBuybackExecutorTreasuryMode,
@@ -12,49 +10,21 @@ import {
   setPoolEma,
   setPoolReserves,
   setShareRate,
+  setPoolEmaLdoPerStEth,
   placeTrackedOrder,
   expireOrder,
+  recoverTokenFromCalls,
   OracleFailureMode,
   PRICE_SCALE,
   DEFAULT_BOUNDS,
-  BuybackContext,
+  ADD_LIQUIDITY_STATUS as STATUS,
+  DEFAULT_LDO_USD as LDO_USD,
+  DEFAULT_STETH_USD as STETH_USD,
+  DEFAULT_ORACLE_LDO_PER_STETH as ORACLE_LDO_PER_STETH,
+  DEEP_LDO_RESERVE,
+  BALANCED_LDO,
+  BALANCED_STETH,
 } from '../../../helpers/buyback-executor'
-
-// AddLiquidityStatus enum, in declaration order. ethers returns the value as a bigint.
-const STATUS = {
-  ZeroLdoBalance: 0n,
-  ZeroStEthBalance: 1n,
-  OraclePriceUnavailable: 2n,
-  InvalidOraclePrice: 3n,
-  PoolPriceDivergenceTooHigh: 4n,
-  DepositValueBelowMinimum: 5n,
-  NotInLpMode: 6n,
-  Eligible: 7n,
-} as const
-
-// Oracle USD prices the helper configures by default. Held here for the exact-value assertions.
-const LDO_USD = 2n * PRICE_SCALE
-const STETH_USD = 3500n * PRICE_SCALE
-
-// Oracle LDO/stETH ratio = mulDiv(stEthUsd, PRICE_SCALE, ldoUsd) = 1750e18 at the default prices.
-const ORACLE_LDO_PER_STETH = (STETH_USD * PRICE_SCALE) / LDO_USD
-
-// Deep reserves put the pool TVL at 100000e18, above the 50000e18 bootstrap floor, so the gate fires.
-const DEEP_LDO_RESERVE = 50_000n * PRICE_SCALE
-
-const BALANCED_LDO = 1750n * PRICE_SCALE
-const BALANCED_STETH = 1n * PRICE_SCALE
-
-// price_oracle is LDO per wstETH; the contract divides by the share rate to get LDO per stETH.
-// This sets price_oracle so the converted pool EMA equals the target LDO/stETH value.
-async function setPoolEmaLdoPerStEth(ctx: BuybackContext, ldoPerStEth: bigint): Promise<void> {
-  const shareRate = await ctx.stubs.wstEth.stEthPerToken()
-  await setPoolEma(ctx, (ldoPerStEth * shareRate) / PRICE_SCALE)
-}
-
-async function recoverTokenFromCalls(orderAddress: string): Promise<bigint> {
-  return OrderStub__factory.connect(orderAddress, ethers.provider).recoverTokenFromCalls()
-}
 
 describe('BuybackExecutor — internal math', function () {
   describe('_evaluatePoolPriceDivergence', function () {

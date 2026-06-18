@@ -2,29 +2,35 @@ import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { loadFixture } from '@nomicfoundation/hardhat-toolbox/network-helpers'
 
-import { StonksStub__factory, OrderStub__factory } from '../../../../typechain-types'
 import {
   deployBuybackExecutorWithStubs,
   deployBuybackExecutorTreasuryMode,
+  deployStonksStub,
   fundExecutor,
-  setPoolEma,
   setPoolReserves,
+  makePoolDivergent,
   placeTrackedOrder,
   expireOrder,
+  recoverTokenFromCalls,
   PRICE_SCALE,
   DEFAULT_BOUNDS,
   DEFAULT_ORDER_DURATION,
   DEFAULT_ADMIN_ROLE,
   EMERGENCY_ROLE,
   missingRoleMessage,
+  PAUSED_REVERT,
+  NOT_PAUSED_REVERT,
+  BALANCED_LDO,
+  BALANCED_STETH,
+  DEEP_LDO_RESERVE,
+  POOL_TVL_AT_DEEP_RESERVE,
+  LP_BALANCE,
+  WITHDRAWN_LDO,
+  WITHDRAWN_WSTETH,
   BuybackContext,
 } from '../../../helpers/buyback-executor'
 
 const ZERO_ADDRESS = ethers.ZeroAddress
-
-// OZ v4.9.3 reverts with strings, not the v5 custom errors.
-const PAUSED_REVERT = 'Pausable: paused'
-const NOT_PAUSED_REVERT = 'Pausable: not paused'
 
 const MIN_ORDER = DEFAULT_BOUNDS.minAllowedOrderAmount // 1e18
 const MAX_ORDER = DEFAULT_BOUNDS.maxAllowedOrderAmount // 1000e18
@@ -43,38 +49,14 @@ const SWAPPED_ORDER_DURATION = 7200n
 // Residual stETH left on a swept order, above the 10 wei recovery threshold.
 const ORDER_RESIDUAL = 1000n
 
-// Balanced LDO/stETH funding at the default prices, both legs worth equal USD.
-const BALANCED_LDO = 1750n * PRICE_SCALE
-const BALANCED_STETH = 1n * PRICE_SCALE
-
-// LDO reserve only, valuing the pool TVL at 100000e18 at the default LDO price, above DEFAULT_BOOTSTRAP.
-const DEEP_LDO_RESERVE = 50_000n * PRICE_SCALE
-const POOL_TVL_AT_DEEP_RESERVE = 100_000n * PRICE_SCALE
-
-// removeLiquidity setup: held LP and the amounts the pool returns on withdrawal.
-const LP_BALANCE = 1000n * PRICE_SCALE
-const WITHDRAWN_LDO = 500n * PRICE_SCALE
-const WITHDRAWN_WSTETH = 10n * PRICE_SCALE
-
 async function deployStonks(
   ctx: BuybackContext,
   receiver: string,
-  duration: bigint = DEFAULT_ORDER_DURATION
+  duration: bigint = DEFAULT_ORDER_DURATION,
+  overrides: { tokenFrom?: string; tokenTo?: string; manager?: string } = {}
 ): Promise<string> {
-  const stonks = await new StonksStub__factory(ctx.signers.deployer).deploy()
-  await stonks.connect(ctx.signers.admin).setReceiver(receiver)
-  await stonks.connect(ctx.signers.admin).setOrderDuration(duration)
+  const stonks = await deployStonksStub(ctx, { receiver, duration, ...overrides })
   return stonks.getAddress()
-}
-
-async function recoverTokenFromCalls(orderAddress: string): Promise<bigint> {
-  return OrderStub__factory.connect(orderAddress, ethers.provider).recoverTokenFromCalls()
-}
-
-// Pushes the pool EMA 5% off the oracle ratio, scoring 500 bps past the 100 bps tolerance.
-async function makePoolDivergent(ctx: BuybackContext): Promise<void> {
-  const currentEma = await ctx.stubs.pool.priceOracleValue()
-  await setPoolEma(ctx, (currentEma * 105n) / 100n)
 }
 
 describe('BuybackExecutor — admin, mode, setters', function () {
@@ -107,6 +89,53 @@ describe('BuybackExecutor — admin, mode, setters', function () {
       )
         .to.be.revertedWithCustomError(ctx.buybackExecutor, 'InvalidStonksReceiver')
         .withArgs(newStonks, strangerAddress)
+    })
+
+    it('should revert InvalidStonksTokenPair when the new Stonks sells a token other than stETH', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const executorAddress = await ctx.buybackExecutor.getAddress()
+      const strangerAddress = await ctx.signers.stranger.getAddress()
+      const ldoAddress = await ctx.stubs.ldo.getAddress()
+      const newStonks = await deployStonks(ctx, executorAddress, DEFAULT_ORDER_DURATION, {
+        tokenFrom: strangerAddress,
+      })
+
+      await expect(
+        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
+      )
+        .to.be.revertedWithCustomError(ctx.buybackExecutor, 'InvalidStonksTokenPair')
+        .withArgs(strangerAddress, ldoAddress)
+    })
+
+    it('should revert InvalidStonksTokenPair when the new Stonks buys a token other than LDO', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const executorAddress = await ctx.buybackExecutor.getAddress()
+      const strangerAddress = await ctx.signers.stranger.getAddress()
+      const stEthAddress = await ctx.stubs.stEth.getAddress()
+      const newStonks = await deployStonks(ctx, executorAddress, DEFAULT_ORDER_DURATION, {
+        tokenTo: strangerAddress,
+      })
+
+      await expect(
+        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
+      )
+        .to.be.revertedWithCustomError(ctx.buybackExecutor, 'InvalidStonksTokenPair')
+        .withArgs(stEthAddress, strangerAddress)
+    })
+
+    it('should revert InvalidStonksManager when the new Stonks manager is not this contract', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const executorAddress = await ctx.buybackExecutor.getAddress()
+      const strangerAddress = await ctx.signers.stranger.getAddress()
+      const newStonks = await deployStonks(ctx, executorAddress, DEFAULT_ORDER_DURATION, {
+        manager: strangerAddress,
+      })
+
+      await expect(
+        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
+      )
+        .to.be.revertedWithCustomError(ctx.buybackExecutor, 'InvalidStonksManager')
+        .withArgs(strangerAddress)
     })
 
     it('should derive LP mode and refresh stonks and order duration when the receiver is this contract', async function () {

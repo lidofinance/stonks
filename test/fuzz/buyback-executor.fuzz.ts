@@ -5,42 +5,26 @@ import fc from 'fast-check'
 import {
   deployBuybackExecutorWithStubs,
   fundExecutor,
-  setPoolEma,
   setPoolReserves,
+  setPoolEmaLdoPerStEth,
   PRICE_SCALE,
   DEFAULT_BOUNDS,
-  BuybackContext,
+  ADD_LIQUIDITY_STATUS as STATUS,
+  DEFAULT_LDO_USD as LDO_USD,
+  DEFAULT_STETH_USD as STETH_USD,
+  DEFAULT_ORACLE_LDO_PER_STETH as ORACLE_LDO_PER_STETH,
+  mulDiv,
+  ceilDiv,
+  saturatedSub,
 } from '../helpers/buyback-executor'
 
 const NUM_RUNS = 150
-
-// AddLiquidityStatus values, in declaration order. ethers returns the enum as a bigint.
-const STATUS = {
-  ZeroLdoBalance: 0n,
-  ZeroStEthBalance: 1n,
-  PoolPriceDivergenceTooHigh: 4n,
-  DepositValueBelowMinimum: 5n,
-  Eligible: 7n,
-} as const
-
-// Default oracle USD prices the stub fixture configures.
-const LDO_USD = 2n * PRICE_SCALE
-const STETH_USD = 3500n * PRICE_SCALE
-
-// Oracle LDO/stETH ratio = mulDiv(stEthUsd, PRICE_SCALE, ldoUsd) = 1750e18 at the default prices.
-const ORACLE_LDO_PER_STETH = (STETH_USD * PRICE_SCALE) / LDO_USD
 
 const MAX_BASIS_POINTS = 10_000n
 const TOLERANCE_BPS = DEFAULT_BOUNDS.poolPriceDivergenceToleranceBps
 const BOOTSTRAP_MIN_TVL = DEFAULT_BOUNDS.poolBootstrapMinTvlUsd
 const MIN_DEPOSIT_VALUE = DEFAULT_BOUNDS.minDepositValueUsd
 const MAX_DEPOSIT_VALUE = DEFAULT_BOUNDS.maxDepositValueUsd
-
-// Reference integer math mirroring the contract's Math library, all floor unless noted.
-const mulDiv = (a: bigint, b: bigint, denominator: bigint): bigint => (a * b) / denominator
-const ceilDiv = (numerator: bigint, denominator: bigint): bigint =>
-  (numerator + denominator - 1n) / denominator
-const saturatedSub = (a: bigint, b: bigint): bigint => (a > b ? a - b : 0n)
 
 interface BalancedPair {
   ldoAmount: bigint
@@ -100,12 +84,6 @@ function evaluateGatesReference(ldoBalance: bigint, stEthBalance: bigint): Balan
   }
 
   return { status: STATUS.Eligible, ldoAmount, stEthAmount, depositValueUsd: balanced.depositValueUsd }
-}
-
-// price_oracle is LDO per wstETH; the contract divides by the share rate to get LDO per stETH.
-async function setPoolEmaLdoPerStEth(ctx: BuybackContext, ldoPerStEth: bigint): Promise<void> {
-  const shareRate = await ctx.stubs.wstEth.stEthPerToken()
-  await setPoolEma(ctx, (ldoPerStEth * shareRate) / PRICE_SCALE)
 }
 
 describe('BuybackExecutor - Fuzz Tests', function () {

@@ -253,6 +253,9 @@ contract StonksStub {
     error MissingStonksRights();
 
     address public receiver;
+    address public manager;
+    address public tokenFrom;
+    address public tokenTo;
     uint256 public orderDurationSeconds;
     uint256 public estimatedOutput;
     bool public revertEstimate;
@@ -270,6 +273,15 @@ contract StonksStub {
 
     function setReceiver(address receiver_) external {
         receiver = receiver_;
+    }
+
+    function setManager(address manager_) external {
+        manager = manager_;
+    }
+
+    function setTokenPair(address tokenFrom_, address tokenTo_) external {
+        tokenFrom = tokenFrom_;
+        tokenTo = tokenTo_;
     }
 
     function setOrderDuration(uint256 orderDurationSeconds_) external {
@@ -302,6 +314,10 @@ contract StonksStub {
 
     function ORDER_DURATION_IN_SECONDS() external view returns (uint256) {
         return orderDurationSeconds;
+    }
+
+    function getOrderParameters() external view returns (address, address, uint256) {
+        return (tokenFrom, tokenTo, orderDurationSeconds);
     }
 
     function isCreationPaused() external view returns (bool) {
