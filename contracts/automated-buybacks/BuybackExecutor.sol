@@ -736,7 +736,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     }
 
     /**
-     * @notice Validates and sets the pool-EMA vs oracle divergence tolerance.
+     * @notice Validates and sets the minimum order size against the current maximum.
      * @param  minAllowedOrderAmount_ New minimum. Non-zero and strictly below `maxAllowedOrderAmount`.
      */
     function _setMinAllowedOrderAmount(uint128 minAllowedOrderAmount_) internal {
