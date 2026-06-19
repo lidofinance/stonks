@@ -48,7 +48,6 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         uint128 minDepositValueUsd;
         uint128 maxDepositValueUsd;
         uint128 poolBootstrapMinTvlUsd;
-        address stonks;
     }
 
     /// @notice `addLiquidity` precondition result. Only `Eligible` permits the deposit.
@@ -251,26 +250,16 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
 
     /**
      * @notice Initializes immutables, tolerances, roles, and operating mode.
+     * @dev    Stonks and operating mode should be set as a separate call during governance procedures to avoid circular dependencies.
      * @param  initParams_ See `InitParams`.
      */
     constructor(
         InitParams memory initParams_
     ) AssetRecovererACL(initParams_.admin, initParams_.treasury) {
-        if (initParams_.wstEth == address(0)) {
-            revert InvalidWstEthAddress();
-        }
-
-        if (initParams_.ldo == address(0)) {
-            revert InvalidLdoAddress();
-        }
-
-        if (initParams_.oracleRouter == address(0)) {
-            revert InvalidOracleRouterAddress();
-        }
-
-        if (initParams_.curvePoolAndToken == address(0)) {
-            revert InvalidCurvePoolAndTokenAddress();
-        }
+        if (initParams_.wstEth == address(0)) revert InvalidWstEthAddress();
+        if (initParams_.ldo == address(0)) revert InvalidLdoAddress();
+        if (initParams_.oracleRouter == address(0)) revert InvalidOracleRouterAddress();
+        if (initParams_.curvePoolAndToken == address(0)) revert InvalidCurvePoolAndTokenAddress();
 
         address coin0 = ICurvePool(initParams_.curvePoolAndToken).coins(0);
         address coin1 = ICurvePool(initParams_.curvePoolAndToken).coins(1);
@@ -288,9 +277,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         //          https://docs.curve.finance/developer/amm/stableswap-ng/pools/oracles#price_oracle
         try pool.price_oracle() returns (uint256 poolPrice) {
             // Check if the pool price is non-zero, which indicates that the pool is initialized and has a valid price oracle.
-            if (poolPrice == 0) {
-                revert InvalidCurvePoolPriceOracle();
-            }
+            if (poolPrice == 0) revert InvalidCurvePoolPriceOracle();
         } catch {
             // If the call to `price_oracle` reverts, it indicates that the pool does not have the expected signature, which means it is not the intended TwocryptoNG pool.
             revert InvalidCurvePoolPriceOracle();
@@ -298,9 +285,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         WSTETH = IWstETH(initParams_.wstEth);
 
         address stEthAddress = WSTETH.stETH();
-        if (stEthAddress == address(0)) {
-            revert InvalidStEthAddress();
-        }
+        if (stEthAddress == address(0)) revert InvalidStEthAddress();
 
         STETH = IStETH(stEthAddress);
         LDO = IERC20(initParams_.ldo);
@@ -315,10 +300,6 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         _setMaxDepositValueUsd(initParams_.maxDepositValueUsd);
         _setMinDepositValueUsd(initParams_.minDepositValueUsd);
         _setPoolBootstrapMinTvlUsd(initParams_.poolBootstrapMinTvlUsd);
-
-        // `_setStonksAndOperatingMode` validates the Stonks address and its receiver to set the operating mode, so the Stonks
-        // instance should be deployed using the CREATE2-predicted executor address before this constructor is called.
-        _setStonksAndOperatingMode(initParams_.stonks);
 
         // `wrap` pulls stETH through wstETH, so grant a one-time max approval here.
         IERC20(address(STETH)).forceApprove(address(WSTETH), type(uint256).max);
@@ -344,26 +325,12 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         AddLiquidityEvaluation memory evaluation = _evaluateAddLiquidityGates();
         AddLiquidityStatus status = evaluation.status;
 
-        if (status == AddLiquidityStatus.NotInLpMode) {
-            revert NotInLpMode();
-        }
-
-        if (status == AddLiquidityStatus.ZeroLdoBalance) {
-            revert ZeroLdoBalance();
-        }
-
-        if (status == AddLiquidityStatus.ZeroStEthBalance) {
-            revert ZeroStEthBalance();
-        }
-
-        if (status == AddLiquidityStatus.OraclePriceUnavailable) {
-            revert OraclePriceUnavailable();
-        }
-
-        if (status == AddLiquidityStatus.InvalidOraclePrice) {
-            revert InvalidOraclePrice();
-        }
-
+        if (status == AddLiquidityStatus.NotInLpMode) revert NotInLpMode();
+        if (status == AddLiquidityStatus.ZeroLdoBalance) revert ZeroLdoBalance();
+        if (status == AddLiquidityStatus.ZeroStEthBalance) revert ZeroStEthBalance();
+        if (status == AddLiquidityStatus.OraclePriceUnavailable) revert OraclePriceUnavailable();
+        if (status == AddLiquidityStatus.InvalidOraclePrice) revert InvalidOraclePrice();
+        if (status == AddLiquidityStatus.InvalidOraclePrice) revert InvalidOraclePrice();
         if (status == AddLiquidityStatus.PoolPriceDivergenceTooHigh) {
             revert PoolPriceDivergenceTooHigh(
                 evaluation.poolEmaLdoPerStEth,
@@ -372,7 +339,6 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
                 poolPriceDivergenceToleranceBps
             );
         }
-
         if (status == AddLiquidityStatus.DepositValueBelowMinimum) {
             revert DepositValueBelowMinimum(evaluation.depositValueUsd, minDepositValueUsd);
         }
@@ -408,14 +374,10 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         onlyRole(MANAGER_ROLE)
         returns (uint256 ldoAmount, uint256 stEthAmount)
     {
-        if (lpAmount_ == 0) {
-            revert ZeroLpAmount();
-        }
+        if (lpAmount_ == 0) revert ZeroLpAmount();
 
         uint256 lpBalance = getLpTokenBalance();
-        if (lpBalance < lpAmount_) {
-            revert InsufficientLpTokenBalance(lpAmount_, lpBalance);
-        }
+        if (lpBalance < lpAmount_) revert InsufficientLpTokenBalance(lpAmount_, lpBalance);
 
         uint256[2] memory withdrawn = CURVE_POOL_AND_TOKEN.remove_liquidity(
             lpAmount_,
@@ -552,7 +514,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     /**
      * @notice Updates the maximum allowed pool-EMA vs oracle divergence.
      * @param  poolPriceDivergenceToleranceBps_ New tolerance in basis points.
-     *         In `(0, MAX_POOL_DIVERGENCE_TOLERANCE_BPS]`.
+     *         In `(0, MAX_POOL_DIVERGENCE_TOLERANCE_BPS)`.
      */
     function setPoolPriceDivergenceToleranceBps(
         uint256 poolPriceDivergenceToleranceBps_
@@ -605,7 +567,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     /**
      * @notice Updates the pool TVL target at or above which the divergence gate is enforced.
      * @param  poolBootstrapMinTvlUsd_ New minimum pool TVL (bootstrap threshold) in USD scaled to 1e18
-     *         In `(0, MAX_POOL_BOOTSTRAP_MIN_TVL_USD]`.
+     *         In `(0, MAX_POOL_BOOTSTRAP_MIN_TVL_USD)`.
      */
     function setPoolBootstrapMinTvlUsd(
         uint128 poolBootstrapMinTvlUsd_
@@ -632,20 +594,13 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         returns (uint256 ldoAmount, uint256 stEthAmount)
     {
         uint256 ldoBalance = LDO.balanceOf(address(this));
-        if (ldoBalance == 0) {
-            return (0, 0);
-        }
+        if (ldoBalance == 0) return (0, 0);
 
         uint256 stEthBalance = STETH.balanceOf(address(this));
-        if (stEthBalance == 0) {
-            return (0, 0);
-        }
+        if (stEthBalance == 0) return (0, 0);
 
         (bool pricesValid, uint256 ldoUsdPrice, uint256 stEthUsdPrice) = _tryGetLdoStEthUsdPrices();
-
-        if (!pricesValid) {
-            return (0, 0);
-        }
+        if (!pricesValid) return (0, 0);
 
         (ldoAmount, stEthAmount, ) = _computeBalancedAmounts(
             ldoBalance,
@@ -681,8 +636,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         }
 
         uint256 stonksBalance = STETH.balanceOf(address(currentStonks));
-        status.sellAmount = Math.min(stonksBalance, maxAllowedOrderAmount);
 
+        status.sellAmount = Math.min(stonksBalance, maxAllowedOrderAmount);
         if (status.sellAmount >= minAllowedOrderAmount) {
             try currentStonks.estimateTradeOutput(status.sellAmount) returns (uint256 estimate) {
                 status.estimatedBuyAmount = estimate;
@@ -828,13 +783,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
      *         mode when it is `TREASURY`. Any other receiver reverts.
      */
     function _setStonksAndOperatingMode(address stonks_) internal {
-        if (stonks_ == address(0)) {
-            revert InvalidStonksAddress();
-        }
-
-        if (stonks_ == address(stonks)) {
-            return;
-        }
+        if (stonks_ == address(0)) revert InvalidStonksAddress();
+        if (stonks_ == address(stonks)) return;
 
         address receiver = IStonks(stonks_).RECEIVER();
 
@@ -851,9 +801,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         }
 
         address stonksManager = IOwnable(stonks_).manager();
-        if (stonksManager != address(this)) {
-            revert InvalidStonksManager(stonksManager);
-        }
+        if (stonksManager != address(this)) revert InvalidStonksManager(stonksManager);
 
         bool previousLpModeEnabled = lpModeEnabled;
         address previousStonks = address(stonks);
@@ -885,13 +833,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
      */
     function _sweepExpiredOrder() internal {
         address trackedOrderAddress = lastOrderAddress;
-        if (trackedOrderAddress == address(0)) {
-            return;
-        }
 
-        if (block.timestamp <= lastOrderValidTo) {
-            return;
-        }
+        if (trackedOrderAddress == address(0)) return;
+        if (block.timestamp <= lastOrderValidTo) return;
 
         _setLastOrderTrackingData(address(0), 0);
 
@@ -933,8 +877,6 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         // therefore it will always use the state the deposit mints against.
         // So it will always pass internally regardless of the estimation and setting it to the
         // trivial value of 1 is cheaper and has the same effect.
-        // The slippage check is the EMA divergence gate in `_evaluateAddLiquidityGates`, which
-        // compares the pool to the oracle across blocks and resists in-block manipulation.
         lpTokensMinted = CURVE_POOL_AND_TOKEN.add_liquidity(amounts, 1);
     }
 
@@ -955,9 +897,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
             uint256 ldoPrice,
             uint256 stEthPrice
         ) {
-            if (ldoPrice != 0 && stEthPrice != 0) {
-                return (true, ldoPrice, stEthPrice);
-            }
+            if (ldoPrice != 0 && stEthPrice != 0) return (true, ldoPrice, stEthPrice);
         } catch {}
     }
 
@@ -979,9 +919,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
                 uint256 stEthUsdPrice
             ) = _tryGetLdoStEthUsdPrices();
 
-            if (!pricesValid) {
-                return 0;
-            }
+            if (!pricesValid) return 0;
 
             ldoInStEth = Math.mulDiv(ldoBalance, ldoUsdPrice, stEthUsdPrice);
         }
@@ -1030,9 +968,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         bool pricesValid;
         (pricesValid, ldoUsdPrice, stEthUsdPrice) = _tryGetLdoStEthUsdPrices();
 
-        if (!pricesValid) {
-            return (AddLiquidityStatus.OraclePriceUnavailable, 0, 0, 0, 0, 0);
-        }
+        if (!pricesValid) return (AddLiquidityStatus.OraclePriceUnavailable, 0, 0, 0, 0, 0);
 
         // LDO per stETH price from the OracleRouter
         oracleLdoPerStEth = Math.mulDiv(stEthUsdPrice, PRICE_UNIT, ldoUsdPrice);
