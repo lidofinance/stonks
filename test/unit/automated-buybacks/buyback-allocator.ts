@@ -1,0 +1,409 @@
+import { ethers } from 'hardhat'
+import { expect } from 'chai'
+import { Signer } from 'ethers'
+import { takeSnapshot, SnapshotRestorer, time } from '@nomicfoundation/hardhat-network-helpers'
+
+import {
+  BuybackAllocator,
+  BuybackAllocator__factory,
+  StEthTokenStub,
+  StEthTokenStub__factory,
+  OracleRouterUsdStub,
+  OracleRouterUsdStub__factory,
+  RevenueSourceStub,
+  RevenueSourceStub__factory,
+  ExecutorStub,
+  ExecutorStub__factory,
+} from '../../../typechain-types'
+
+// 1 USD == 1 stETH (both 18 decimals), so USD and stETH amounts are numerically equal.
+const PRICE = ethers.parseEther('1')
+const ONE_DAY = 86_400n
+
+const DAILY_CAP = ethers.parseEther('1000000')
+const YEARLY_CAP = ethers.parseEther('10000000')
+const MIN_SPEND = ethers.parseEther('1')
+const SHARE_50 = 5000n
+const SHARE_100 = 10000n
+
+const usd = (n: string) => ethers.parseEther(n)
+
+// AllocationStatus enum order, mirrored from the contract.
+enum AllocationStatus {
+  Eligible,
+  NoAvailableBudget,
+  QuoteUnavailable,
+  StEthPriceBelowMin,
+  AllocationBelowMin,
+  NotActivated,
+}
+
+enum OracleFailureMode {
+  None = 0,
+  CustomError = 1,
+}
+
+interface DeployOpts {
+  share?: bigint
+  dailyCap?: bigint
+  yearlyCap?: bigint
+  minSpend?: bigint
+}
+
+describe('BuybackAllocator — accumulated budget', function () {
+  let admin: Signer
+  let adminAddr: string
+
+  let allocator: BuybackAllocator
+  let stEth: StEthTokenStub
+  let oracle: OracleRouterUsdStub
+  let executor: ExecutorStub
+  let source: RevenueSourceStub
+
+  let topSnapshot: SnapshotRestorer
+  let snapshot: SnapshotRestorer
+
+  before(async function () {
+    topSnapshot = await takeSnapshot()
+    ;[admin] = await ethers.getSigners()
+    adminAddr = await admin.getAddress()
+  })
+
+  after(async function () {
+    await topSnapshot.restore()
+  })
+
+  async function deployAllocator(opts: DeployOpts = {}) {
+    stEth = await new StEthTokenStub__factory(admin).deploy()
+    oracle = await new OracleRouterUsdStub__factory(admin).deploy()
+    executor = await new ExecutorStub__factory(admin).deploy()
+    source = await new RevenueSourceStub__factory(admin).deploy()
+    await oracle.setUsdPrice(PRICE, PRICE)
+
+    allocator = await new BuybackAllocator__factory(admin).deploy({
+      admin: adminAddr,
+      treasury: adminAddr,
+      stEth: await stEth.getAddress(),
+      oracleRouter: await oracle.getAddress(),
+      executor: await executor.getAddress(),
+      dailyCapUSD: opts.dailyCap ?? DAILY_CAP,
+      yearlyCapUSD: opts.yearlyCap ?? YEARLY_CAP,
+      minStEthPriceUSD: 0n,
+      minSpendPerCallUSD: opts.minSpend ?? MIN_SPEND,
+      surplusShareBP: opts.share ?? SHARE_50,
+      revenueSources: [await source.getAddress()],
+    })
+    await allocator.waitForDeployment()
+  }
+
+  // Sets the source cumulative, then activates with the given reserve rate.
+  async function activateWith(cumulative: bigint, rate: bigint) {
+    await source.setCumulativeRevenueUSD(cumulative)
+    await allocator.activate(rate)
+  }
+
+  // Funds the allocator with stETH so eligible allocations can actually transfer.
+  async function fund(amount: bigint) {
+    await stEth.mint(await allocator.getAddress(), amount)
+  }
+
+  beforeEach(async function () {
+    snapshot = await takeSnapshot()
+  })
+
+  afterEach(async function () {
+    await snapshot.restore()
+  })
+
+  describe('activation:', function () {
+    it('records the strict revenue sum as the baseline and anchors the reserve at the next day', async function () {
+      await deployAllocator()
+      await activateWith(usd('1000'), usd('100'))
+
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('1000'))
+      expect(await allocator.budgetUSD()).to.equal(0n)
+
+      // Anchor is the start of the day after activation: activationTS (today midnight) + one day.
+      const activationTS = await allocator.activationTS()
+      expect(await allocator.reserveAnchorTS()).to.equal(activationTS + ONE_DAY)
+    })
+
+    it('reverts activation when a source is unreachable (strict sum)', async function () {
+      await deployAllocator()
+      await source.setReverting(true)
+      await expect(allocator.activate(0n)).to.be.reverted
+    })
+
+    it('leaves the activation day reserve-free', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(0n, usd('100'))
+
+      // Same day as activation (block.timestamp < anchor) → reserve is zero, so the full surplus banks.
+      await source.setCumulativeRevenueUSD(usd('500'))
+      await allocator.allocate() // balance is 0 → skips after checkpointing
+
+      expect(await allocator.budgetUSD()).to.equal(usd('500'))
+    })
+  })
+
+  describe('checkpoint banking (no reserve):', function () {
+    it('banks surplusShareBP of new revenue', async function () {
+      await deployAllocator({ share: SHARE_50 })
+      await activateWith(0n, 0n)
+
+      await source.setCumulativeRevenueUSD(usd('1000'))
+      await allocator.allocate() // skips (no balance), still checkpoints
+
+      expect(await allocator.budgetUSD()).to.equal(usd('500'))
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('1000'))
+    })
+
+    it('accumulates across successive checkpoints', async function () {
+      await deployAllocator({ share: SHARE_50 })
+      await activateWith(0n, 0n)
+
+      await source.setCumulativeRevenueUSD(usd('1000'))
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(usd('500'))
+
+      await source.setCumulativeRevenueUSD(usd('3000'))
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(usd('1500')) // +50% of the new 2000
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('3000'))
+    })
+  })
+
+  describe('reserve timeline:', function () {
+    it('charges one daily rate on the first full day', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(0n, usd('100'))
+      await source.setCumulativeRevenueUSD(usd('1000'))
+
+      const anchor = await allocator.reserveAnchorTS()
+      await time.setNextBlockTimestamp(anchor)
+      await allocator.allocate()
+
+      expect(await allocator.budgetUSD()).to.equal(usd('900')) // 1000 - 1*100
+    })
+
+    it('charges two daily rates one day later', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(0n, usd('100'))
+      await source.setCumulativeRevenueUSD(usd('1000'))
+
+      const anchor = await allocator.reserveAnchorTS()
+      await time.setNextBlockTimestamp(anchor + ONE_DAY)
+      await allocator.allocate()
+
+      expect(await allocator.budgetUSD()).to.equal(usd('800')) // 1000 - 2*100
+    })
+  })
+
+  describe('carry-forward:', function () {
+    it('no-ops while new revenue does not cover the accrued reserve, then banks once it does', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(0n, usd('100'))
+      const anchor = await allocator.reserveAnchorTS()
+
+      // Day 1: reserve = 100, revenue 50 → no-op, baseline and anchor untouched.
+      await source.setCumulativeRevenueUSD(usd('50'))
+      await time.setNextBlockTimestamp(anchor)
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(0n)
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(0n)
+      expect(await allocator.reserveAnchorTS()).to.equal(anchor)
+
+      // Day 3: reserve = 3*100 = 300, revenue still 50 → still a no-op.
+      await time.setNextBlockTimestamp(anchor + 2n * ONE_DAY)
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(0n)
+
+      // Revenue climbs above the carried-forward reserve → banks the excess only.
+      await source.setCumulativeRevenueUSD(usd('350'))
+      await time.setNextBlockTimestamp(anchor + 2n * ONE_DAY + 100n)
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(usd('50')) // 350 - 300
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('350'))
+    })
+  })
+
+  describe('budget is monotonic:', function () {
+    it('does not shrink as the reserve grows without new revenue', async function () {
+      await deployAllocator({ share: SHARE_50 })
+      await activateWith(0n, usd('100'))
+      await source.setCumulativeRevenueUSD(usd('1000'))
+
+      const anchor = await allocator.reserveAnchorTS()
+      await time.setNextBlockTimestamp(anchor)
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(usd('450')) // 50% of (1000 - 100)
+
+      // Advance a month with no new revenue: a recomputed allowance would erode, the budget must not.
+      await time.setNextBlockTimestamp(anchor + 30n * ONE_DAY)
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(usd('450'))
+    })
+  })
+
+  describe('allocate spending:', function () {
+    it('draws the budget down and transfers stETH to the executor', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(0n, 0n)
+      await source.setCumulativeRevenueUSD(usd('1000'))
+      await fund(usd('1000'))
+
+      await expect(allocator.allocate())
+        .to.emit(allocator, 'Allocated')
+        .withArgs(adminAddr, await executor.getAddress(), usd('1000'), usd('1000'))
+
+      expect(await allocator.budgetUSD()).to.equal(0n)
+      expect(await stEth.balanceOf(await executor.getAddress())).to.equal(usd('1000'))
+      expect(await stEth.balanceOf(await allocator.getAddress())).to.equal(0n)
+      expect(await executor.onStEthAllocatedCount()).to.equal(1n)
+    })
+
+    it('is bounded by the daily cap', async function () {
+      await deployAllocator({ share: SHARE_100, dailyCap: usd('300') })
+      await activateWith(0n, 0n)
+      await source.setCumulativeRevenueUSD(usd('1000'))
+      await fund(usd('1000'))
+
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(usd('700')) // 1000 banked, 300 spent
+      expect(await stEth.balanceOf(await executor.getAddress())).to.equal(usd('300'))
+
+      // Same day, cap exhausted → nothing more is spendable.
+      await expect(allocator.allocate())
+        .to.emit(allocator, 'AllocationSkipped')
+        .withArgs(adminAddr, AllocationStatus.NoAvailableBudget)
+      expect(await allocator.budgetUSD()).to.equal(usd('700'))
+    })
+
+    it('is bounded by the stETH balance, leaving the rest banked', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(0n, 0n)
+      await source.setCumulativeRevenueUSD(usd('1000'))
+      await fund(usd('200'))
+
+      await allocator.allocate()
+      expect(await stEth.balanceOf(await executor.getAddress())).to.equal(usd('200'))
+      expect(await allocator.budgetUSD()).to.equal(usd('800'))
+    })
+
+    it('skips an allocation below the minimum per call but keeps the budget banked', async function () {
+      await deployAllocator({ share: SHARE_100, minSpend: usd('100') })
+      await activateWith(0n, 0n)
+      await source.setCumulativeRevenueUSD(usd('50'))
+      await fund(usd('1000'))
+
+      await expect(allocator.allocate())
+        .to.emit(allocator, 'AllocationSkipped')
+        .withArgs(adminAddr, AllocationStatus.AllocationBelowMin)
+
+      expect(await allocator.budgetUSD()).to.equal(usd('50'))
+      expect(await executor.onStEthAllocatedCount()).to.equal(0n)
+      expect(await stEth.balanceOf(await executor.getAddress())).to.equal(0n)
+    })
+
+    it('still banks the checkpoint when the allocation is skipped (price unavailable)', async function () {
+      await deployAllocator({ share: SHARE_50 })
+      await activateWith(0n, 0n)
+      await source.setCumulativeRevenueUSD(usd('1000'))
+      await oracle.setFailureMode(OracleFailureMode.CustomError)
+
+      await expect(allocator.allocate())
+        .to.emit(allocator, 'AllocationSkipped')
+        .withArgs(adminAddr, AllocationStatus.QuoteUnavailable)
+
+      expect(await allocator.budgetUSD()).to.equal(usd('500'))
+    })
+  })
+
+  describe('setSurplusShareBP:', function () {
+    it('banks the open interval at the old share, then applies the new share going forward', async function () {
+      await deployAllocator({ share: SHARE_50 })
+      await activateWith(0n, 0n)
+      await source.setCumulativeRevenueUSD(usd('1000'))
+
+      // Changing the share checkpoints first → banks 1000 at 50%.
+      await allocator.setSurplusShareBP(1000n) // 10%
+      expect(await allocator.budgetUSD()).to.equal(usd('500'))
+      expect(await allocator.surplusShareBP()).to.equal(1000n)
+
+      // New revenue banks at the new 10% share.
+      await source.setCumulativeRevenueUSD(usd('2000'))
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(usd('600')) // 500 + 10% of 1000
+    })
+  })
+
+  describe('setReserveDailyRateUSD:', function () {
+    it('re-anchors and discards the in-progress accrual at the old rate', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(0n, usd('100'))
+      await source.setCumulativeRevenueUSD(usd('1000'))
+      const anchor = await allocator.reserveAnchorTS()
+
+      // Move to the first full day (reserve would be 100 if checkpointed) then change the rate.
+      await time.setNextBlockTimestamp(anchor)
+      await allocator.setReserveDailyRateUSD(usd('50'))
+
+      const newAnchor = await allocator.reserveAnchorTS()
+      expect(newAnchor).to.equal(anchor + ONE_DAY) // next-day-start from `anchor`
+      expect(await allocator.reserveDailyRateUSD()).to.equal(usd('50'))
+
+      // Still within the re-anchored free day → reserve 0, the old 100 accrual is gone.
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(usd('1000'))
+    })
+  })
+
+  describe('revenue sources:', function () {
+    it('adjusts the baseline so a source added after activation contributes only later earnings', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(usd('1000'), 0n)
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('1000'))
+
+      const extra = await new RevenueSourceStub__factory(admin).deploy()
+      await extra.setCumulativeRevenueUSD(usd('300'))
+      await allocator.addRevenueSource(await extra.getAddress())
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('1300'))
+
+      // The added source's pre-registration history does not bank.
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(0n)
+
+      await allocator.removeRevenueSource(await extra.getAddress())
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('1000'))
+    })
+  })
+
+  describe('flaky source:', function () {
+    it('treats a reverting source as zero and never double-counts on recovery', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(usd('1000'), 0n)
+
+      // Reverting source → non-strict sum reads 0, checkpoint no-ops, allocate does not revert.
+      await source.setReverting(true)
+      await expect(allocator.allocate()).to.not.be.reverted
+      expect(await allocator.budgetUSD()).to.equal(0n)
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('1000'))
+
+      // Recovery banks only the genuinely new revenue (1000 → 2000), not the pre-outage total.
+      await source.setReverting(false)
+      await source.setCumulativeRevenueUSD(usd('2000'))
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(usd('1000'))
+    })
+  })
+
+  describe('removed surface:', function () {
+    it('no longer exposes resetAccounting', async function () {
+      await deployAllocator()
+      const hasReset = allocator.interface.fragments.some(
+        (f) => f.type === 'function' && (f as { name?: string }).name === 'resetAccounting'
+      )
+      expect(hasReset).to.equal(false)
+    })
+  })
+})

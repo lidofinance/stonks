@@ -7,7 +7,6 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ERC165Checker} from "@openzeppelin/contracts/utils/introspection/ERC165Checker.sol";
 
 import {AssetRecovererACL} from "./AssetRecovererACL.sol";
@@ -19,12 +18,11 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
 
 /**
  * @title  BuybackAllocator
- * @notice Holds stETH and allocates it to the receiver for buybacks, based on protocol
- *         revenue reported by the registered sources.
+ * @notice Holds stETH and releases it to a receiver for buybacks, funded by the protocol revenue
+ *         that registered sources report. Anyone can trigger a release.
  */
 contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     using SafeERC20 for IERC20;
-    using SafeCast for uint256;
     using MathHelpers for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
 
@@ -96,20 +94,14 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     /// @notice Timestamp of allocator activation.
     uint256 public activationTS;
 
-    /// @notice Revenue counted as unspendable.
-    int256 public revenueBaselineUSD;
+    /// @notice Total revenue reported by all sources as of the last time surplus was set aside.
+    uint256 public lastTotalRevenueUSD;
 
-    /// @notice Reserve accrued before the latest daily rate change.
-    uint256 public reserveBaseUSD;
+    /// @notice USD set aside for buybacks and not yet released.
+    uint256 public budgetUSD;
 
-    /// @notice Timestamp of the latest daily rate change.
+    /// @notice Start of the day from which the current reserve builds up.
     uint256 public reserveAnchorTS;
-
-    /// @notice Total USD ever spent.
-    uint256 public totalSpentUSD;
-
-    /// @notice Accounting reset baseline.
-    uint256 public spentBaselineUSD;
 
     /// @notice USD spent within the current day window.
     SpendWindow public daily;
@@ -119,7 +111,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
 
     EnumerableSet.AddressSet internal _revenueSources;
 
-    event Activated(uint256 activationTS, int256 revenueBaselineUSD);
+    event Activated(uint256 activationTS, uint256 lastTotalRevenueUSD);
     event Allocated(
         address indexed triggeredBy,
         address indexed executor,
@@ -127,13 +119,15 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         uint256 spendStEth
     );
     event AllocationSkipped(address indexed caller, AllocationStatus reason);
-    event AccountingReset(
-        uint256 forfeitedUSD,
-        int256 revenueBaselineUSD,
-        uint256 spentBaselineUSD
+    event Checkpointed(
+        uint256 lastTotalRevenueUSD,
+        uint256 reserveUSD,
+        uint256 bankedUSD,
+        uint256 budgetUSD,
+        uint256 reserveAnchorTS
     );
     event WindowRolled(uint256 windowDurationSeconds, uint256 newEndTS, uint256 previousSpentUSD);
-    event ReserveAnchored(uint256 anchorTS, uint256 reserveBaseUSD);
+    event ReserveAnchored(uint256 anchorTS);
     event ExecutorSet(address indexed executor);
     event DailyCapUSDSet(uint128 dailyCapUSD);
     event YearlyCapUSDSet(uint128 yearlyCapUSD);
@@ -148,7 +142,6 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     error OracleRouterZeroAddress();
     error ExecutorZeroAddress();
     error AlreadyActivated();
-    error NotActivated();
     error SurplusShareBPInvalid();
     error DailyCapUSDZero();
     error YearlyCapUSDZero();
@@ -195,21 +188,25 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         uint256 alignedTS = _todayStartTS();
         activationTS = alignedTS;
 
-        revenueBaselineUSD = SafeCast.toInt256(_revenueSumStrictUSD());
+        lastTotalRevenueUSD = _revenueSumStrictUSD();
 
         _setReserveDailyRateUSD(reserveDailyRateUSD_);
 
         _rollWindow(daily, ONE_DAY, 0);
         _rollWindow(yearly, ONE_YEAR, 0);
 
-        emit Activated(alignedTS, revenueBaselineUSD);
+        emit Activated(alignedTS, lastTotalRevenueUSD);
     }
 
     /**
-     * @notice Allocates the currently spendable amount to the receiver. If nothing is eligible,
-     *         emits a skip event.
+     * @notice Sets aside newly earned surplus, then sends the amount available now to the
+     *         receiver. When nothing is eligible it records a skip and returns. The set-aside
+     *         still stands, so anyone calling this moves the available amount forward even when
+     *         it does not pay out.
      */
     function allocate() external nonReentrant {
+        _checkpoint();
+
         (AllocationStatus status, uint256 spendUSD, uint256 spendStEth) = spendable();
 
         if (status != AllocationStatus.Eligible) {
@@ -217,7 +214,8 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
             return;
         }
 
-        totalSpentUSD += spendUSD;
+        budgetUSD -= spendUSD;
+        
         _rollWindow(yearly, ONE_YEAR, spendUSD);
         _rollWindow(daily, ONE_DAY, spendUSD);
 
@@ -229,36 +227,20 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice Re-bases the surplus to zero, forfeiting any unspent allowance.
-     */
-    function resetAccounting() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (activationTS == 0) revert NotActivated();
-
-        uint256 revenueSumUSD = _revenueSumStrictUSD();
-        uint256 reserveUSD = _reserveCurrentUSD();
-        int256 surplusUSD = revenueSumUSD.toInt256() - revenueBaselineUSD - reserveUSD.toInt256();
-        uint256 forfeitedUSD = surplusUSD > 0
-            ? _mulBP(uint256(surplusUSD), surplusShareBP).saturatedSub(
-                totalSpentUSD - spentBaselineUSD
-            )
-            : 0;
-
-        revenueBaselineUSD = revenueSumUSD.toInt256() - reserveUSD.toInt256();
-        spentBaselineUSD = totalSpentUSD;
-
-        emit AccountingReset(forfeitedUSD, revenueBaselineUSD, spentBaselineUSD);
-    }
-
-    /**
-     * @notice Sets the share of the revenue surplus that can be spent on buybacks.
-     * @dev    The new share applies retroactively. Reset accounting to apply only to future surplus.
+     * @notice Sets the share of the revenue surplus set aside for buybacks.
+     * @dev    Sets aside the surplus earned so far at the current share before changing it, so the
+     *         new share applies only to surplus set aside later. Anything already set aside stays.
      */
     function setSurplusShareBP(uint16 surplusShareBP_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _checkpoint();
         _setSurplusShareBP(surplusShareBP_);
     }
 
     /**
-     * @notice Sets the daily reserve rate. Starts from the current day onward.
+     * @notice Sets the daily reserve rate, effective from the next day onward.
+     * @dev    Restarts the reserve count from the next day at the new rate. Reserve that was
+     *         building up since the last set-aside is dropped, so that slice of revenue becomes
+     *         spendable at the next set-aside.
      */
     function setReserveDailyRateUSD(
         uint128 reserveDailyRateUSD_
@@ -302,7 +284,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice Registers a revenue source. After activation its current total is added to the
      *         baseline, so only later earnings count.
-     * @dev    Sources are trusted to report accurate, non-decreasing USD totals (18 decimals).
+     * @dev    Sources are trusted to report accurate USD totals that only go up (18 decimals).
      *         Reverts if the source cannot be reached.
      */
     function addRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -321,6 +303,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice Returns the eligibility status and the amount an allocation would send now, in USD
      *         and stETH.
+     * @dev    Reflects only surplus already set aside. Revenue earned since the last set-aside is
+     *         excluded until it is set aside, which a release does first, so a release always sees
+     *         the up-to-date amount.
      */
     function spendable()
         public
@@ -344,16 +329,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
             return (AllocationStatus.StEthPriceBelowMin, 0, 0);
         }
 
-        // surplus = revenue earned so far, minus the baseline, minus the reserve accrued
-        uint256 revenueSumUSD = _revenueSumUSD();
-        uint256 reserveUSD = _reserveCurrentUSD();
-        int256 surplusUSD = revenueSumUSD.toInt256() - revenueBaselineUSD - reserveUSD.toInt256();
-
-        // the allowance is the configured share of the surplus, or zero if there is no surplus
-        uint256 allowance = surplusUSD > 0 ? _mulBP(uint256(surplusUSD), surplusShareBP) : 0;
-
-        // subtract what has already been allocated since the last accounting reset
-        spendableUSD = allowance.saturatedSub(totalSpentUSD - spentBaselineUSD);
+        // start from the amount set aside so far; revenue earned since the last set-aside is not
+        // reflected here until it is set aside, which a release does first
+        spendableUSD = budgetUSD;
         if (spendableUSD == 0) {
             return (AllocationStatus.NoAvailableBudget, 0, 0);
         }
@@ -376,6 +354,29 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         }
 
         status = AllocationStatus.Eligible;
+    }
+
+    /// @dev Takes the revenue earned since the last set-aside, removes the reserve that built up
+    ///      over that interval, and adds the configured share of the rest to the amount available
+    ///      for release. Then it moves the baseline up to the current total and restarts the
+    ///      reserve count. If the new revenue does not cover the built-up reserve it does nothing
+    ///      and leaves the baseline and reserve in place, so the reserve carries over and a
+    ///      growing reserve can never reduce an amount already set aside.
+    function _checkpoint() internal {
+        if (activationTS == 0) return;
+
+        uint256 totalRevenueUSD = _revenueSumUSD();
+        uint256 newRevenueUSD = totalRevenueUSD.saturatedSub(lastTotalRevenueUSD);
+        uint256 reserveUSD = _reserveCurrentUSD();
+
+        if (newRevenueUSD <= reserveUSD) return;
+
+        uint256 bankedUSD = _mulBP(newRevenueUSD - reserveUSD, surplusShareBP);
+        budgetUSD += bankedUSD;
+        lastTotalRevenueUSD = totalRevenueUSD;
+        reserveAnchorTS = _nextDayStartTS();
+
+        emit Checkpointed(lastTotalRevenueUSD, reserveUSD, bankedUSD, budgetUSD, reserveAnchorTS);
     }
 
     /// @dev Advances a fixed period from the activation midnight.
@@ -411,10 +412,13 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         unspent = cap_.saturatedSub(_windowSpent(window_));
     }
 
-    /// @dev Reserve accrued so far; the current day is charged in full as soon as it begins.
+    /// @dev Reserve built up since the count last restarted. Zero for the rest of the day the
+    ///      count restarted, then one daily rate for each full day after, counted in full the
+    ///      moment that day begins.
     function _reserveCurrentUSD() internal view returns (uint256) {
+        if (block.timestamp < reserveAnchorTS) return 0;
         uint256 elapsedDays = (block.timestamp - reserveAnchorTS) / ONE_DAY;
-        return reserveBaseUSD + uint256(reserveDailyRateUSD) * (elapsedDays + 1);
+        return uint256(reserveDailyRateUSD) * (elapsedDays + 1);
     }
 
     /// @dev Sums revenue across all sources; reverts if any cannot be reached.
@@ -450,6 +454,11 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         return (block.timestamp / ONE_DAY) * ONE_DAY;
     }
 
+    /// @dev Midnight UTC at the start of the day after the current block.
+    function _nextDayStartTS() internal view returns (uint256) {
+        return (block.timestamp / ONE_DAY + 1) * ONE_DAY;
+    }
+
     /// @dev Multiplies a value by a basis-point share.
     function _mulBP(uint256 number_, uint256 bp_) internal pure returns (uint256) {
         return Math.mulDiv(number_, bp_, MAX_BASIS_POINTS);
@@ -470,9 +479,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         if (!_revenueSources.add(source_)) revert RevenueSourceAlreadyRegistered();
 
         if (activationTS != 0) {
-            revenueBaselineUSD += SafeCast.toInt256(
-                IRevenueSource(source_).getCumulativeRevenueUSD()
-            );
+            lastTotalRevenueUSD += IRevenueSource(source_).getCumulativeRevenueUSD();
         }
 
         emit RevenueSourceAdded(source_);
@@ -483,7 +490,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         if (!_revenueSources.remove(source_)) revert RevenueSourceNotRegistered();
 
         if (activationTS != 0) {
-            revenueBaselineUSD -= SafeCast.toInt256(
+            lastTotalRevenueUSD = lastTotalRevenueUSD.saturatedSub(
                 IRevenueSource(source_).getCumulativeRevenueUSD()
             );
         }
@@ -531,17 +538,13 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         emit SurplusShareBPSet(surplusShareBP_);
     }
 
-    /// @dev Sets the daily reserve rate, re-anchoring the accrued reserve after activation.
+    /// @dev Sets the daily reserve rate. After activation, restarts the reserve count from the
+    ///      next day so the new rate applies forward; reserve building up since the last set-aside
+    ///      is dropped.
     function _setReserveDailyRateUSD(uint128 reserveDailyRateUSD_) internal {
         if (activationTS != 0) {
-            uint256 anchorTS = _todayStartTS();
-            if (reserveAnchorTS != 0) {
-                reserveBaseUSD +=
-                    uint256(reserveDailyRateUSD) *
-                    ((anchorTS - reserveAnchorTS) / ONE_DAY);
-            }
-            reserveAnchorTS = anchorTS;
-            emit ReserveAnchored(anchorTS, reserveBaseUSD);
+            reserveAnchorTS = _nextDayStartTS();
+            emit ReserveAnchored(reserveAnchorTS);
         }
 
         reserveDailyRateUSD = reserveDailyRateUSD_;

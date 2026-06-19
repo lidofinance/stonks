@@ -238,7 +238,7 @@ describe('StakingRevenueSource — integration', function () {
       await allocator.activate(0n)
 
       // The allocator summed our source's cumulative into its baseline.
-      expect(await allocator.revenueBaselineUSD()).to.equal(cumulative)
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(cumulative)
     })
 
     it('should baseline at the source cumulative only when the source is registered', async function () {
@@ -256,8 +256,8 @@ describe('StakingRevenueSource — integration', function () {
       const allocatorWithout = await deployAllocator([])
       await allocatorWithout.activate(0n)
 
-      expect(await allocatorWith.revenueBaselineUSD()).to.equal(cumulative)
-      expect(await allocatorWithout.revenueBaselineUSD()).to.equal(0n)
+      expect(await allocatorWith.lastTotalRevenueUSD()).to.equal(cumulative)
+      expect(await allocatorWithout.lastTotalRevenueUSD()).to.equal(0n)
     })
   })
 })
