@@ -18,138 +18,9 @@ import {IBuybackExecutor} from "../interfaces/IBuybackExecutor.sol";
 import {MathHelpers} from "../lib/MathHelpers.sol";
 
 /**
- * @title BuybackAllocator
- * @notice Holds a pot of stETH and pays it out, piece by piece, to a single receiver (the
- *         `executor`) for buybacks — but only as fast as the protocol earns new revenue.
- *         Anyone may call `allocate()`; the rules below decide how much (if anything) leaves
- *         the contract on each call.
- *
- * @dev
- * ===================================== THE ACCOUNTING MODEL =====================================
- *
- * Counting revenue.
- *   A list of registered "revenue source" contracts each publish one number: the total USD value
- *   that source has earned for the protocol since it went live. These numbers only ever grow.
- *   The BuybackAllocator stores no revenue itself — whenever it needs the current total, it adds up all
- *   the sources' numbers on the spot. While computing a payout, a source that fails to answer
- *   simply counts as zero for that moment, which can only lower the payout, never raise it.
- *
- * Activation.
- *   The contract starts asleep. The admin wakes it once with `activate()`, which:
- *     - snaps the start moment back to 00:00 UTC of the current day — every day and year boundary
- *       the contract uses from then on lands exactly on midnight UTC;
- *     - writes down the current revenue total as the starting point (`revenueBaselineUSD`).
- *       Everything earned before activation stays out of reach forever;
- *     - starts the clock on the daily set-aside (next section) at the rate passed in.
- *
- * The daily set-aside (reserve).
- *   Each day, a fixed USD amount (`reserveDailyRateUSD`) is put out of reach, starting with the
- *   activation day itself; a day is charged in full the moment it begins. The set-aside depends
- *   only on the clock, so calling `allocate()` more or less often cannot change it. When the
- *   admin changes the daily amount, days already finished keep the old amount; the current day
- *   onward is charged at the new one.
- *
- * The spending allowance.
- *   Take the revenue earned since activation, subtract the total set-aside so far: what remains
- *   is the extra that the protocol earned on top of its needs. A configured share of that extra
- *   (`surplusShareBP`) is the all-time spending allowance. The share applies to the whole
- *   history every time it is read, not just to the future: raising it makes more of the
- *   already-earned extra spendable, and lowering it can shrink the allowance below what was
- *   already spent (which pauses payouts; see next).
- *
- * Spending.
- *   Every payout adds to `totalSpentUSD`, which never goes down and is never reset. What can go
- *   out right now is the allowance minus everything spent since the last accounting reset (see
- *   next section), never below zero. If the allowance falls behind — the set-aside keeps growing
- *   every day, or the share was lowered — nothing is taken back from the executor; payouts simply
- *   pause until the allowance grows past the spent amount again.
- *
- * Resetting the accounting.
- *   The admin can wipe the slate with `resetAccounting()`: the extra is re-measured as zero at
- *   that moment (the starting point moves to the current revenue-minus-set-aside level, even if
- *   that forgives a set-aside shortfall), and past payouts stop counting against the allowance.
- *   Any unspent allowance is forfeited; nothing already paid out is affected. From then on only
- *   revenue earned after the reset creates allowance. This pairs with share changes: reset plus
- *   a lower share keeps buybacks flowing from new revenue instead of pausing, and reset plus a
- *   higher share applies the new share only to new revenue instead of the whole history.
- *
- * Speed limits.
- *   Two caps slow the outflow: at most `dailyCapUSD` per day slot and `yearlyCapUSD` per year
- *   slot. Slots are fixed periods counted from the activation midnight (so they also start and
- *   end at 00:00 UTC), not sliding windows; room left unused in one slot does not carry over to
- *   the next. Cap changes touch the slot in progress: raising a cap opens room right away, and
- *   lowering it below what the slot already spent pauses payouts until the slot ends. Slot
- *   bookkeeping is lazy: storage and the `WindowRolled` event update only when a payout actually
- *   happens, so slots without payouts leave no trace, and the stored per-slot spend may belong
- *   to a slot that already ended (it stops counting the moment its slot is over).
- *
- * Paying out.
- *   On `allocate()` the contract asks the oracle for the stETH price, turns the spendable USD
- *   into stETH, sends it to the executor, and then notifies the executor so it can put the funds
- *   to work. It can never send more stETH than it holds, and it records as spent exactly the
- *   USD value of what was actually sent. Instead of failing, the call quietly skips (with an
- *   `AllocationSkipped` event) when the contract is not activated yet, the price is unavailable
- *   or below the admin-set minimum (`minStEthPriceUSD`), there is nothing to spend, or the
- *   payout would be smaller than the per-call minimum. The skip reason is the first check that
- *   failed, and some reasons cover several causes: an empty or nearly empty pot shows up as
- *   "below the per-call minimum", and "no available budget" can mean either the allowance or a
- *   day/year cap is used up.
- *
- * Changing the source list.
- *   Adding a source after activation also adds its current number to the starting point, so only
- *   what it earns from that moment on counts. Removing a source subtracts its current number, so
- *   everything it contributed until then stays counted — removal only stops future earnings from
- *   counting. This bookkeeping can push the starting point below zero; that is expected, which is
- *   why `revenueBaselineUSD` is a signed number. A source must declare `IRevenueSource` support
- *   (ERC-165) to be registered, and at most 50 sources can be registered at a time.
- *
- * Funding.
- *   The stETH pot is topped up by plain transfers from outside. The balance never creates
- *   allowance; it only limits how much of the allowance can be paid out right now.
- *
- * ======================================== ASSUMPTIONS ==========================================
- *
- * 1. Revenue sources are trusted contracts vetted by governance. Their numbers are honest,
- *    18-decimals USD values that only grow. A wrong or inflated number becomes real spending
- *    allowance (drained no faster than the caps allow), and there is no way to un-count it
- *    later — removing the source keeps everything already counted.
- * 2. A broken source that stops answering makes the contract spend less, never more: its whole
- *    number drops out of the total while it is down. But `activate()`, adding a source after
- *    activation, and source removal all call the source directly and will fail while it is
- *    broken.
- * 3. The oracle returns a fair and fresh stETH/USD price (18 decimals); staleness checks live
- *    inside the oracle router. The only check here is the admin-set price floor
- *    (`minStEthPriceUSD`): if the oracle ever under-prices stETH, the contract sends more stETH
- *    per dollar, and the floor is what limits how bad that can get — so it should be set above
- *    zero in production.
- * 4. Admin roles are trusted (Lido governance). The admin can redirect all future payouts
- *    (`setExecutor`) and reshape every limit; the manager role (from the base contract) can sweep
- *    any token to the treasury.
- * 5. The executor is a contract that accepts stETH and implements the `onStEthAllocated()` hook;
- *    if the hook reverts, payouts fail until the admin replaces the executor.
- * 6. stETH behaves like a regular 18-decimals token; its well-known 1-2 wei transfer rounding is
- *    tolerated.
- * 7. Block timestamps only move forward, and day boundaries are UTC.
- *
- * ========================================= INVARIANTS ==========================================
- *
- * 1. At every payout, the spending since the last accounting reset stays within the allowance
- *    of that moment (the share as configured right then, applied to the extra as measured right
- *    then). Between resets, payouts therefore never exceed the largest such allowance seen at
- *    any payout. Revenue earned before activation and the daily set-aside are never spent.
- * 2. `totalSpentUSD` only ever grows, and nothing already paid out is ever taken back.
- * 3. Payouts within one day slot never exceed the daily cap, and within one year slot never
- *    exceed the yearly cap (as configured at the moment of each payout).
- * 4. Every USD recorded as spent corresponds to stETH that actually left the contract in the
- *    same transaction, valued at the oracle price used for that payout.
- * 5. The contract never sends more stETH than it holds, and a low balance never erases
- *    allowance — it only delays payouts.
- * 6. Adding or removing a revenue source never changes, at that very moment, how much can be
- *    spent.
- * 7. Spending activity never changes the set-aside; between admin rate changes it grows with
- *    the clock alone. A rate change re-prices the current, already-charged day at the new rate,
- *    so a rate cut steps the total down by the difference for that day.
- * 8. Before activation nothing can be spent, and activation can happen only once.
+ * @title  BuybackAllocator
+ * @notice Holds stETH and allocates it to the receiver for buybacks, based on protocol
+ *         revenue reported by the registered sources.
  */
 contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -158,7 +29,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     enum AllocationStatus {
-        Eligible,
+        Eligible, 
         NoAvailableBudget,
         QuoteUnavailable,
         StEthPriceBelowMin,
@@ -167,16 +38,16 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     }
 
     struct SpendWindow {
-        uint64 endTS;
+        uint64 endTS; 
         uint192 spentUSD;
     }
 
     struct ConstructorParams {
         address admin;
-        address treasury;
-        address stEth;
-        address oracleRouter;
-        address executor;
+        address treasury; 
+        address stEth; 
+        address oracleRouter; 
+        address executor; 
         uint128 dailyCapUSD;
         uint128 yearlyCapUSD;
         uint128 minStEthPriceUSD;
@@ -185,30 +56,65 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         address[] revenueSources;
     }
 
+    /// @notice 100% in basis points.
     uint256 public constant MAX_BASIS_POINTS = 10_000;
+
+    /// @notice The max number of revenue sources.
     uint256 public constant MAX_REVENUE_SOURCES = 50;
+
     uint256 internal constant PRICE_SCALE = 1e18;
     uint256 internal constant ONE_DAY = 1 days;
     uint256 internal constant ONE_YEAR = 365 days;
 
+    /// @notice StETH token address.
     IStETH public immutable STETH;
+
+    /// @notice Oracle that prices stETH in USD.
     IOracleRouter public immutable ORACLE_ROUTER;
 
+    /// @notice Maximum USD spendable per day.
     uint128 public dailyCapUSD;
+
+    /// @notice Maximum USD spendable per year.
     uint128 public yearlyCapUSD;
+
+    /// @notice USD reserved for the protocol each day; only the surplus above it is spendable.
     uint128 public reserveDailyRateUSD;
+
+    /// @notice Lowest stETH price accepted.
     uint128 public minStEthPriceUSD;
+
+    /// @notice Smallest allocation allowed.
     uint128 public minSpendPerCallUSD;
+
+    /// @notice Share of the revenue surplus spendable on buybacks, in basis points.
     uint16 public surplusShareBP;
+
+    /// @notice Address that receives allocations.
     address public executor;
 
+    /// @notice Timestamp of allocator activation.
     uint256 public activationTS;
+
+    /// @notice Revenue counted as unspendable.
     int256 public revenueBaselineUSD;
+
+    /// @notice Reserve accrued before the latest daily rate change.
     uint256 public reserveBaseUSD;
+
+    /// @notice Timestamp of the latest daily rate change.
     uint256 public reserveAnchorTS;
+
+    /// @notice Total USD ever spent.
     uint256 public totalSpentUSD;
+
+    /// @notice Accounting reset baseline.
     uint256 public spentBaselineUSD;
+
+    /// @notice USD spent within the current day window.
     SpendWindow public daily;
+
+    /// @notice USD spent within the current year window.
     SpendWindow public yearly;
 
     EnumerableSet.AddressSet internal _revenueSources;
@@ -277,6 +183,12 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         }
     }
 
+    /**
+     * @notice Activates the contract once. Records revenue earned so far as the baseline, so only
+     *         later revenue counts.
+     * @param  reserveDailyRateUSD_ USD reserved for the protocol each day
+     * @dev    Reverts if any registered source cannot be reached.
+     */
     function activate(uint128 reserveDailyRateUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (activationTS != 0) revert AlreadyActivated();
 
@@ -293,6 +205,10 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         emit Activated(alignedTS, revenueBaselineUSD);
     }
 
+    /**
+     * @notice Allocates the currently spendable amount to the receiver. If nothing is eligible,
+     *         emits a skip event.
+     */
     function allocate() external nonReentrant {
         (AllocationStatus status, uint256 spendUSD, uint256 spendStEth) = spendable();
 
@@ -312,6 +228,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         IBuybackExecutor(executor).onStEthAllocated();
     }
 
+    /**
+     * @notice Re-bases the surplus to zero, forfeiting any unspent allowance.
+     */
     function resetAccounting() external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (activationTS == 0) revert NotActivated();
 
@@ -332,105 +251,126 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
 
     /**
      * @notice Sets the share of the revenue surplus that can be spent on buybacks.
-     * @dev The new share applies to the whole surplus history, not just to future revenue.
-     *      Decide whether to call `resetAccounting()` right after:
-     *      - Lowering the share without a reset can push the allowance below what was already
-     *        spent, which pauses buybacks until new revenue catches up. Call `resetAccounting()`
-     *        to start from a clean slate and keep buybacks flowing from new revenue.
-     *      - Raising the share without a reset also unlocks the higher share of the surplus
-     *        earned in the past. Call `resetAccounting()` to apply the new share only to
-     *        revenue earned from now on.
-     *      Skip the reset only when this retroactive effect is intended.
+     * @dev    The new share applies retroactively. Reset accounting to apply only to future surplus.
      */
     function setSurplusShareBP(uint16 surplusShareBP_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setSurplusShareBP(surplusShareBP_);
     }
 
+    /**
+     * @notice Sets the daily reserve rate. Starts from the current day onward.
+     */
     function setReserveDailyRateUSD(
         uint128 reserveDailyRateUSD_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setReserveDailyRateUSD(reserveDailyRateUSD_);
     }
 
+    /**
+     * @notice Sets the per-day spending cap, including the window in progress.
+     */
     function setDailyCapUSD(uint128 dailyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setDailyCapUSD(dailyCapUSD_);
     }
 
+    /**
+     * @notice Sets the per-year spending cap, including the window in progress.
+     */
     function setYearlyCapUSD(uint128 yearlyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setYearlyCapUSD(yearlyCapUSD_);
     }
 
+    /// @notice Sets the minimum stETH price; price below it skips the allocation.
     function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setMinStEthPriceUSD(minStEthPriceUSD_);
     }
 
+    /// @notice Sets the smallest allocation allowed; smaller amounts are skipped.
     function setMinSpendPerCallUSD(
         uint128 minSpendPerCallUSD_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setMinSpendPerCallUSD(minSpendPerCallUSD_);
     }
 
+    /**
+     * @notice Redirects all future allocations to a new receiver.
+     */
     function setExecutor(address newExecutor_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setExecutor(newExecutor_);
     }
 
+    /**
+     * @notice Registers a revenue source. After activation its current total is added to the
+     *         baseline, so only later earnings count.
+     * @dev    Sources are trusted to report accurate, non-decreasing USD totals (18 decimals).
+     *         Reverts if the source cannot be reached.
+     */
     function addRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _addRevenueSource(source_);
     }
 
+    /**
+     * @notice Unregisters a revenue source. After activation its total is subtracted from the
+     *         baseline, so its past contribution stays counted.
+     * @dev    Reverts if the source cannot be reached.
+     */
     function removeRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _removeRevenueSource(source_);
     }
 
+    /**
+     * @notice Returns the eligibility status and the amount an allocation would send now, in USD
+     *         and stETH.
+     */
     function spendable()
         public
         view
         returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth)
     {
-        // STEP 1: Return if not activated
+        // nothing can be allocated before activation
         if (activationTS == 0) {
             return (AllocationStatus.NotActivated, 0, 0);
         }
 
-        // STEP 2: Return if the price oracle failed
+        // no usable price means no allocation
         uint256 stEthPriceUSD = _getStEthPriceUSD();
 
         if (stEthPriceUSD == 0) {
             return (AllocationStatus.QuoteUnavailable, 0, 0);
         }
 
-        // STEP 3: Return if the stEth price is too low
+        // a price below the floor pauses allocations
         if (minStEthPriceUSD > stEthPriceUSD) {
             return (AllocationStatus.StEthPriceBelowMin, 0, 0);
         }
 
-        // STEP 4: Surplus = Revenue Sum - Revenue Baseline - Reserved Total
+        // surplus = revenue earned so far, minus the baseline, minus the reserve accrued
         uint256 revenueSumUSD = _revenueSumUSD();
         uint256 reserveUSD = _reserveCurrentUSD();
         int256 surplusUSD = revenueSumUSD.toInt256() - revenueBaselineUSD - reserveUSD.toInt256();
 
-        // STEP 5: Allowance = Surplus * Surplus Share
+        // the allowance is the configured share of the surplus, or zero if there is no surplus
         uint256 allowance = surplusUSD > 0 ? _mulBP(uint256(surplusUSD), surplusShareBP) : 0;
 
-        // STEP 6: Spendable now = Allowance - Spent since the last accounting reset - Spent Baseline
+        // subtract what has already been allocated since the last accounting reset
         spendableUSD = allowance.saturatedSub(totalSpentUSD - spentBaselineUSD);
         if (spendableUSD == 0) {
             return (AllocationStatus.NoAvailableBudget, 0, 0);
         }
 
-        // STEP 7: Limit by yearly, daily caps
+        // limit to the amount remaining under the year cap, then the day cap
         spendableUSD = Math.min(spendableUSD, _windowUnspent(yearly, yearlyCapUSD));
         spendableUSD = Math.min(spendableUSD, _windowUnspent(daily, dailyCapUSD));
         if (spendableUSD == 0) {
             return (AllocationStatus.NoAvailableBudget, 0, 0);
         }
 
-        // STEP 8: Limit to StEth balance and restate in USD
+        // convert to stETH, limit to the balance, then restate the USD actually transferable
         spendableStEth = Math.mulDiv(spendableUSD, PRICE_SCALE, stEthPriceUSD);
         spendableStEth = Math.min(spendableStEth, STETH.balanceOf(address(this)));
         spendableUSD = Math.mulDiv(spendableStEth, stEthPriceUSD, PRICE_SCALE);
 
-        // STEP 9: Dust filter
+        // skip an amount below the smallest allowed allocation
         if (spendableUSD < minSpendPerCallUSD) {
             return (AllocationStatus.AllocationBelowMin, 0, 0);
         }
@@ -438,6 +378,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         status = AllocationStatus.Eligible;
     }
 
+    /// @dev Advances a fixed period from the activation midnight.
     function _rollWindow(
         SpendWindow storage window_,
         uint256 windowDuration_,
@@ -457,10 +398,12 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         window_.spentUSD = spent + uint192(spendUSD_);
     }
 
+    /// @dev Counts as zero once the window has ended.
     function _windowSpent(SpendWindow storage window_) internal view returns (uint256 spent) {
         spent = block.timestamp >= window_.endTS ? 0 : uint256(window_.spentUSD);
     }
 
+    /// @dev The amount remaining under the cap for the current window.
     function _windowUnspent(
         SpendWindow storage window_,
         uint256 cap_
@@ -468,11 +411,13 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         unspent = cap_.saturatedSub(_windowSpent(window_));
     }
 
+    /// @dev Reserve accrued so far; the current day is charged in full as soon as it begins.
     function _reserveCurrentUSD() internal view returns (uint256) {
         uint256 elapsedDays = (block.timestamp - reserveAnchorTS) / ONE_DAY;
         return reserveBaseUSD + uint256(reserveDailyRateUSD) * (elapsedDays + 1);
     }
 
+    /// @dev Sums revenue across all sources; reverts if any cannot be reached.
     function _revenueSumStrictUSD() internal view returns (uint256 revenueSumUSD) {
         address[] memory sources = _revenueSources.values();
         for (uint256 i = 0; i < sources.length; ++i) {
@@ -480,6 +425,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         }
     }
 
+    /// @dev Sums revenue across all sources; a reverting source counts as zero.
     function _revenueSumUSD() internal view returns (uint256 revenueSumUSD) {
         address[] memory sources = _revenueSources.values();
         for (uint256 i = 0; i < sources.length; ++i) {
@@ -489,6 +435,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         }
     }
 
+    /// @dev Gets the stEth price from an oracle.
     function _getStEthPriceUSD() internal view returns (uint256 stEthPriceUSD) {
         try ORACLE_ROUTER.getUsdPrices(address(STETH), address(STETH)) returns (
             uint256 stEthPrice,
@@ -498,14 +445,17 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         } catch {}
     }
 
+    /// @dev Rounds down to midnight UTC.
     function _todayStartTS() internal view returns (uint256) {
         return (block.timestamp / ONE_DAY) * ONE_DAY;
     }
 
+    /// @dev Multiplies a value by a basis-point share.
     function _mulBP(uint256 number_, uint256 bp_) internal pure returns (uint256) {
         return Math.mulDiv(number_, bp_, MAX_BASIS_POINTS);
     }
 
+    /// @dev Validates and registers a revenue source, adjusting the baseline.
     function _addRevenueSource(address source_) internal {
         if (source_ == address(0)) revert RevenueSourceZeroAddress();
 
@@ -528,6 +478,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         emit RevenueSourceAdded(source_);
     }
 
+    /// @dev Removes a revenue source, adjusting the baseline.
     function _removeRevenueSource(address source_) internal {
         if (!_revenueSources.remove(source_)) revert RevenueSourceNotRegistered();
 
@@ -540,12 +491,14 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         emit RevenueSourceRemoved(source_);
     }
 
+    /// @dev Validates and sets the receiver.
     function _setExecutor(address executor_) internal {
         if (executor_ == address(0)) revert ExecutorZeroAddress();
         executor = executor_;
         emit ExecutorSet(executor_);
     }
 
+    /// @dev Validates and sets the yearly cap.
     function _setYearlyCapUSD(uint128 yearlyCapUSD_) internal {
         if (yearlyCapUSD_ == 0) revert YearlyCapUSDZero();
         if (dailyCapUSD > yearlyCapUSD_) revert DailyCapExceedsYearlyCap();
@@ -553,6 +506,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         emit YearlyCapUSDSet(yearlyCapUSD_);
     }
 
+    /// @dev Validates and sets the daily cap.
     function _setDailyCapUSD(uint128 dailyCapUSD_) internal {
         if (dailyCapUSD_ == 0) revert DailyCapUSDZero();
         if (dailyCapUSD_ > yearlyCapUSD) revert DailyCapExceedsYearlyCap();
@@ -561,6 +515,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         emit DailyCapUSDSet(dailyCapUSD_);
     }
 
+    /// @dev Validates and sets the minimum allocation per call.
     function _setMinSpendPerCallUSD(uint128 minSpendPerCallUSD_) internal {
         if (minSpendPerCallUSD_ == 0) revert MinSpendPerCallUSDZero();
         if (minSpendPerCallUSD_ > dailyCapUSD) revert MinSpendPerCallExceedsDailyCap();
@@ -568,6 +523,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         emit MinSpendPerCallUSDSet(minSpendPerCallUSD_);
     }
 
+    /// @dev Validates and sets the surplus share.
     function _setSurplusShareBP(uint16 surplusShareBP_) internal {
         if (surplusShareBP_ == 0 || surplusShareBP_ > MAX_BASIS_POINTS)
             revert SurplusShareBPInvalid();
@@ -575,6 +531,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         emit SurplusShareBPSet(surplusShareBP_);
     }
 
+    /// @dev Sets the daily reserve rate, re-anchoring the accrued reserve after activation.
     function _setReserveDailyRateUSD(uint128 reserveDailyRateUSD_) internal {
         if (activationTS != 0) {
             uint256 anchorTS = _todayStartTS();
@@ -591,6 +548,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         emit ReserveDailyRateUSDSet(reserveDailyRateUSD_);
     }
 
+    /// @dev Sets the minimum stETH price.
     function _setMinStEthPriceUSD(uint128 minStEthPriceUSD_) internal {
         minStEthPriceUSD = minStEthPriceUSD_;
         emit MinStEthPriceUSDSet(minStEthPriceUSD_);
