@@ -233,27 +233,17 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
      */
     function resetAccounting() external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (activationTS == 0) revert NotActivated();
-
-        uint256 revenueSumUSD = _revenueSumStrictUSD();
-        uint256 reserveUSD = _reserveCurrentUSD();
-        int256 surplusUSD = revenueSumUSD.toInt256() - revenueBaselineUSD - reserveUSD.toInt256();
-        uint256 forfeitedUSD = surplusUSD > 0
-            ? _mulBP(uint256(surplusUSD), surplusShareBP).saturatedSub(
-                totalSpentUSD - spentBaselineUSD
-            )
-            : 0;
-
-        revenueBaselineUSD = revenueSumUSD.toInt256() - reserveUSD.toInt256();
-        spentBaselineUSD = totalSpentUSD;
-
-        emit AccountingReset(forfeitedUSD, revenueBaselineUSD, spentBaselineUSD);
+        _resetAccounting();
     }
 
     /**
      * @notice Sets the share of the revenue surplus that can be spent on buybacks.
-     * @dev    The new share applies retroactively. Reset accounting to apply only to future surplus.
+     * @dev    Re-bases the surplus first, so the new share applies only to future surplus and any
+     *         allowance unspent under the old share is forfeited. Before activation there is no
+     *         surplus to re-base, so the share is set without a reset.
      */
     function setSurplusShareBP(uint16 surplusShareBP_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (activationTS != 0) _resetAccounting();
         _setSurplusShareBP(surplusShareBP_);
     }
 
@@ -453,6 +443,23 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     /// @dev Multiplies a value by a basis-point share.
     function _mulBP(uint256 number_, uint256 bp_) internal pure returns (uint256) {
         return Math.mulDiv(number_, bp_, MAX_BASIS_POINTS);
+    }
+
+    /// @dev Re-bases the surplus to zero; forfeiture is measured against the current surplus share.
+    function _resetAccounting() internal {
+        uint256 revenueSumUSD = _revenueSumStrictUSD();
+        uint256 reserveUSD = _reserveCurrentUSD();
+        int256 surplusUSD = revenueSumUSD.toInt256() - revenueBaselineUSD - reserveUSD.toInt256();
+        uint256 forfeitedUSD = surplusUSD > 0
+            ? _mulBP(uint256(surplusUSD), surplusShareBP).saturatedSub(
+                totalSpentUSD - spentBaselineUSD
+            )
+            : 0;
+
+        revenueBaselineUSD = revenueSumUSD.toInt256() - reserveUSD.toInt256();
+        spentBaselineUSD = totalSpentUSD;
+
+        emit AccountingReset(forfeitedUSD, revenueBaselineUSD, spentBaselineUSD);
     }
 
     /// @dev Validates and registers a revenue source, adjusting the baseline.
