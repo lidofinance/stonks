@@ -4,7 +4,6 @@ pragma solidity 0.8.23;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
@@ -27,7 +26,7 @@ import {IOrder} from "../interfaces/IOrder.sol";
  *         In LP mode deposits balanced LDO/wstETH into the Curve LDO/wstETH pool.
  *         In treasury mode forwards all stETH to Stonks and lets LDO settle to the treasury.
  */
-contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard, Pausable {
+contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 

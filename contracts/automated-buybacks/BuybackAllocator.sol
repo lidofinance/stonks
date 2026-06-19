@@ -4,7 +4,6 @@ pragma solidity 0.8.23;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -151,7 +150,7 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
  *    so a rate cut steps the total down by the difference for that day.
  * 8. Before activation nothing can be spent, and activation can happen only once.
  */
-contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
+contract BuybackAllocator is AssetRecovererACL {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using MathHelpers for uint256;
