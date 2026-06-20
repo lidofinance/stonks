@@ -15,8 +15,7 @@ interface IBuybackAllocator {
         NoAvailableBudget,
         QuoteUnavailable,
         StEthPriceBelowMin,
-        AllocationBelowMin,
-        NotActivated
+        AllocationBelowMin
     }
 
     struct SpendWindow {
@@ -63,7 +62,7 @@ interface IBuybackAllocator {
         view
         returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth);
 
-    function activate(uint128 reserveDailyRateUSD_) external;
+    function activate() external;
 
     function allocate() external;
 
