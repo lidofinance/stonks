@@ -122,7 +122,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     event Checkpointed(
         uint256 lastTotalRevenueUSD,
         uint256 reserveUSD,
-        uint256 bankedUSD,
+        uint256 budgetableUSD,
         uint256 budgetUSD,
         uint256 reserveAnchorTS
     );
@@ -207,7 +207,8 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     function allocate() external nonReentrant {
         _checkpoint();
 
-        (AllocationStatus status, uint256 spendUSD, uint256 spendStEth) = spendable();
+        // the set-aside above already banked pending surplus, so spend from the committed amount
+        (AllocationStatus status, uint256 spendUSD, uint256 spendStEth) = _spendable(budgetUSD);
 
         if (status != AllocationStatus.Eligible) {
             emit AllocationSkipped(msg.sender, status);
@@ -301,17 +302,50 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice Returns the eligibility status and the amount an allocation would send now, in USD
-     *         and stETH.
-     * @dev    Reflects only surplus already set aside. Revenue earned since the last set-aside is
-     *         excluded until it is set aside, which a release does first, so a release always sees
-     *         the up-to-date amount.
+     * @notice Returns the eligibility and the amount a release would send right now, in USD and
+     *         stETH, with revenue earned since the last set-aside included. Safe for off-chain
+     *         monitoring: the result stays current no matter how long ago the last set-aside was.
+     * @dev    Applies the same set-aside math a release would, then the same limits, without
+     *         changing state. A release reproduces this result.
      */
     function spendable()
         public
         view
         returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth)
     {
+        uint256 availableUSD = budgetUSD;
+
+        if (activationTS != 0) {
+            (uint256 budgetableUSD, , ) = _budgetable();
+            availableUSD += budgetableUSD;
+        }
+
+        return _spendable(availableUSD);
+    }
+
+    /// @dev Sets aside the surplus earned since the last set-aside, then moves the baseline up to
+    ///      the current total and restarts the reserve count. Does nothing when there is nothing to
+    ///      add above the reserve that built up, so the reserve carries over and a growing reserve
+    ///      can never reduce an amount already set aside.
+    function _checkpoint() internal {
+        if (activationTS == 0) return;
+
+        (uint256 budgetableUSD, uint256 reserveUSD, uint256 totalRevenueUSD) = _budgetable();
+        if (budgetableUSD == 0) return;
+
+        budgetUSD += budgetableUSD;
+        lastTotalRevenueUSD = totalRevenueUSD;
+        reserveAnchorTS = _nextDayStartTS();
+
+        emit Checkpointed(lastTotalRevenueUSD, reserveUSD, budgetableUSD, budgetUSD, reserveAnchorTS);
+    }
+
+    /// @dev Eligibility and amounts a release would produce from a given available amount, after
+    ///      the year cap, the day cap, the stETH balance, and the smallest allowed allocation.
+    ///      Shared by the committed read and the live preview.
+    function _spendable(
+        uint256 availableUSD
+    ) internal view returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth) {
         // nothing can be allocated before activation
         if (activationTS == 0) {
             return (AllocationStatus.NotActivated, 0, 0);
@@ -329,9 +363,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
             return (AllocationStatus.StEthPriceBelowMin, 0, 0);
         }
 
-        // start from the amount set aside so far; revenue earned since the last set-aside is not
-        // reflected here until it is set aside, which a release does first
-        spendableUSD = budgetUSD;
+        spendableUSD = availableUSD;
         if (spendableUSD == 0) {
             return (AllocationStatus.NoAvailableBudget, 0, 0);
         }
@@ -356,27 +388,18 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         status = AllocationStatus.Eligible;
     }
 
-    /// @dev Takes the revenue earned since the last set-aside, removes the reserve that built up
-    ///      over that interval, and adds the configured share of the rest to the amount available
-    ///      for release. Then it moves the baseline up to the current total and restarts the
-    ///      reserve count. If the new revenue does not cover the built-up reserve it does nothing
-    ///      and leaves the baseline and reserve in place, so the reserve carries over and a
-    ///      growing reserve can never reduce an amount already set aside.
-    function _checkpoint() internal {
-        if (activationTS == 0) return;
+    function _budgetable()
+        internal
+        view
+        returns (uint256 budgetableUSD, uint256 reserveUSD, uint256 totalRevenueUSD)
+    {
+        totalRevenueUSD = _revenueSumUSD();
+        reserveUSD = _reserveCurrentUSD();
+        uint256 earnedUSD = totalRevenueUSD.saturatedSub(lastTotalRevenueUSD);
 
-        uint256 totalRevenueUSD = _revenueSumUSD();
-        uint256 newRevenueUSD = totalRevenueUSD.saturatedSub(lastTotalRevenueUSD);
-        uint256 reserveUSD = _reserveCurrentUSD();
-
-        if (newRevenueUSD <= reserveUSD) return;
-
-        uint256 bankedUSD = _mulBP(newRevenueUSD - reserveUSD, surplusShareBP);
-        budgetUSD += bankedUSD;
-        lastTotalRevenueUSD = totalRevenueUSD;
-        reserveAnchorTS = _nextDayStartTS();
-
-        emit Checkpointed(lastTotalRevenueUSD, reserveUSD, bankedUSD, budgetUSD, reserveAnchorTS);
+        if (earnedUSD > reserveUSD) {
+            budgetableUSD = _mulBP(earnedUSD - reserveUSD, surplusShareBP);
+        }
     }
 
     /// @dev Advances a fixed period from the activation midnight.

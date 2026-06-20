@@ -397,6 +397,46 @@ describe('BuybackAllocator — accumulated budget', function () {
     })
   })
 
+  describe('spendable (live):', function () {
+    it('reflects revenue earned since the last set-aside, even with nothing banked yet', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(0n, 0n)
+      await source.setCumulativeRevenueUSD(usd('1000'))
+      await fund(usd('1000'))
+
+      // nothing has been banked yet, but the live read includes the pending set-aside
+      expect(await allocator.budgetUSD()).to.equal(0n)
+      const live = await allocator.spendable()
+      expect(live.status).to.equal(BigInt(AllocationStatus.Eligible))
+      expect(live.spendableUSD).to.equal(usd('1000'))
+      expect(live.spendableStEth).to.equal(usd('1000'))
+    })
+
+    it('accounts for the reserve and matches what a release then realizes', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(0n, usd('100'))
+      await source.setCumulativeRevenueUSD(usd('1000'))
+      await fund(usd('1000'))
+
+      const anchor = await allocator.reserveAnchorTS()
+      await time.increaseTo(anchor) // first full day: reserve = 100
+
+      const live = await allocator.spendable()
+      expect(live.spendableUSD).to.equal(usd('900')) // 1000 - 100 reserve
+
+      // a release at the same point realizes exactly the amount the live read showed
+      await allocator.allocate()
+      expect(await stEth.balanceOf(await executor.getAddress())).to.equal(usd('900'))
+      expect(await allocator.budgetUSD()).to.equal(0n)
+    })
+
+    it('returns NotActivated before activation', async function () {
+      await deployAllocator()
+      const live = await allocator.spendable()
+      expect(live.status).to.equal(BigInt(AllocationStatus.NotActivated))
+    })
+  })
+
   describe('removed surface:', function () {
     it('no longer exposes resetAccounting', async function () {
       await deployAllocator()
