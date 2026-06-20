@@ -119,12 +119,11 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         uint256 spendStEth
     );
     event AllocationSkipped(address indexed caller, AllocationStatus reason);
-    event Checkpointed(
+    event Checkpoint(
         uint256 lastTotalRevenueUSD,
         uint256 reserveUSD,
         uint256 budgetableUSD,
-        uint256 budgetUSD,
-        uint256 reserveAnchorTS
+        uint256 budgetUSD
     );
     event WindowRolled(uint256 windowDurationSeconds, uint256 newEndTS, uint256 previousSpentUSD);
     event ReserveAnchored(uint256 anchorTS);
@@ -342,7 +341,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         lastTotalRevenueUSD = totalRevenueUSD;
         _anchorReserve();
 
-        emit Checkpointed(lastTotalRevenueUSD, reserveUSD, budgetableUSD, budgetUSD, reserveAnchorTS);
+        emit Checkpoint(lastTotalRevenueUSD, reserveUSD, budgetableUSD, budgetUSD);
     }
 
     /// @dev Eligibility and amounts a release would produce from a given available amount, after
