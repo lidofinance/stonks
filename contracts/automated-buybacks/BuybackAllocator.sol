@@ -211,7 +211,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
      *         it does not pay out.
      */
     function allocate() external nonReentrant whenActivated {
-        _checkpoint();
+        _checkpoint(false);
 
         // the set-aside above already banked pending surplus, so spend from the committed amount
         (AllocationStatus status, uint256 spendUSD, uint256 spendStEth) = _spendable(budgetUSD);
@@ -241,20 +241,20 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     function setSurplusShareBP(
         uint16 surplusShareBP_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
-        _checkpoint();
+        _checkpoint(false);
         _setSurplusShareBP(surplusShareBP_);
     }
 
     /**
-     * @notice Sets the daily reserve rate, effective from the next day onward.
-     * @dev    Restarts the reserve count from the next day at the new rate. Reserve that was
-     *         building up since the last set-aside is dropped, so that slice of revenue becomes
-     *         spendable at the next set-aside.
+     * @notice Sets the daily reserve rate.
+     * @dev    Forces a checkpoint first, closing the open interval at the current rate (banking any
+     *         surplus, advancing the baseline, and re-anchoring) so the new rate cannot reprice the
+     *         days that already elapsed. Then applies the new rate.
      */
     function setReserveDailyRateUSD(
         uint128 reserveDailyRateUSD_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
-        _anchorReserve();
+        _checkpoint(true);
         _setReserveDailyRateUSD(reserveDailyRateUSD_);
     }
 
@@ -329,13 +329,16 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         return _spendable(budgetUSD + budgetableUSD);
     }
 
-    /// @dev Sets aside the surplus earned since the last set-aside, then moves the baseline up to
-    ///      the current total and restarts the reserve count. Does nothing when there is nothing to
-    ///      add above the reserve that built up, so the reserve carries over and a growing reserve
-    ///      can never reduce an amount already set aside.
-    function _checkpoint() internal {
+    /// @dev Sets aside the surplus earned since the last set-aside, advancing the baseline and
+    ///      restarting the reserve count. With nothing to set aside it carries forward untouched,
+    ///      so the reserve keeps accumulating; not re-anchoring on a no-surplus call is what stops
+    ///      anyone from wiping the day's reserve by triggering an empty set-aside. Forcing closes
+    ///      the interval anyway, so a following reserve rate change cannot reprice the elapsed days.
+    /// @param force_ close the interval even with no surplus. Safe only from permissioned callers;
+    ///        on a permissionless path it would let a no-surplus call reset the reserve.
+    function _checkpoint(bool force_) internal {
         (uint256 budgetableUSD, uint256 reserveUSD, uint256 totalRevenueUSD) = _budgetable();
-        if (budgetableUSD == 0) return;
+        if (budgetableUSD == 0 && !force_) return;
 
         budgetUSD += budgetableUSD;
         lastTotalRevenueUSD = totalRevenueUSD;

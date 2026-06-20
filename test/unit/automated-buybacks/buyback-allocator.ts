@@ -339,23 +339,36 @@ describe('BuybackAllocator — accumulated budget', function () {
   })
 
   describe('setReserveDailyRateUSD:', function () {
-    it('re-anchors and discards the in-progress accrual at the old rate', async function () {
+    it('banks pending surplus at the old rate, then applies the new rate forward', async function () {
       await deployAllocator({ share: SHARE_100, reserveRate: usd('100') })
       await activateWith(0n)
       await source.setCumulativeRevenueUSD(usd('1000'))
       const anchor = await allocator.reserveAnchorTS()
 
-      // Move to the first full day (reserve would be 100 if checkpointed) then change the rate.
+      // First full day: old reserve = 100. Changing the rate checkpoints first, banking 1000 - 100.
       await time.setNextBlockTimestamp(anchor)
       await allocator.setReserveDailyRateUSD(usd('50'))
 
-      const newAnchor = await allocator.reserveAnchorTS()
-      expect(newAnchor).to.equal(anchor + ONE_DAY) // next-day-start from `anchor`
+      expect(await allocator.budgetUSD()).to.equal(usd('900')) // banked at the old rate
       expect(await allocator.reserveDailyRateUSD()).to.equal(usd('50'))
+      expect(await allocator.reserveAnchorTS()).to.equal(anchor + ONE_DAY) // fresh anchor, new rate
+    })
 
-      // Still within the re-anchored free day → reserve 0, the old 100 accrual is gone.
-      await allocator.allocate()
-      expect(await allocator.budgetUSD()).to.equal(usd('1000'))
+    it('closes the interval even with no surplus, so the new rate cannot reprice elapsed days', async function () {
+      await deployAllocator({ share: SHARE_100, reserveRate: usd('100') })
+      await activateWith(0n)
+      const anchor = await allocator.reserveAnchorTS()
+
+      // Day 1: revenue 50 is below the old reserve of 100 → nothing to bank.
+      await source.setCumulativeRevenueUSD(usd('50'))
+      await time.setNextBlockTimestamp(anchor)
+      await allocator.setReserveDailyRateUSD(usd('1000'))
+
+      // The interval still closed: baseline advanced and reserve re-anchored, nothing banked. The
+      // 50 earned under the old rate will not be repriced against the new rate later.
+      expect(await allocator.budgetUSD()).to.equal(0n)
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('50'))
+      expect(await allocator.reserveAnchorTS()).to.equal(anchor + ONE_DAY)
     })
   })
 
