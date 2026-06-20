@@ -49,7 +49,7 @@ interface IBuybackAllocator {
 
     function lastTotalRevenueUSD() external view returns (uint256);
 
-    function budgetUSD() external view returns (uint256);
+    function budgetUSD() external view returns (int256);
 
     function reserveAnchorTS() external view returns (uint256);
 

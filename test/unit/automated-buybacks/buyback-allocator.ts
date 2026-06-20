@@ -200,49 +200,41 @@ describe('BuybackAllocator — accumulated budget', function () {
     })
   })
 
-  describe('carry-forward:', function () {
-    it('no-ops while new revenue does not cover the accrued reserve, then banks once it does', async function () {
+  describe('signed budget (reserve always applies):', function () {
+    it('falls below zero when revenue does not cover the reserve, then recovers', async function () {
       await deployAllocator({ share: SHARE_100, reserveRate: usd('100') })
       await activateWith(0n)
       const anchor = await allocator.reserveAnchorTS()
 
-      // Day 1: reserve = 100, revenue 50 → no-op, baseline and anchor untouched.
-      await source.setCumulativeRevenueUSD(usd('50'))
+      // Day 1: reserve 100, revenue 40 → budget dips to -60. No carry-forward: baseline and anchor advance.
+      await source.setCumulativeRevenueUSD(usd('40'))
       await time.setNextBlockTimestamp(anchor)
       await allocator.allocate()
-      expect(await allocator.budgetUSD()).to.equal(0n)
-      expect(await allocator.lastTotalRevenueUSD()).to.equal(0n)
-      expect(await allocator.reserveAnchorTS()).to.equal(anchor)
+      expect(await allocator.budgetUSD()).to.equal(-usd('60'))
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('40'))
+      expect(await allocator.reserveAnchorTS()).to.equal(anchor + ONE_DAY)
 
-      // Day 3: reserve = 3*100 = 300, revenue still 50 → still a no-op.
-      await time.setNextBlockTimestamp(anchor + 2n * ONE_DAY)
+      // More revenue the same day (reserve already counted, so 0 more) climbs the budget back positive.
+      await source.setCumulativeRevenueUSD(usd('200'))
+      await time.setNextBlockTimestamp(anchor + 100n)
       await allocator.allocate()
-      expect(await allocator.budgetUSD()).to.equal(0n)
-
-      // Revenue climbs above the carried-forward reserve → banks the excess only.
-      await source.setCumulativeRevenueUSD(usd('350'))
-      await time.setNextBlockTimestamp(anchor + 2n * ONE_DAY + 100n)
-      await allocator.allocate()
-      expect(await allocator.budgetUSD()).to.equal(usd('50')) // 350 - 300
-      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('350'))
+      expect(await allocator.budgetUSD()).to.equal(usd('100')) // -60 + (200 - 40)
     })
-  })
 
-  describe('budget is monotonic:', function () {
-    it('does not shrink as the reserve grows without new revenue', async function () {
-      await deployAllocator({ share: SHARE_50, reserveRate: usd('100') })
+    it('lets the reserve erode the budget when revenue stalls', async function () {
+      await deployAllocator({ share: SHARE_100, reserveRate: usd('100') })
       await activateWith(0n)
       await source.setCumulativeRevenueUSD(usd('1000'))
 
       const anchor = await allocator.reserveAnchorTS()
       await time.setNextBlockTimestamp(anchor)
       await allocator.allocate()
-      expect(await allocator.budgetUSD()).to.equal(usd('450')) // 50% of (1000 - 100)
+      expect(await allocator.budgetUSD()).to.equal(usd('900')) // 1000 - 100
 
-      // Advance a month with no new revenue: a recomputed allowance would erode, the budget must not.
+      // 30 idle days: the reserve keeps subtracting (30 * 100), eroding the budget below zero.
       await time.setNextBlockTimestamp(anchor + 30n * ONE_DAY)
       await allocator.allocate()
-      expect(await allocator.budgetUSD()).to.equal(usd('450'))
+      expect(await allocator.budgetUSD()).to.equal(-usd('2100')) // 900 - 3000
     })
   })
 
@@ -364,9 +356,9 @@ describe('BuybackAllocator — accumulated budget', function () {
       await time.setNextBlockTimestamp(anchor)
       await allocator.setReserveDailyRateUSD(usd('1000'))
 
-      // The interval still closed: baseline advanced and reserve re-anchored, nothing banked. The
-      // 50 earned under the old rate will not be repriced against the new rate later.
-      expect(await allocator.budgetUSD()).to.equal(0n)
+      // The interval closed at the OLD rate: revenue 50 minus the old reserve 100 leaves the budget
+      // at -50, baseline advanced and reserve re-anchored. The new rate cannot reprice those days.
+      expect(await allocator.budgetUSD()).to.equal(-usd('50'))
       expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('50'))
       expect(await allocator.reserveAnchorTS()).to.equal(anchor + ONE_DAY)
     })
@@ -393,17 +385,18 @@ describe('BuybackAllocator — accumulated budget', function () {
   })
 
   describe('flaky source:', function () {
-    it('treats a reverting source as zero and never double-counts on recovery', async function () {
+    it('reads a reverting source as a revenue drop and nets out on recovery (no double-count)', async function () {
       await deployAllocator({ share: SHARE_100 })
       await activateWith(usd('1000'))
 
-      // Reverting source → non-strict sum reads 0, checkpoint no-ops, allocate does not revert.
+      // Reverting source → non-strict sum reads 0 → budget dips by the apparent loss; no revert.
       await source.setReverting(true)
       await expect(allocator.allocate()).to.not.be.reverted
-      expect(await allocator.budgetUSD()).to.equal(0n)
-      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('1000'))
+      expect(await allocator.budgetUSD()).to.equal(-usd('1000'))
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(0n)
 
-      // Recovery banks only the genuinely new revenue (1000 → 2000), not the pre-outage total.
+      // On recovery the deltas telescope: genuine new revenue is 1000 (1000 → 2000), so the budget
+      // ends at 1000, not 2000 — the pre-outage total is not counted twice.
       await source.setReverting(false)
       await source.setCumulativeRevenueUSD(usd('2000'))
       await allocator.allocate()

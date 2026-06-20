@@ -97,8 +97,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     /// @notice Total revenue reported by all sources as of the last time surplus was set aside.
     uint256 public lastTotalRevenueUSD;
 
-    /// @notice USD set aside for buybacks and not yet released.
-    uint256 public budgetUSD;
+    /// @notice USD available for buybacks. The reserve subtracts from it on every checkpoint, so
+    ///         it can fall below zero when revenue lags; allocations treat a negative value as zero.
+    int256 public budgetUSD;
 
     /// @notice Start of the day from which the current reserve builds up.
     uint256 public reserveAnchorTS;
@@ -122,8 +123,8 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     event Checkpoint(
         uint256 lastTotalRevenueUSD,
         uint256 reserveUSD,
-        uint256 budgetableUSD,
-        uint256 budgetUSD
+        int256 deltaUSD,
+        int256 budgetUSD
     );
     event WindowRolled(uint256 windowDurationSeconds, uint256 newEndTS, uint256 previousSpentUSD);
     event ReserveAnchored(uint256 anchorTS);
@@ -205,24 +206,24 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice Sets aside newly earned surplus, then sends the amount available now to the
-     *         receiver. When nothing is eligible it records a skip and returns. The set-aside
-     *         still stands, so anyone calling this moves the available amount forward even when
-     *         it does not pay out.
+     * @notice Checkpoints pending revenue and reserve, then sends the amount available now to the
+     *         receiver. When nothing is eligible it records a skip and returns; the checkpoint
+     *         still stands, so anyone calling this advances the accounting even when it does not pay.
      */
     function allocate() external nonReentrant whenActivated {
-        _checkpoint(false);
+        _checkpoint();
 
-        // the set-aside above already banked pending surplus, so spend from the committed amount
-        (AllocationStatus status, uint256 spendUSD, uint256 spendStEth) = _spendable(budgetUSD);
+        // budget is current after the checkpoint; spend from it only while it is positive
+        uint256 availableUSD = budgetUSD > 0 ? uint256(budgetUSD) : 0;
+        (AllocationStatus status, uint256 spendUSD, uint256 spendStEth) = _spendable(availableUSD);
 
         if (status != AllocationStatus.Eligible) {
             emit AllocationSkipped(msg.sender, status);
             return;
         }
 
-        budgetUSD -= spendUSD;
-        
+        budgetUSD -= int256(spendUSD);
+
         _rollWindow(yearly, ONE_YEAR, spendUSD);
         _rollWindow(daily, ONE_DAY, spendUSD);
 
@@ -241,20 +242,19 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     function setSurplusShareBP(
         uint16 surplusShareBP_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
-        _checkpoint(false);
+        _checkpoint();
         _setSurplusShareBP(surplusShareBP_);
     }
 
     /**
      * @notice Sets the daily reserve rate.
-     * @dev    Forces a checkpoint first, closing the open interval at the current rate (banking any
-     *         surplus, advancing the baseline, and re-anchoring) so the new rate cannot reprice the
-     *         days that already elapsed. Then applies the new rate.
+     * @dev    Checkpoints first, closing the open interval at the current rate, so the new rate only
+     *         governs days after the change. Then applies the new rate.
      */
     function setReserveDailyRateUSD(
         uint128 reserveDailyRateUSD_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
-        _checkpoint(true);
+        _checkpoint();
         _setReserveDailyRateUSD(reserveDailyRateUSD_);
     }
 
@@ -325,26 +325,25 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         whenActivated
         returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth)
     {
-        (uint256 budgetableUSD, , ) = _budgetable();
-        return _spendable(budgetUSD + budgetableUSD);
+        (int256 deltaUSD, , ) = _budgetable();
+        int256 availableUSD = budgetUSD + deltaUSD;
+        return _spendable(availableUSD > 0 ? uint256(availableUSD) : 0);
     }
 
-    /// @dev Sets aside the surplus earned since the last set-aside, advancing the baseline and
-    ///      restarting the reserve count. With nothing to set aside it carries forward untouched,
-    ///      so the reserve keeps accumulating; not re-anchoring on a no-surplus call is what stops
-    ///      anyone from wiping the day's reserve by triggering an empty set-aside. Forcing closes
-    ///      the interval anyway, so a following reserve rate change cannot reprice the elapsed days.
-    /// @param force_ close the interval even with no surplus. Safe only from permissioned callers;
-    ///        on a permissionless path it would let a no-surplus call reset the reserve.
-    function _checkpoint(bool force_) internal {
-        (uint256 budgetableUSD, uint256 reserveUSD, uint256 totalRevenueUSD) = _budgetable();
-        if (budgetableUSD == 0 && !force_) return;
+    /// @dev Moves the (signed) budget by the surplus share of revenue earned since the last
+    ///      set-aside, less the reserve accrued over that interval, then records the revenue total
+    ///      as the new baseline and re-anchors. Always runs: with no new revenue the reserve still
+    ///      subtracts, so the budget can fall below zero. A source that transiently reverts reads as
+    ///      a revenue drop that dips the budget and recovers on the next read; the per-interval
+    ///      deltas telescope, so it nets out and never double-counts.
+    function _checkpoint() internal {
+        (int256 deltaUSD, uint256 totalRevenueUSD, uint256 reserveUSD) = _budgetable();
 
-        budgetUSD += budgetableUSD;
+        budgetUSD += deltaUSD;
         lastTotalRevenueUSD = totalRevenueUSD;
         _anchorReserve();
 
-        emit Checkpoint(lastTotalRevenueUSD, reserveUSD, budgetableUSD, budgetUSD);
+        emit Checkpoint(lastTotalRevenueUSD, reserveUSD, deltaUSD, budgetUSD);
     }
 
     /// @dev Eligibility and amounts a release would produce from a given available amount, after
@@ -390,18 +389,20 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         status = AllocationStatus.Eligible;
     }
 
+    /// @dev The signed change a checkpoint would apply to the budget now, and the revenue total it
+    ///      would record as the new baseline. The change is `(total - baseline - reserve) * share`:
+    ///      the surplus share of revenue earned since the last set-aside, less the reserve accrued
+    ///      over that interval. It can be negative; the signed budget absorbs it, so no clamping is
+    ///      needed.
     function _budgetable()
         internal
         view
-        returns (uint256 budgetableUSD, uint256 reserveUSD, uint256 totalRevenueUSD)
+        returns (int256 deltaUSD, uint256 totalRevenueUSD, uint256 reserveUSD)
     {
         totalRevenueUSD = _revenueSumUSD();
         reserveUSD = _reserveCurrentUSD();
-        uint256 earnedUSD = totalRevenueUSD.saturatedSub(lastTotalRevenueUSD);
-
-        if (earnedUSD > reserveUSD) {
-            budgetableUSD = _mulBP(earnedUSD - reserveUSD, surplusShareBP);
-        }
+        int256 netUSD = int256(totalRevenueUSD) - int256(lastTotalRevenueUSD) - int256(reserveUSD);
+        deltaUSD = (netUSD * int256(uint256(surplusShareBP))) / int256(MAX_BASIS_POINTS);
     }
 
     /// @dev Advances a fixed period from the activation midnight.
