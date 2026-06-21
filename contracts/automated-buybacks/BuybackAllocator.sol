@@ -357,7 +357,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     ///      the year cap, the day cap, the stETH balance, and the smallest allowed allocation.
     ///      Shared by the committed read and the live preview.
     function _spendable(
-        uint256 availableUSD
+        uint256 budgetUSD_
     ) internal view returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth) {
         // no usable price means no allocation
         uint256 stEthPriceUSD = _getStEthPriceUSD();
@@ -371,7 +371,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
             return (AllocationStatus.StEthPriceBelowMin, 0, 0);
         }
 
-        spendableUSD = availableUSD;
+        spendableUSD = budgetUSD_;
         if (spendableUSD == 0) {
             return (AllocationStatus.NoAvailableBudget, 0, 0);
         }
@@ -408,8 +408,8 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     {
         totalRevenueUSD = _revenueSumUSD();
         reserveUSD = _reserveCurrentUSD();
-        int256 netRevenueUSD = int256(totalRevenueUSD) - int256(lastTotalRevenueUSD) - int256(reserveUSD);
-        budgetDeltaUSD = (netRevenueUSD * int256(uint256(surplusShareBP))) / int256(MAX_BASIS_POINTS);
+        int256 surplusUSD = int256(totalRevenueUSD) - int256(lastTotalRevenueUSD) - int256(reserveUSD);
+        budgetDeltaUSD = (surplusUSD * int256(uint256(surplusShareBP))) / int256(MAX_BASIS_POINTS);
     }
 
     /// @dev Advances a fixed period from the activation midnight.
@@ -524,9 +524,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     function _removeRevenueSource(address source_) internal {
         if (!_revenueSources.remove(source_)) revert RevenueSourceNotRegistered();
 
-        lastTotalRevenueUSD = lastTotalRevenueUSD.saturatedSub(
-            IRevenueSource(source_).getCumulativeRevenueUSD()
-        );
+        lastTotalRevenueUSD -= IRevenueSource(source_).getCumulativeRevenueUSD();
 
         emit RevenueSourceRemoved(source_);
     }
