@@ -384,6 +384,47 @@ describe('BuybackAllocator — accumulated budget', function () {
     })
   })
 
+  describe('removeRevenueSource checkpoints first:', function () {
+    it('banks a still-earning source pending surplus instead of leaking it to the remaining sources', async function () {
+      // A is the default `source`; B is added after activation.
+      await deployAllocator({ share: SHARE_100 })
+      const b = await new RevenueSourceStub__factory(admin).deploy()
+      await activateWith(usd('10000')) // A = 10000 → baseline 10000
+
+      await b.setCumulativeRevenueUSD(usd('5000'))
+      await allocator.addRevenueSource(await b.getAddress()) // baseline 15000
+
+      // A keeps earning to 12000 (2000 pending, unbanked) before it is removed.
+      await source.setCumulativeRevenueUSD(usd('12000'))
+      await allocator.removeRevenueSource(await source.getAddress())
+
+      // Checkpoint banked A's genuine 2000; baseline now reflects B alone.
+      expect(await allocator.budgetUSD()).to.equal(usd('2000'))
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('5000'))
+
+      // B earning 500 more banks exactly 500 — A's pending growth is NOT re-credited to B.
+      await b.setCumulativeRevenueUSD(usd('5500'))
+      await allocator.allocate()
+      expect(await allocator.budgetUSD()).to.equal(usd('2500'))
+    })
+
+    it('reverts when removing an unreachable source (strict read)', async function () {
+      // Removal subtracts the source's current total from the baseline, so it must read the source.
+      // A reverting source makes removal revert (known limitation: remove a source only while it is
+      // reachable). This keeps the accounting exact rather than erasing earned/debt.
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(usd('1000'))
+
+      await source.setReverting(true)
+      await expect(allocator.removeRevenueSource(await source.getAddress())).to.be.reverted
+
+      // Still registered after the revert; a healthy read removes it cleanly.
+      await source.setReverting(false)
+      await expect(allocator.removeRevenueSource(await source.getAddress())).to.not.be.reverted
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(0n)
+    })
+  })
+
   describe('flaky source:', function () {
     it('reads a reverting source as a revenue drop and nets out on recovery (no double-count)', async function () {
       await deployAllocator({ share: SHARE_100 })

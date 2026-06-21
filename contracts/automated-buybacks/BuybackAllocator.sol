@@ -60,7 +60,6 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     /// @notice The max number of revenue sources.
     uint256 public constant MAX_REVENUE_SOURCES = 50;
 
-    uint256 internal constant PRICE_SCALE = 1e18;
     uint256 internal constant ONE_DAY = 1 days;
     uint256 internal constant ONE_YEAR = 365 days;
 
@@ -69,6 +68,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
 
     /// @notice Oracle that prices stETH in USD.
     IOracleRouter public immutable ORACLE_ROUTER;
+
+    /// @notice Scale of the oracle's USD prices, read from the oracle and used in stETH conversions.
+    uint256 internal immutable PRICE_SCALE;
 
     /// @notice Maximum USD spendable per day.
     uint128 public dailyCapUSD;
@@ -123,7 +125,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     event Checkpoint(
         uint256 lastTotalRevenueUSD,
         uint256 reserveUSD,
-        int256 deltaUSD,
+        int256 budgetDeltaUSD,
         int256 budgetUSD
     );
     event WindowRolled(uint256 windowDurationSeconds, uint256 newEndTS, uint256 previousSpentUSD);
@@ -163,6 +165,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
 
         STETH = IStETH(initParams_.stEth);
         ORACLE_ROUTER = IOracleRouter(initParams_.oracleRouter);
+
+        // The USD<->stETH conversions scale by the oracle's own price unit.
+        PRICE_SCALE = ORACLE_ROUTER.PRICE_UNIT();
 
         _setExecutor(initParams_.executor);
         _setYearlyCapUSD(initParams_.yearlyCapUSD);
@@ -302,13 +307,15 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice Unregisters a revenue source. Its total is subtracted from the baseline, so its
-     *         past contribution stays counted.
-     * @dev    Reverts if the source cannot be reached.
+     * @notice Unregisters a revenue source. Its already-banked contribution stays counted in the budget.
+     * @dev    Checkpoints first so the source's earned-but-unbanked surplus is banked, then subtracts the
+     *         source's current total from the baseline — leaving the remaining sources' baseline exact
+     *         with no leaked surplus. Reverts if the source cannot be reached.
      */
     function removeRevenueSource(
         address source_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
+        _checkpoint();
         _removeRevenueSource(source_);
     }
 
@@ -325,8 +332,8 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         whenActivated
         returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth)
     {
-        (int256 deltaUSD, , ) = _budgetable();
-        int256 availableUSD = budgetUSD + deltaUSD;
+        (int256 budgetDeltaUSD, , ) = _budgetable();
+        int256 availableUSD = budgetUSD + budgetDeltaUSD;
         return _spendable(availableUSD > 0 ? uint256(availableUSD) : 0);
     }
 
@@ -337,13 +344,13 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     ///      a revenue drop that dips the budget and recovers on the next read; the per-interval
     ///      deltas telescope, so it nets out and never double-counts.
     function _checkpoint() internal {
-        (int256 deltaUSD, uint256 totalRevenueUSD, uint256 reserveUSD) = _budgetable();
+        (int256 budgetDeltaUSD, uint256 totalRevenueUSD, uint256 reserveUSD) = _budgetable();
 
-        budgetUSD += deltaUSD;
+        budgetUSD += budgetDeltaUSD;
         lastTotalRevenueUSD = totalRevenueUSD;
         _anchorReserve();
 
-        emit Checkpoint(lastTotalRevenueUSD, reserveUSD, deltaUSD, budgetUSD);
+        emit Checkpoint(lastTotalRevenueUSD, reserveUSD, budgetDeltaUSD, budgetUSD);
     }
 
     /// @dev Eligibility and amounts a release would produce from a given available amount, after
@@ -397,12 +404,12 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     function _budgetable()
         internal
         view
-        returns (int256 deltaUSD, uint256 totalRevenueUSD, uint256 reserveUSD)
+        returns (int256 budgetDeltaUSD, uint256 totalRevenueUSD, uint256 reserveUSD)
     {
         totalRevenueUSD = _revenueSumUSD();
         reserveUSD = _reserveCurrentUSD();
-        int256 netUSD = int256(totalRevenueUSD) - int256(lastTotalRevenueUSD) - int256(reserveUSD);
-        deltaUSD = (netUSD * int256(uint256(surplusShareBP))) / int256(MAX_BASIS_POINTS);
+        int256 netRevenueUSD = int256(totalRevenueUSD) - int256(lastTotalRevenueUSD) - int256(reserveUSD);
+        budgetDeltaUSD = (netRevenueUSD * int256(uint256(surplusShareBP))) / int256(MAX_BASIS_POINTS);
     }
 
     /// @dev Advances a fixed period from the activation midnight.
@@ -509,7 +516,11 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         emit RevenueSourceAdded(source_);
     }
 
-    /// @dev Removes a revenue source, adjusting the baseline.
+    /// @dev Removes a revenue source and subtracts its current total from the baseline, so only the
+    ///      remaining sources' later growth is counted. Must run after a checkpoint, which already
+    ///      banked the source's earned-but-unbanked surplus; subtracting the same current total then
+    ///      leaves the remaining sources' baseline exact, without disturbing their unbanked earned/debt.
+    ///      Reverts if the source cannot be reached.
     function _removeRevenueSource(address source_) internal {
         if (!_revenueSources.remove(source_)) revert RevenueSourceNotRegistered();
 
