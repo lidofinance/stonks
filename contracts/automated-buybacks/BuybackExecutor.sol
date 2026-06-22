@@ -352,9 +352,6 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         if (status == AddLiquidityStatus.InvalidOraclePrice) {
             revert InvalidOraclePrice();
         }
-        if (status == AddLiquidityStatus.InvalidOraclePrice) {
-            revert InvalidOraclePrice();
-        }
         if (status == AddLiquidityStatus.PoolPriceDivergenceTooHigh) {
             revert PoolPriceDivergenceTooHigh(
                 evaluation.poolEmaLdoPerStEth,
@@ -542,7 +539,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     /**
      * @notice Updates the maximum allowed pool-EMA vs oracle divergence.
      * @param  poolPriceDivergenceToleranceBps_ New tolerance in basis points.
-     *         In `(0, MAX_POOL_DIVERGENCE_TOLERANCE_BPS)`.
+     *         In `(0, MAX_POOL_DIVERGENCE_TOLERANCE_BPS]`.
      */
     function setPoolPriceDivergenceToleranceBps(
         uint256 poolPriceDivergenceToleranceBps_
@@ -595,7 +592,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     /**
      * @notice Updates the pool TVL target at or above which the divergence gate is enforced.
      * @param  poolBootstrapMinTvlUsd_ New minimum pool TVL (bootstrap threshold) in USD scaled to 1e18
-     *         In `(0, MAX_POOL_BOOTSTRAP_MIN_TVL_USD)`.
+     *         In `(0, MAX_POOL_BOOTSTRAP_MIN_TVL_USD]`.
      */
     function setPoolBootstrapMinTvlUsd(
         uint128 poolBootstrapMinTvlUsd_
