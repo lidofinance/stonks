@@ -402,7 +402,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
 
         budgetUSD += budgetDeltaUSD;
         lastTotalRevenueUSD = totalRevenueUSD;
-        _anchorReserve();
+        // move the reserve cursor the next day
+        reserveAnchorTS = _nextDayStartTS();
+        emit ReserveAnchored(reserveAnchorTS);
 
         emit Checkpoint(lastTotalRevenueUSD, reserveUSD, budgetDeltaUSD, budgetUSD);
     }
@@ -634,12 +636,6 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     function _setReserveDailyRateUSD(uint128 reserveDailyRateUSD_) internal {
         reserveDailyRateUSD = reserveDailyRateUSD_;
         emit ReserveDailyRateUSDSet(reserveDailyRateUSD_);
-    }
-
-    /// @dev Restarts the reserve from the next day, discarding any partial accrual.
-    function _anchorReserve() internal {
-        reserveAnchorTS = _nextDayStartTS();
-        emit ReserveAnchored(reserveAnchorTS);
     }
 
     /// @dev Sets the minimum stETH price.
