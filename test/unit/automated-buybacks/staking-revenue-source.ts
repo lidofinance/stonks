@@ -1,118 +1,149 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { Signer } from 'ethers'
-import { time, takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
+import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 
 import {
   StakingRevenueSource,
   StakingRevenueSource__factory,
-  WstEthRateStub,
-  WstEthRateStub__factory,
   StEthSharesStub,
   StEthSharesStub__factory,
   StakingRouterStub,
   StakingRouterStub__factory,
   OracleRouterUsdStub,
   OracleRouterUsdStub__factory,
+  LidoLocatorStub,
+  LidoLocatorStub__factory,
 } from '../../../typechain-types'
-import { TIME_CONSTANTS } from '../../helpers/test-constants'
 
-const DEFAULT_ADMIN_ROLE = ethers.ZeroHash
-const EMERGENCY_ROLE = ethers.keccak256(ethers.toUtf8Bytes('EMERGENCY_ROLE'))
-const REPORTER_ROLE = ethers.keccak256(ethers.toUtf8Bytes('REPORTER_ROLE'))
-
-const STALENESS_WINDOW_SECONDS = BigInt(TIME_CONSTANTS.ONE_DAY_SECONDS)
-const ONE_DAY = BigInt(TIME_CONSTANTS.ONE_DAY_SECONDS)
-
-const TOKEN_RATE_SCALE = 10n ** 27n
 const PRICE_SCALE = 10n ** 18n
 
 const BASE_PRECISION = 10_000n
 const MODULES_FEE = 500n
 const TREASURY_FEE = 500n
 
-const INITIAL_RATE = TOKEN_RATE_SCALE // 1.0 stETH per wstETH
-const POSITIVE_REBASE_RATE = (TOKEN_RATE_SCALE * 101n) / 100n // +1%
-const NEGATIVE_REBASE_RATE = (TOKEN_RATE_SCALE * 99n) / 100n // -1%
+const INITIAL_POOLED_ETH_PER_SHARE = PRICE_SCALE // 1:1 → shares == stETH
 
-const INTERNAL_SHARES = 10n ** 24n // 1M shares worth of stETH
-const EXTERNAL_SHARES = 0n
-const TOTAL_SHARES = INTERNAL_SHARES + EXTERNAL_SHARES
+const STETH_USD_PRICE = ethers.parseEther('3500')
 
-const STETH_USD_PRICE = ethers.parseEther('3500') // $3500 per stETH, 1e18-scaled
+// A nominal positive rebase: 1k stETH worth of fee shares minted across modules + treasury.
+const NOMINAL_FEE_SHARES = ethers.parseEther('1000')
 
-const missingRoleRegex = (account: string, role: string) =>
-  new RegExp(
-    `AccessControl: account ${account.toLowerCase()} is missing role ${role.toLowerCase()}`
-  )
-
-function expectedRevenueStEth(
-  rateDelta: bigint,
-  internalShares: bigint,
-  treasuryFee: bigint,
-  modulesFee: bigint,
-  basePrecision: bigint
-): bigint {
-  const totalFee = modulesFee + treasuryFee
-  return (
-    (rateDelta * internalShares * treasuryFee) / (TOKEN_RATE_SCALE * (basePrecision - totalFee))
-  )
+// Placeholder values for the rebase-payload parameters that `StakingRevenueSource` does not
+// consume. Their values do not affect any branch of `pushTokenRate`.
+const PUSH_IGNORED = {
+  timeElapsed: 1n,
+  preTotalShares: 1n,
+  preTotalEther: 1n,
+  postTotalShares: 1n,
+  postTotalEther: 1n,
 }
 
-function expectedRevenueUSD(revenueStEth: bigint, stEthUsdPrice: bigint): bigint {
-  return (revenueStEth * stEthUsdPrice) / PRICE_SCALE
+// Monotonically increasing report timestamp. Rebase report timestamps strictly increase and the
+// contract dedupes on them, so each push must carry a fresh, larger value. A global counter keeps
+// every call across the suite strictly increasing; since each test deploys a fresh subject (with
+// `lastReportTimestamp == 0`), any positive value passes the first gate.
+let reportTsCounter = 0n
+function nextReportTs(): bigint {
+  reportTsCounter += 1n
+  return reportTsCounter
+}
+
+async function pushSharesMinted(
+  subject: StakingRevenueSource,
+  caller: Signer,
+  shares: bigint,
+  reportTimestamp?: bigint
+) {
+  return subject
+    .connect(caller)
+    .pushTokenRate(
+      reportTimestamp ?? nextReportTs(),
+      PUSH_IGNORED.timeElapsed,
+      PUSH_IGNORED.preTotalShares,
+      PUSH_IGNORED.preTotalEther,
+      PUSH_IGNORED.postTotalShares,
+      PUSH_IGNORED.postTotalEther,
+      shares
+    )
+}
+
+enum OracleFailureMode {
+  None = 0,
+  CustomError = 1,
+  EmptyRevert = 2,
+}
+
+function expectedTreasuryStEth(
+  sharesMintedAsFees: bigint,
+  treasuryFee: bigint,
+  modulesFee: bigint,
+  pooledEthPerShare: bigint
+): bigint {
+  const totalFee = modulesFee + treasuryFee
+  if (totalFee === 0n) return 0n
+  const treasuryShares = (sharesMintedAsFees * treasuryFee) / totalFee
+  return (treasuryShares * pooledEthPerShare) / PRICE_SCALE
+}
+
+function expectedRevenueUSD(stEth: bigint, stEthUsdPrice: bigint): bigint {
+  return (stEth * stEthUsdPrice) / PRICE_SCALE
+}
+
+function nominalTreasuryStEth(): bigint {
+  return expectedTreasuryStEth(
+    NOMINAL_FEE_SHARES,
+    TREASURY_FEE,
+    MODULES_FEE,
+    INITIAL_POOLED_ETH_PER_SHARE
+  )
 }
 
 describe('StakingRevenueSource', function () {
   let factory: StakingRevenueSource__factory
   let subject: StakingRevenueSource
-  let wstEthStub: WstEthRateStub
   let stEthStub: StEthSharesStub
   let stakingRouterStub: StakingRouterStub
   let oracleStub: OracleRouterUsdStub
+  let locatorStub: LidoLocatorStub
 
   let admin: Signer
   let notifier: Signer
   let stranger: Signer
-  let emergency: Signer
+  let altNotifier: Signer
 
   let topSnapshot: SnapshotRestorer
 
   async function deployStubs(): Promise<{
-    wstEth: WstEthRateStub
     stEth: StEthSharesStub
     stakingRouter: StakingRouterStub
     oracle: OracleRouterUsdStub
+    locator: LidoLocatorStub
   }> {
-    const wstEth = await new WstEthRateStub__factory(admin).deploy(INITIAL_RATE)
-    const stEth = await new StEthSharesStub__factory(admin).deploy()
+    const stEth = await new StEthSharesStub__factory(admin).deploy(INITIAL_POOLED_ETH_PER_SHARE)
     const stakingRouter = await new StakingRouterStub__factory(admin).deploy()
     const oracle = await new OracleRouterUsdStub__factory(admin).deploy()
+    const locator = await new LidoLocatorStub__factory(admin).deploy()
 
-    await stEth.setShares(TOTAL_SHARES, EXTERNAL_SHARES)
     await stakingRouter.setFeeDistribution(MODULES_FEE, TREASURY_FEE, BASE_PRECISION)
     await oracle.setUsdPrice(STETH_USD_PRICE, STETH_USD_PRICE)
 
-    return { wstEth, stEth, stakingRouter, oracle }
+    await locator.setLido(await stEth.getAddress())
+    await locator.setStakingRouter(await stakingRouter.getAddress())
+    await locator.setPostTokenRebaseReceiver(await notifier.getAddress())
+
+    return { stEth, stakingRouter, oracle, locator }
   }
 
-  async function deploySubject(overrides: {
-    admin?: string
-    staleness?: bigint
-    oracleRouter?: string
-    stEth?: string
-    wstEth?: string
-    stakingRouter?: string
-    tokenRateNotifier?: string
-  } = {}) {
+  async function deploySubject(
+    overrides: {
+      oracleRouter?: string
+      lidoLocator?: string
+    } = {}
+  ) {
     const instance = await factory.deploy(
-      overrides.admin ?? (await admin.getAddress()),
-      overrides.staleness ?? STALENESS_WINDOW_SECONDS,
       overrides.oracleRouter ?? (await oracleStub.getAddress()),
-      overrides.stEth ?? (await stEthStub.getAddress()),
-      overrides.wstEth ?? (await wstEthStub.getAddress()),
-      overrides.stakingRouter ?? (await stakingRouterStub.getAddress()),
-      overrides.tokenRateNotifier ?? (await notifier.getAddress())
+      overrides.lidoLocator ?? (await locatorStub.getAddress())
     )
     await instance.waitForDeployment()
     return instance
@@ -120,7 +151,7 @@ describe('StakingRevenueSource', function () {
 
   before(async function () {
     topSnapshot = await takeSnapshot()
-    ;[admin, notifier, stranger, emergency] = await ethers.getSigners()
+    ;[admin, notifier, stranger, altNotifier] = await ethers.getSigners()
 
     factory = await ethers.getContractFactory('StakingRevenueSource')
   })
@@ -131,10 +162,10 @@ describe('StakingRevenueSource', function () {
 
   beforeEach(async function () {
     const stubs = await deployStubs()
-    wstEthStub = stubs.wstEth
     stEthStub = stubs.stEth
     stakingRouterStub = stubs.stakingRouter
     oracleStub = stubs.oracle
+    locatorStub = stubs.locator
   })
 
   describe('deployment:', function () {
@@ -149,101 +180,30 @@ describe('StakingRevenueSource', function () {
       await snapshot.restore()
     })
 
-    it('should revert with InvalidAdminAddress when admin_ is zero', async function () {
-      await expect(deploySubject({ admin: ethers.ZeroAddress }))
-        .to.be.revertedWithCustomError(factory, 'InvalidAdminAddress')
-        .withArgs(ethers.ZeroAddress)
-    })
-
-    it('should revert with InvalidStalenessWindow when staleness is zero', async function () {
-      await expect(deploySubject({ staleness: 0n }))
-        .to.be.revertedWithCustomError(factory, 'InvalidStalenessWindow')
-        .withArgs(0n)
-    })
-
     it('should revert with InvalidOracleRouterAddress when oracle is zero', async function () {
       await expect(deploySubject({ oracleRouter: ethers.ZeroAddress }))
         .to.be.revertedWithCustomError(factory, 'InvalidOracleRouterAddress')
         .withArgs(ethers.ZeroAddress)
     })
 
-    it('should revert with InvalidStEthAddress when stEth is zero', async function () {
-      await expect(deploySubject({ stEth: ethers.ZeroAddress }))
-        .to.be.revertedWithCustomError(factory, 'InvalidStEthAddress')
+    it('should revert with InvalidLidoLocatorAddress when locator is zero', async function () {
+      await expect(deploySubject({ lidoLocator: ethers.ZeroAddress }))
+        .to.be.revertedWithCustomError(factory, 'InvalidLidoLocatorAddress')
         .withArgs(ethers.ZeroAddress)
     })
 
-    it('should revert with InvalidWstEthAddress when wstEth is zero', async function () {
-      await expect(deploySubject({ wstEth: ethers.ZeroAddress }))
-        .to.be.revertedWithCustomError(factory, 'InvalidWstEthAddress')
-        .withArgs(ethers.ZeroAddress)
-    })
-
-    it('should revert with InvalidStakingRouterAddress when staking router is zero', async function () {
-      await expect(deploySubject({ stakingRouter: ethers.ZeroAddress }))
-        .to.be.revertedWithCustomError(factory, 'InvalidStakingRouterAddress')
-        .withArgs(ethers.ZeroAddress)
-    })
-
-    it('should revert with InvalidTokenRateNotifierAddress when notifier is zero', async function () {
-      await expect(deploySubject({ tokenRateNotifier: ethers.ZeroAddress }))
-        .to.be.revertedWithCustomError(factory, 'InvalidTokenRateNotifierAddress')
-        .withArgs(ethers.ZeroAddress)
-    })
-
-    it('should expose REPORTER_ROLE as keccak256("REPORTER_ROLE")', async function () {
-      expect(await subject.REPORTER_ROLE()).to.equal(REPORTER_ROLE)
-    })
-
-    it('should store all external-dependency addresses as immutables', async function () {
+    it('should store ORACLE_ROUTER and LIDO_LOCATOR as immutables', async function () {
       expect(await subject.ORACLE_ROUTER()).to.equal(await oracleStub.getAddress())
-      expect(await subject.STETH()).to.equal(await stEthStub.getAddress())
-      expect(await subject.WSTETH()).to.equal(await wstEthStub.getAddress())
-      expect(await subject.STAKING_ROUTER()).to.equal(await stakingRouterStub.getAddress())
+      expect(await subject.LIDO_LOCATOR()).to.equal(await locatorStub.getAddress())
     })
 
-    it('should store the provided staleness window via the base class', async function () {
-      expect(await subject.STALENESS_WINDOW_SECONDS()).to.equal(STALENESS_WINDOW_SECONDS)
+    it('should cache PRICE_UNIT from the OracleRouter at construction', async function () {
+      expect(await subject.PRICE_UNIT()).to.equal(await oracleStub.PRICE_UNIT())
     })
 
-    it('should grant DEFAULT_ADMIN_ROLE to admin_', async function () {
-      expect(await subject.hasRole(DEFAULT_ADMIN_ROLE, await admin.getAddress())).to.equal(true)
-    })
-
-    it('should grant REPORTER_ROLE to tokenRateNotifier_', async function () {
-      expect(await subject.hasRole(REPORTER_ROLE, await notifier.getAddress())).to.equal(true)
-    })
-
-    it('should NOT grant REPORTER_ROLE to admin_', async function () {
-      expect(await subject.hasRole(REPORTER_ROLE, await admin.getAddress())).to.equal(false)
-    })
-
-    it('should NOT grant EMERGENCY_ROLE to admin_ at construction', async function () {
-      expect(await subject.hasRole(EMERGENCY_ROLE, await admin.getAddress())).to.equal(false)
-    })
-
-    it('should register exactly one REPORTER_ROLE member', async function () {
-      expect(await subject.getRoleMemberCount(REPORTER_ROLE)).to.equal(1n)
-      expect(await subject.getRoleMember(REPORTER_ROLE, 0n)).to.equal(await notifier.getAddress())
-    })
-
-    it('should initialize storage with zero revenue, zero timestamp, and stale flag', async function () {
-      const [revenueUSD, reportTimestamp, isStale] = await subject.getRevenue()
-      expect(revenueUSD).to.equal(0n)
-      expect(reportTimestamp).to.equal(0n)
-      expect(isStale).to.equal(true)
-    })
-
-    it('should deploy in the unpaused state', async function () {
-      expect(await subject.paused()).to.equal(false)
-    })
-
-    it('should seed _lastStEthPerToken from the live wstETH rate', async function () {
-      // Observed indirectly: if the baseline were not seeded from live rate, a same-rate
-      // pushTokenRate would underflow or compute non-zero revenue. It stores zero.
-      await subject.connect(notifier).pushTokenRate()
-      const [revenueUSD] = await subject.getRevenue()
-      expect(revenueUSD).to.equal(0n)
+    it('should initialize cumulative and pending accumulators at zero', async function () {
+      expect(await subject.getCumulativeRevenueUSD()).to.equal(0n)
+      expect(await subject.pendingRevenueStEth()).to.equal(0n)
     })
   })
 
@@ -259,329 +219,394 @@ describe('StakingRevenueSource', function () {
       await snapshot.restore()
     })
 
-    describe('access control & modifiers:', function () {
-      it('should revert when called by admin lacking REPORTER_ROLE', async function () {
+    describe('authorization:', function () {
+      it('should revert with UnauthorizedCaller when called by admin', async function () {
         const adminAddr = await admin.getAddress()
-        await expect(subject.connect(admin).pushTokenRate()).to.be.revertedWith(
-          missingRoleRegex(adminAddr, REPORTER_ROLE)
-        )
+        await expect(pushSharesMinted(subject, admin, NOMINAL_FEE_SHARES))
+          .to.be.revertedWithCustomError(subject, 'UnauthorizedCaller')
+          .withArgs(adminAddr)
       })
 
-      it('should revert when called by an unrelated stranger', async function () {
+      it('should revert with UnauthorizedCaller when called by an unrelated stranger', async function () {
         const strangerAddr = await stranger.getAddress()
-        await expect(subject.connect(stranger).pushTokenRate()).to.be.revertedWith(
-          missingRoleRegex(strangerAddr, REPORTER_ROLE)
-        )
+        await expect(pushSharesMinted(subject, stranger, NOMINAL_FEE_SHARES))
+          .to.be.revertedWithCustomError(subject, 'UnauthorizedCaller')
+          .withArgs(strangerAddr)
       })
 
-      it('should revert after REPORTER_ROLE is revoked from the notifier', async function () {
-        // Sanity: notifier starts able to call.
-        await subject.connect(notifier).pushTokenRate()
+      it('should accept the caller currently registered as postTokenRebaseReceiver', async function () {
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)).to.not.be.reverted
+      })
+
+      it('self-heal: a locator upgrade that retargets the receiver auto-grants the new caller', async function () {
+        // The original notifier is no longer the receiver after the locator update.
+        await locatorStub.setPostTokenRebaseReceiver(await altNotifier.getAddress())
 
         const notifierAddr = await notifier.getAddress()
-        await subject.connect(admin).revokeRole(REPORTER_ROLE, notifierAddr)
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.be.revertedWithCustomError(subject, 'UnauthorizedCaller')
+          .withArgs(notifierAddr)
 
-        await expect(subject.connect(notifier).pushTokenRate()).to.be.revertedWith(
-          missingRoleRegex(notifierAddr, REPORTER_ROLE)
-        )
+        // The newly-pointed receiver can push without any contract-side governance action.
+        await expect(pushSharesMinted(subject, altNotifier, NOMINAL_FEE_SHARES)).to.not.be.reverted
       })
 
-      it('should revert with "Pausable: paused" when the contract is paused', async function () {
-        await subject.connect(admin).grantRole(EMERGENCY_ROLE, await emergency.getAddress())
-        await subject.connect(emergency).pause()
+      it('should revert UnauthorizedCaller when locator reports zero receiver', async function () {
+        await locatorStub.setPostTokenRebaseReceiver(ethers.ZeroAddress)
 
-        await expect(subject.connect(notifier).pushTokenRate()).to.be.revertedWith(
-          'Pausable: paused'
-        )
-      })
-    })
-
-    describe('fee-distribution arithmetic guards:', function () {
-      it('should revert with Panic 0x12 when totalFee equals basePrecision', async function () {
-        await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
-        await stakingRouterStub.setFeeDistribution(
-          BASE_PRECISION / 2n,
-          BASE_PRECISION / 2n,
-          BASE_PRECISION
-        )
-
-        await expect(subject.connect(notifier).pushTokenRate()).to.be.revertedWithPanic('0x12')
-      })
-
-      it('should revert with Panic 0x11 when totalFee exceeds basePrecision', async function () {
-        await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
-        await stakingRouterStub.setFeeDistribution(
-          BASE_PRECISION,
-          BASE_PRECISION,
-          BASE_PRECISION
-        )
-
-        await expect(subject.connect(notifier).pushTokenRate()).to.be.revertedWithPanic('0x11')
-      })
-
-      it('should revert with Panic 0x11 when externalShares exceed totalShares', async function () {
-        await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
-        await stEthStub.setShares(INTERNAL_SHARES, INTERNAL_SHARES + 1n)
-
-        await expect(subject.connect(notifier).pushTokenRate()).to.be.revertedWithPanic('0x11')
+        const notifierAddr = await notifier.getAddress()
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.be.revertedWithCustomError(subject, 'UnauthorizedCaller')
+          .withArgs(notifierAddr)
       })
     })
 
-    describe('positive delta:', function () {
-      it('should store the back-derived daily revenue via _updateRevenue', async function () {
-        await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
+    describe('report-timestamp dedupe:', function () {
+      it('should advance lastReportTimestamp to the accepted report timestamp', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 100n)
+        expect(await subject.lastReportTimestamp()).to.equal(100n)
+      })
 
-        const rateDelta = POSITIVE_REBASE_RATE - INITIAL_RATE
-        const expectedStEth = expectedRevenueStEth(
-          rateDelta,
-          INTERNAL_SHARES,
+      it('should skip a duplicate report timestamp without double-counting', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 100n)
+        const pendingAfterFirst = await subject.pendingRevenueStEth()
+
+        // Same timestamp again → treated as a replay, no emit, no state change.
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 100n)).to.not.emit(
+          subject,
+          'RevenueAccumulatedInStEth'
+        )
+        expect(await subject.pendingRevenueStEth()).to.equal(pendingAfterFirst)
+        expect(await subject.lastReportTimestamp()).to.equal(100n)
+      })
+
+      it('should skip an out-of-order (older) report timestamp', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 100n)
+        const pendingAfterFirst = await subject.pendingRevenueStEth()
+
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 50n)).to.not.emit(
+          subject,
+          'RevenueAccumulatedInStEth'
+        )
+        expect(await subject.pendingRevenueStEth()).to.equal(pendingAfterFirst)
+        expect(await subject.lastReportTimestamp()).to.equal(100n)
+      })
+
+      it('should accept a strictly increasing report timestamp', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 100n)
+        const expectedStEth = nominalTreasuryStEth()
+
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES, 101n))
+          .to.emit(subject, 'RevenueAccumulatedInStEth')
+          .withArgs(expectedStEth, expectedStEth * 2n)
+        expect(await subject.lastReportTimestamp()).to.equal(101n)
+      })
+
+      it('should advance the watermark even on a zero-fee rebase', async function () {
+        await pushSharesMinted(subject, notifier, 0n, 100n)
+        expect(await subject.lastReportTimestamp()).to.equal(100n)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
+      })
+    })
+
+    describe('happy path:', function () {
+      it('should accumulate treasury stETH into the pending bucket and emit RevenueAccumulatedInStEth', async function () {
+        const expectedStEth = nominalTreasuryStEth()
+
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.emit(subject, 'RevenueAccumulatedInStEth')
+          .withArgs(expectedStEth, expectedStEth)
+
+        expect(await subject.pendingRevenueStEth()).to.equal(expectedStEth)
+      })
+
+      it('should NOT touch the cumulative USD accumulator on pushTokenRate', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+        expect(await subject.getCumulativeRevenueUSD()).to.equal(0n)
+      })
+
+      it('should NOT call the OracleRouter on pushTokenRate', async function () {
+        // Configure oracle to revert with empty data. If pushTokenRate routed through it, the
+        // push would itself revert. It must not.
+        await oracleStub.setFailureMode(OracleFailureMode.EmptyRevert)
+
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)).to.not.be.reverted
+        expect(await subject.pendingRevenueStEth()).to.equal(nominalTreasuryStEth())
+      })
+
+      it('should sum pending across consecutive rebases', async function () {
+        const perPushStEth = nominalTreasuryStEth()
+
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+
+        expect(await subject.pendingRevenueStEth()).to.equal(perPushStEth * 3n)
+      })
+
+      it('should scale pending with pooledEthPerShare after a positive rebase', async function () {
+        const inflatedRate = (INITIAL_POOLED_ETH_PER_SHARE * 101n) / 100n
+        await stEthStub.setPooledEthPerShare(inflatedRate)
+
+        const expectedStEth = expectedTreasuryStEth(
+          NOMINAL_FEE_SHARES,
           TREASURY_FEE,
           MODULES_FEE,
-          BASE_PRECISION
+          inflatedRate
         )
-        const expectedUSD = expectedRevenueUSD(expectedStEth, STETH_USD_PRICE)
 
-        const tx = await subject.connect(notifier).pushTokenRate()
-        const receipt = await tx.wait()
-        const reportTs = BigInt((await ethers.provider.getBlock(receipt!.blockNumber))!.timestamp)
-
-        const [revenueUSD, reportTimestamp, isStale] = await subject.getRevenue()
-        // First report → base class stores raw (no normalization).
-        expect(revenueUSD).to.equal(expectedUSD)
-        expect(reportTimestamp).to.equal(reportTs)
-        expect(isStale).to.equal(false)
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.emit(subject, 'RevenueAccumulatedInStEth')
+          .withArgs(expectedStEth, expectedStEth)
       })
 
-      it('should emit RevenueUpdated with the raw USD value on the first positive report', async function () {
-        await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
+      it('should pick up updated fee splits between rebases', async function () {
+        const firstStEth = nominalTreasuryStEth()
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
 
-        const rateDelta = POSITIVE_REBASE_RATE - INITIAL_RATE
-        const expectedStEth = expectedRevenueStEth(
-          rateDelta,
-          INTERNAL_SHARES,
+        const newModulesFee = 700n
+        const newTreasuryFee = 300n
+        await stakingRouterStub.setFeeDistribution(newModulesFee, newTreasuryFee, BASE_PRECISION)
+
+        const secondStEth = expectedTreasuryStEth(
+          NOMINAL_FEE_SHARES,
+          newTreasuryFee,
+          newModulesFee,
+          INITIAL_POOLED_ETH_PER_SHARE
+        )
+
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.emit(subject, 'RevenueAccumulatedInStEth')
+          .withArgs(secondStEth, firstStEth + secondStEth)
+      })
+
+      it('should pick up the new StakingRouter address if the locator is upgraded', async function () {
+        // Deploy a second StakingRouter stub with a different fee split. After the locator is
+        // retargeted, the contract must use the new router's split.
+        const newStakingRouter = await new StakingRouterStub__factory(admin).deploy()
+        const newModulesFee = 700n
+        const newTreasuryFee = 300n
+        await newStakingRouter.setFeeDistribution(newModulesFee, newTreasuryFee, BASE_PRECISION)
+        await locatorStub.setStakingRouter(await newStakingRouter.getAddress())
+
+        const expectedStEth = expectedTreasuryStEth(
+          NOMINAL_FEE_SHARES,
+          newTreasuryFee,
+          newModulesFee,
+          INITIAL_POOLED_ETH_PER_SHARE
+        )
+
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.emit(subject, 'RevenueAccumulatedInStEth')
+          .withArgs(expectedStEth, expectedStEth)
+      })
+
+      it('should pick up the new lido address if the locator is upgraded', async function () {
+        // Deploy a second stETH stub with a different share rate. After the locator is
+        // retargeted, the contract must convert shares using the new lido's rate.
+        const newRate = (INITIAL_POOLED_ETH_PER_SHARE * 105n) / 100n
+        const newStEth = await new StEthSharesStub__factory(admin).deploy(newRate)
+        await locatorStub.setLido(await newStEth.getAddress())
+
+        const expectedStEth = expectedTreasuryStEth(
+          NOMINAL_FEE_SHARES,
           TREASURY_FEE,
           MODULES_FEE,
-          BASE_PRECISION
+          newRate
         )
-        const expectedUSD = expectedRevenueUSD(expectedStEth, STETH_USD_PRICE)
 
-        const nextTs = BigInt(await time.latest()) + 100n
-        await time.setNextBlockTimestamp(nextTs)
-
-        await expect(subject.connect(notifier).pushTokenRate())
-          .to.emit(subject, 'RevenueUpdated')
-          .withArgs(expectedUSD, nextTs)
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.emit(subject, 'RevenueAccumulatedInStEth')
+          .withArgs(expectedStEth, expectedStEth)
       })
+    })
 
-      it('should advance the baseline so the next delta is measured from the new rate', async function () {
-        await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
-        await subject.connect(notifier).pushTokenRate()
-
-        // Second positive rebase from the post-rebase rate.
-        const secondRate = (POSITIVE_REBASE_RATE * 1005n) / 1000n // +0.5%
-        await wstEthStub.setStEthPerToken(secondRate)
-
-        const nextTs = BigInt(await time.latest()) + 2n * ONE_DAY
-        await time.setNextBlockTimestamp(nextTs)
-
-        const rateDelta = secondRate - POSITIVE_REBASE_RATE
-        const expectedStEth = expectedRevenueStEth(
-          rateDelta,
-          INTERNAL_SHARES,
-          TREASURY_FEE,
-          MODULES_FEE,
-          BASE_PRECISION
+    describe('zero-input fast paths:', function () {
+      it('should be a no-op when sharesMintedAsFees is zero', async function () {
+        await expect(pushSharesMinted(subject, notifier, 0n)).to.not.emit(
+          subject,
+          'RevenueAccumulatedInStEth'
         )
-        const rawUSD = expectedRevenueUSD(expectedStEth, STETH_USD_PRICE)
-
-        // Base class normalizes raw USD over the elapsed period to a daily rate.
-        const prevTs = (await subject.getRevenue())[1]
-        const periodSeconds = nextTs - prevTs
-        const expectedDailyUSD = (rawUSD * ONE_DAY) / periodSeconds
-
-        await expect(subject.connect(notifier).pushTokenRate())
-          .to.emit(subject, 'RevenueUpdated')
-          .withArgs(expectedDailyUSD, nextTs)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
       })
 
-      it('should yield zero revenue when internal shares are zero', async function () {
-        await stEthStub.setShares(TOTAL_SHARES, TOTAL_SHARES) // all external
-        await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
+      it('should be a no-op when totalFee is zero (defensive branch)', async function () {
+        await stakingRouterStub.setFeeDistribution(0n, 0n, BASE_PRECISION)
 
-        const nextTs = BigInt(await time.latest()) + 100n
-        await time.setNextBlockTimestamp(nextTs)
-
-        await expect(subject.connect(notifier).pushTokenRate())
-          .to.emit(subject, 'RevenueUpdated')
-          .withArgs(0n, nextTs)
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)).to.not.emit(
+          subject,
+          'RevenueAccumulatedInStEth'
+        )
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
       })
 
-      it('should yield zero revenue when treasuryFee is zero', async function () {
+      it('should emit RevenueAccumulatedInStEth(0, 0) when treasuryFee is zero but modulesFee is not', async function () {
         await stakingRouterStub.setFeeDistribution(MODULES_FEE, 0n, BASE_PRECISION)
-        await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
 
-        const nextTs = BigInt(await time.latest()) + 100n
-        await time.setNextBlockTimestamp(nextTs)
+        await expect(pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES))
+          .to.emit(subject, 'RevenueAccumulatedInStEth')
+          .withArgs(0n, 0n)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
+      })
+    })
 
-        await expect(subject.connect(notifier).pushTokenRate())
-          .to.emit(subject, 'RevenueUpdated')
-          .withArgs(0n, nextTs)
+    describe('arithmetic edges:', function () {
+      it('should revert with Panic 0x11 when shares × treasuryFee overflows uint256', async function () {
+        const max = 2n ** 256n - 1n
+        await stakingRouterStub.setFeeDistribution(0n, 2n, BASE_PRECISION)
+
+        await expect(pushSharesMinted(subject, notifier, max)).to.be.revertedWithPanic('0x11')
       })
 
-      it('should yield zero revenue when the stETH USD price is zero', async function () {
+      it('should handle a single-share fee mint without rounding to zero', async function () {
+        await stakingRouterStub.setFeeDistribution(0n, TREASURY_FEE, BASE_PRECISION)
+        await expect(pushSharesMinted(subject, notifier, 1n))
+          .to.emit(subject, 'RevenueAccumulatedInStEth')
+          .withArgs(1n, 1n)
+      })
+    })
+  })
+
+  describe('#convertPendingRevenueToUSD', function () {
+    let snapshot: SnapshotRestorer
+
+    beforeEach(async function () {
+      snapshot = await takeSnapshot()
+      subject = await deploySubject()
+    })
+
+    afterEach(async function () {
+      await snapshot.restore()
+    })
+
+    describe('access control:', function () {
+      it('should be permissionless: any caller can settle pending', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+        await expect(subject.connect(stranger).convertPendingRevenueToUSD()).to.not.be.reverted
+      })
+    })
+
+    describe('happy path:', function () {
+      it('should convert pending to USD, append to cumulative, and reset pending', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+        const pending = await subject.pendingRevenueStEth()
+        const expectedUSD = expectedRevenueUSD(pending, STETH_USD_PRICE)
+
+        await expect(subject.connect(stranger).convertPendingRevenueToUSD())
+          .to.emit(subject, 'PendingRevenueConverted')
+          .withArgs(pending, STETH_USD_PRICE, expectedUSD)
+          .and.to.emit(subject, 'RevenueAdded')
+          .withArgs(expectedUSD, expectedUSD)
+
+        expect(await subject.getCumulativeRevenueUSD()).to.equal(expectedUSD)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
+      })
+
+      it('should aggregate multiple rebases into a single conversion', async function () {
+        for (let i = 0; i < 3; i++) {
+          await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+        }
+
+        const pending = await subject.pendingRevenueStEth()
+        const expectedUSD = expectedRevenueUSD(pending, STETH_USD_PRICE)
+
+        await subject.connect(stranger).convertPendingRevenueToUSD()
+
+        expect(await subject.getCumulativeRevenueUSD()).to.equal(expectedUSD)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
+      })
+
+      it('should use the current oracle price even if it moved since the rebases', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+        const pending = await subject.pendingRevenueStEth()
+
+        const newPrice = STETH_USD_PRICE / 2n
+        await oracleStub.setUsdPrice(newPrice, newPrice)
+
+        const expectedUSD = expectedRevenueUSD(pending, newPrice)
+        await expect(subject.connect(stranger).convertPendingRevenueToUSD())
+          .to.emit(subject, 'PendingRevenueConverted')
+          .withArgs(pending, newPrice, expectedUSD)
+      })
+
+      it('should be repeatable: pushTokenRate → convert → pushTokenRate → convert', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+        await subject.connect(stranger).convertPendingRevenueToUSD()
+        const firstCumulative = await subject.getCumulativeRevenueUSD()
+
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+        await subject.connect(stranger).convertPendingRevenueToUSD()
+        const secondCumulative = await subject.getCumulativeRevenueUSD()
+
+        expect(secondCumulative).to.equal(firstCumulative * 2n)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
+      })
+    })
+
+    describe('idle and degraded paths:', function () {
+      it('should be a no-op when there is no pending revenue', async function () {
+        await expect(subject.connect(stranger).convertPendingRevenueToUSD()).to.not.emit(
+          subject,
+          'PendingRevenueConverted'
+        )
+        await expect(subject.connect(stranger).convertPendingRevenueToUSD()).to.not.emit(
+          subject,
+          'RevenueAdded'
+        )
+        expect(await subject.getCumulativeRevenueUSD()).to.equal(0n)
+      })
+
+      it('should preserve pending and revert with OracleReturnedZeroPrice when oracle returns 0', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+        const pendingBefore = await subject.pendingRevenueStEth()
+
         await oracleStub.setUsdPrice(0n, 0n)
-        await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
 
-        const nextTs = BigInt(await time.latest()) + 100n
-        await time.setNextBlockTimestamp(nextTs)
+        await expect(
+          subject.connect(stranger).convertPendingRevenueToUSD()
+        ).to.be.revertedWithCustomError(subject, 'OracleReturnedZeroPrice')
 
-        await expect(subject.connect(notifier).pushTokenRate())
-          .to.emit(subject, 'RevenueUpdated')
-          .withArgs(0n, nextTs)
+        expect(await subject.pendingRevenueStEth()).to.equal(pendingBefore)
+        expect(await subject.getCumulativeRevenueUSD()).to.equal(0n)
       })
 
-      it('should exclude external shares from the revenue derivation', async function () {
-        const externalShares = INTERNAL_SHARES / 2n
-        const totalShares = INTERNAL_SHARES + externalShares
-        await stEthStub.setShares(totalShares, externalShares)
-        await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
+      it('should preserve pending when oracle reverts with a custom error', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+        const pendingBefore = await subject.pendingRevenueStEth()
 
-        const rateDelta = POSITIVE_REBASE_RATE - INITIAL_RATE
-        const expectedStEth = expectedRevenueStEth(
-          rateDelta,
-          INTERNAL_SHARES,
-          TREASURY_FEE,
-          MODULES_FEE,
-          BASE_PRECISION
-        )
-        const rawUSD = expectedRevenueUSD(expectedStEth, STETH_USD_PRICE)
+        await oracleStub.setFailureMode(OracleFailureMode.CustomError)
 
-        const nextTs = BigInt(await time.latest()) + 100n
-        await time.setNextBlockTimestamp(nextTs)
-
-        await expect(subject.connect(notifier).pushTokenRate())
-          .to.emit(subject, 'RevenueUpdated')
-          .withArgs(rawUSD, nextTs)
-      })
-    })
-
-    describe('zero delta:', function () {
-      it('should emit RevenueUpdated(0, block.timestamp) when the rate is unchanged', async function () {
-        const nextTs = BigInt(await time.latest()) + 100n
-        await time.setNextBlockTimestamp(nextTs)
-
-        await expect(subject.connect(notifier).pushTokenRate())
-          .to.emit(subject, 'RevenueUpdated')
-          .withArgs(0n, nextTs)
+        await expect(subject.connect(stranger).convertPendingRevenueToUSD()).to.be.reverted
+        expect(await subject.pendingRevenueStEth()).to.equal(pendingBefore)
+        expect(await subject.getCumulativeRevenueUSD()).to.equal(0n)
       })
 
-      it('should not advance the baseline on a zero delta', async function () {
-        await subject.connect(notifier).pushTokenRate()
+      it('should preserve pending when oracle reverts with empty data', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
+        const pendingBefore = await subject.pendingRevenueStEth()
 
-        // Subsequent positive rebase should be measured from the original seed rate.
-        await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
-        const rateDelta = POSITIVE_REBASE_RATE - INITIAL_RATE
-        const expectedStEth = expectedRevenueStEth(
-          rateDelta,
-          INTERNAL_SHARES,
-          TREASURY_FEE,
-          MODULES_FEE,
-          BASE_PRECISION
-        )
-        const rawUSD = expectedRevenueUSD(expectedStEth, STETH_USD_PRICE)
+        await oracleStub.setFailureMode(OracleFailureMode.EmptyRevert)
 
-        const nextTs = BigInt(await time.latest()) + ONE_DAY
-        await time.setNextBlockTimestamp(nextTs)
-
-        const prevTs = (await subject.getRevenue())[1]
-        const periodSeconds = nextTs - prevTs
-        const expectedDailyUSD = (rawUSD * ONE_DAY) / periodSeconds
-
-        await expect(subject.connect(notifier).pushTokenRate())
-          .to.emit(subject, 'RevenueUpdated')
-          .withArgs(expectedDailyUSD, nextTs)
+        await expect(subject.connect(stranger).convertPendingRevenueToUSD()).to.be.reverted
+        expect(await subject.pendingRevenueStEth()).to.equal(pendingBefore)
       })
 
-      it('should refresh the staleness timer even on a zero delta', async function () {
-        await time.increase(STALENESS_WINDOW_SECONDS * 2n)
+      it('should let the keeper retry successfully once the oracle recovers', async function () {
+        await pushSharesMinted(subject, notifier, NOMINAL_FEE_SHARES)
 
-        const nextTs = BigInt(await time.latest()) + 10n
-        await time.setNextBlockTimestamp(nextTs)
+        await oracleStub.setFailureMode(OracleFailureMode.CustomError)
+        await expect(subject.connect(stranger).convertPendingRevenueToUSD()).to.be.reverted
 
-        await subject.connect(notifier).pushTokenRate()
+        await oracleStub.setFailureMode(OracleFailureMode.None)
+        const pending = await subject.pendingRevenueStEth()
+        const expectedUSD = expectedRevenueUSD(pending, STETH_USD_PRICE)
 
-        const [, , isStale] = await subject.getRevenue()
-        expect(isStale).to.equal(false)
-      })
-    })
+        await expect(subject.connect(stranger).convertPendingRevenueToUSD())
+          .to.emit(subject, 'PendingRevenueConverted')
+          .withArgs(pending, STETH_USD_PRICE, expectedUSD)
 
-    describe('negative delta:', function () {
-      it('should emit RevenueUpdated(0, block.timestamp) when the rate dropped', async function () {
-        await wstEthStub.setStEthPerToken(NEGATIVE_REBASE_RATE)
-
-        const nextTs = BigInt(await time.latest()) + 100n
-        await time.setNextBlockTimestamp(nextTs)
-
-        await expect(subject.connect(notifier).pushTokenRate())
-          .to.emit(subject, 'RevenueUpdated')
-          .withArgs(0n, nextTs)
-      })
-
-      it('should keep the pre-slash baseline so the deficit accumulates until full recovery', async function () {
-        // Positive rebase establishes a post-earning baseline.
-        await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
-        await subject.connect(notifier).pushTokenRate()
-
-        // Slashing drops the rate below the baseline — no revenue, baseline frozen.
-        await wstEthStub.setStEthPerToken(NEGATIVE_REBASE_RATE)
-        await subject.connect(notifier).pushTokenRate()
-
-        // Partial recovery below the pre-slash baseline — still zero revenue, baseline frozen.
-        const partialRate = (POSITIVE_REBASE_RATE * 999n) / 1000n // just below baseline
-        await wstEthStub.setStEthPerToken(partialRate)
-        const partialTs = BigInt(await time.latest()) + 100n
-        await time.setNextBlockTimestamp(partialTs)
-        await expect(subject.connect(notifier).pushTokenRate())
-          .to.emit(subject, 'RevenueUpdated')
-          .withArgs(0n, partialTs)
-
-        // Full recovery past the baseline yields revenue only on the excess over POSITIVE_REBASE_RATE.
-        const recoveryRate = (POSITIVE_REBASE_RATE * 1005n) / 1000n
-        await wstEthStub.setStEthPerToken(recoveryRate)
-
-        const rateDelta = recoveryRate - POSITIVE_REBASE_RATE
-        const expectedStEth = expectedRevenueStEth(
-          rateDelta,
-          INTERNAL_SHARES,
-          TREASURY_FEE,
-          MODULES_FEE,
-          BASE_PRECISION
-        )
-        const rawUSD = expectedRevenueUSD(expectedStEth, STETH_USD_PRICE)
-
-        const nextTs = BigInt(await time.latest()) + 200n
-        await time.setNextBlockTimestamp(nextTs)
-
-        const prevTs = (await subject.getRevenue())[1]
-        const periodSeconds = nextTs - prevTs
-        const expectedDailyUSD = (rawUSD * ONE_DAY) / periodSeconds
-
-        await expect(subject.connect(notifier).pushTokenRate())
-          .to.emit(subject, 'RevenueUpdated')
-          .withArgs(expectedDailyUSD, nextTs)
-      })
-
-      it('should refresh the staleness timer on a negative delta', async function () {
-        await wstEthStub.setStEthPerToken(NEGATIVE_REBASE_RATE)
-        await time.increase(STALENESS_WINDOW_SECONDS * 2n)
-
-        const nextTs = BigInt(await time.latest()) + 10n
-        await time.setNextBlockTimestamp(nextTs)
-
-        await subject.connect(notifier).pushTokenRate()
-
-        const [, , isStale] = await subject.getRevenue()
-        expect(isStale).to.equal(false)
+        expect(await subject.getCumulativeRevenueUSD()).to.equal(expectedUSD)
+        expect(await subject.pendingRevenueStEth()).to.equal(0n)
       })
     })
   })
@@ -598,102 +623,30 @@ describe('StakingRevenueSource', function () {
       await snapshot.restore()
     })
 
-    it('should return true for ITokenRatePusher.interfaceId', async function () {
-      // Single-function interface — interfaceId is the bare selector of pushTokenRate().
-      const interfaceId = '0xa16ba44d'
+    it('should return true for IRevenueSource.interfaceId', async function () {
+      // Single-function interface → interfaceId is the selector of getCumulativeRevenueUSD().
+      const interfaceId = ethers.id('getCumulativeRevenueUSD()').substring(0, 10) as `0x${string}`
       expect(await subject.supportsInterface(interfaceId)).to.equal(true)
     })
 
-    it('should return true for the inherited IAccessControl.interfaceId', async function () {
-      // OZ v4.9.3 AccessControl returns `true` for its own interfaceId (0x7965db0b).
-      const interfaceId = '0x7965db0b'
-      expect(await subject.supportsInterface(interfaceId)).to.equal(true)
-    })
-
-    it('should return true for the inherited IAccessControlEnumerable.interfaceId', async function () {
-      // XOR of getRoleMember(bytes32,uint256) and getRoleMemberCount(bytes32) selectors.
-      const interfaceId = '0x5a05180f'
+    it('should return true for ITokenRatePusherWithArgs.interfaceId', async function () {
+      const interfaceId = ethers
+        .id('pushTokenRate(uint256,uint256,uint256,uint256,uint256,uint256,uint256)')
+        .substring(0, 10) as `0x${string}`
       expect(await subject.supportsInterface(interfaceId)).to.equal(true)
     })
 
     it('should return true for IERC165.interfaceId', async function () {
-      const interfaceId = '0x01ffc9a7'
-      expect(await subject.supportsInterface(interfaceId)).to.equal(true)
+      expect(await subject.supportsInterface('0x01ffc9a7')).to.equal(true)
+    })
+
+    it('should NOT return true for the no-arg ITokenRatePusher.interfaceId', async function () {
+      const noArgInterfaceId = ethers.id('pushTokenRate()').substring(0, 10) as `0x${string}`
+      expect(await subject.supportsInterface(noArgInterfaceId)).to.equal(false)
     })
 
     it('should return false for an unrelated interface id', async function () {
-      const interfaceId = '0xdeadbeef'
-      expect(await subject.supportsInterface(interfaceId)).to.equal(false)
-    })
-  })
-
-  describe('invariants:', function () {
-    let snapshot: SnapshotRestorer
-
-    beforeEach(async function () {
-      snapshot = await takeSnapshot()
-      subject = await deploySubject()
-    })
-
-    afterEach(async function () {
-      await snapshot.restore()
-    })
-
-    it('invariant: baseline advances only on strictly positive deltas', async function () {
-      // Zero delta does not advance baseline.
-      await subject.connect(notifier).pushTokenRate()
-
-      // Verify: baseline is still INITIAL_RATE. A rate at INITIAL_RATE would again trigger the
-      // zero-delta path. We confirm indirectly by taking the "<=" branch again.
-      await expect(subject.connect(notifier).pushTokenRate()).to.emit(subject, 'RevenueUpdated')
-
-      // Positive delta advances baseline.
-      await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
-      await subject.connect(notifier).pushTokenRate()
-
-      // Revert to the pre-positive rate — must now be treated as negative (<= new baseline).
-      await wstEthStub.setStEthPerToken(INITIAL_RATE)
-
-      const nextTs = BigInt(await time.latest()) + 100n
-      await time.setNextBlockTimestamp(nextTs)
-      await expect(subject.connect(notifier).pushTokenRate())
-        .to.emit(subject, 'RevenueUpdated')
-        .withArgs(0n, nextTs)
-    })
-
-    it('invariant: only the notifier address can drive pushTokenRate under default config', async function () {
-      expect(await subject.getRoleMemberCount(REPORTER_ROLE)).to.equal(1n)
-
-      for (const signer of [admin, stranger, emergency]) {
-        const addr = await signer.getAddress()
-        await expect(subject.connect(signer).pushTokenRate()).to.be.revertedWith(
-          missingRoleRegex(addr, REPORTER_ROLE)
-        )
-      }
-    })
-
-    it('invariant: pause window blocks pushTokenRate but preserves last reported state', async function () {
-      // Seed one positive report, then pause.
-      await wstEthStub.setStEthPerToken(POSITIVE_REBASE_RATE)
-      await subject.connect(notifier).pushTokenRate()
-      const [revenueBefore, tsBefore] = await subject.getRevenue()
-
-      await subject.connect(admin).grantRole(EMERGENCY_ROLE, await emergency.getAddress())
-      await subject.connect(emergency).pause()
-
-      // Rebase continues off-chain, but the source refuses to update.
-      await wstEthStub.setStEthPerToken((POSITIVE_REBASE_RATE * 102n) / 100n)
-      await expect(subject.connect(notifier).pushTokenRate()).to.be.revertedWith('Pausable: paused')
-
-      const [revenueAfter, tsAfter] = await subject.getRevenue()
-      expect(revenueAfter).to.equal(revenueBefore)
-      expect(tsAfter).to.equal(tsBefore)
-
-      // After unpause, the source catches up using the cumulative delta from the preserved baseline.
-      await subject.connect(emergency).unpause()
-      const nextTs = BigInt(await time.latest()) + 100n
-      await time.setNextBlockTimestamp(nextTs)
-      await expect(subject.connect(notifier).pushTokenRate()).to.emit(subject, 'RevenueUpdated')
+      expect(await subject.supportsInterface('0xdeadbeef')).to.equal(false)
     })
   })
 })

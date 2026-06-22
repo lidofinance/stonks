@@ -12,6 +12,7 @@ import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
 contract OracleRouterStub is IOracleRouter {
     address public immutable FEED_REGISTRY;
     uint128 public constant MAX_DECIMALS = 38;
+    uint256 public constant PRICE_UNIT = 1e18;
 
     struct PriceConfig {
         uint256 basePrice;
