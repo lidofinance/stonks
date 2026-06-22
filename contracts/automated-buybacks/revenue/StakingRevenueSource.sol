@@ -60,7 +60,11 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
     //////////////////////////////////////////////////////////////*/
 
     event RevenueAccumulatedInStEth(uint256 stEthAmount, uint256 pendingRevenueStEth);
-    event PendingRevenueConverted(uint256 stEthConverted, uint256 stEthUsdPrice, uint256 revenueUSD);
+    event PendingRevenueConverted(
+        uint256 stEthConverted,
+        uint256 stEthUsdPrice,
+        uint256 revenueUSD
+    );
 
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
@@ -84,12 +88,8 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
      * @param  lidoLocator_  `LidoLocator` for resolving Lido infrastructure. Non-zero.
      */
     constructor(address oracleRouter_, address lidoLocator_) {
-        if (oracleRouter_ == address(0)) {
-            revert InvalidOracleRouterAddress(oracleRouter_);
-        }
-        if (lidoLocator_ == address(0)) {
-            revert InvalidLidoLocatorAddress(lidoLocator_);
-        }
+        if (oracleRouter_ == address(0)) revert InvalidOracleRouterAddress(oracleRouter_);
+        if (lidoLocator_ == address(0)) revert InvalidLidoLocatorAddress(lidoLocator_);
 
         ORACLE_ROUTER = IOracleRouter(oracleRouter_);
         PRICE_UNIT = IOracleRouter(oracleRouter_).PRICE_UNIT();
@@ -134,20 +134,16 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
         uint256 /* postTotalEther_ */,
         uint256 sharesMintedAsFees_
     ) external {
-        if (msg.sender != LIDO_LOCATOR.postTokenRebaseReceiver()) {
+        if (msg.sender != LIDO_LOCATOR.postTokenRebaseReceiver())
             revert UnauthorizedCaller(msg.sender);
-        }
 
         // Dedupe / replay guard: rebase report timestamps strictly increase, so a callback that
         // does not advance the watermark is a repeat or stale delivery and is skipped.
-        if (reportTimestamp_ <= lastReportTimestamp) {
-            return;
-        }
+        if (reportTimestamp_ <= lastReportTimestamp) return;
+
         lastReportTimestamp = reportTimestamp_;
 
-        if (sharesMintedAsFees_ == 0) {
-            return;
-        }
+        if (sharesMintedAsFees_ == 0) return;
 
         (uint256 modulesFee, uint256 treasuryFee, ) = IStakingRouter(LIDO_LOCATOR.stakingRouter())
             .getStakingFeeAggregateDistribution();
@@ -157,9 +153,9 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
         // revenue. This branch is defensive — the protocol does not mint fees at all in that
         // configuration, so `sharesMintedAsFees_` would already be zero in practice.
         uint256 totalFee = modulesFee + treasuryFee;
-        if (totalFee == 0) {
-            return;
-        }
+
+        if (totalFee == 0) return;
+
         uint256 treasuryShares = (sharesMintedAsFees_ * treasuryFee) / totalFee;
 
         // Shares → stETH at the post-rebase rate. `pushTokenRate` fires inside
@@ -169,6 +165,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
 
         uint256 newPending = pendingRevenueStEth + treasuryStEth;
         pendingRevenueStEth = newPending;
+        
         emit RevenueAccumulatedInStEth(treasuryStEth, newPending);
     }
 
@@ -185,20 +182,19 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
      */
     function convertPendingRevenueToUSD() external {
         uint256 pending = pendingRevenueStEth;
-        if (pending == 0) {
-            return;
-        }
+        if (pending == 0) return;
+
         pendingRevenueStEth = 0;
 
         address stEth = LIDO_LOCATOR.lido();
         (uint256 stEthUsdPrice, ) = ORACLE_ROUTER.getUsdPrices(stEth, stEth);
-        if (stEthUsdPrice == 0) {
-            revert OracleReturnedZeroPrice();
-        }
+
+        if (stEthUsdPrice == 0) revert OracleReturnedZeroPrice();
 
         uint256 revenueUSD = (pending * stEthUsdPrice) / PRICE_UNIT;
 
         _addRevenueUSD(revenueUSD);
+
         emit PendingRevenueConverted(pending, stEthUsdPrice, revenueUSD);
     }
 

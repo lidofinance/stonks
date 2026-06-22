@@ -619,8 +619,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
 
     /**
      * @notice Placement preconditions and next sell sizing for keepers.
-     * @dev    `estimatedBuyAmount` falls back to zero on oracle revert. An expired tracked order
-     *         is reported as `activeOrder == address(0)`.
+     * @dev    `estimatedBuyAmount` falls back to zero on oracle revert. An expired tracked order is
+     *         reported as `activeOrder == address(0)`, with its recoverable residual folded into `sellAmount`.
      * @return status Placement preconditions and the next sell sizing.
      */
     function getPlacementStatus() external view returns (PlacementStatus memory status) {
@@ -630,12 +630,23 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         status.isStonksKilled = currentStonks.isKilled();
 
         address trackedOrderAddress = lastOrderAddress;
-        if (trackedOrderAddress != address(0) && block.timestamp <= lastOrderValidTo) {
-            status.activeOrder = trackedOrderAddress;
-            status.activeOrderValidTo = lastOrderValidTo;
+        uint256 recoverableResidual;
+
+        if (trackedOrderAddress != address(0)) {
+            if (block.timestamp <= lastOrderValidTo) {
+                status.activeOrder = trackedOrderAddress;
+                status.activeOrderValidTo = lastOrderValidTo;
+            } else {
+                // placeOrder sweeps an expired order's residual stETH back to Stonks before sizing,
+                // so include it in the balance the next sale draws from.
+                uint256 residual = STETH.balanceOf(trackedOrderAddress);
+                if (residual >= MIN_ORDER_RESIDUAL_TO_RECOVER) {
+                    recoverableResidual = residual;
+                }
+            }
         }
 
-        uint256 stonksBalance = STETH.balanceOf(address(currentStonks));
+        uint256 stonksBalance = STETH.balanceOf(address(currentStonks)) + recoverableResidual;
 
         status.sellAmount = Math.min(stonksBalance, maxAllowedOrderAmount);
         if (status.sellAmount >= minAllowedOrderAmount) {
