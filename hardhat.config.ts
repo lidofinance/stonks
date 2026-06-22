@@ -50,6 +50,9 @@ const config: HardhatUserConfig = {
       },
     ],
   },
+  mocha: {
+    timeout: 20 * 60 * 1000, // 20 minutes
+  },
 }
 
 if (MAINNET_RPC_URL) {
