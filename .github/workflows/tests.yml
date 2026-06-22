@@ -1,0 +1,67 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fork-tests:
+    name: ${{ matrix.suite.name }}
+    if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.suite.timeout }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - name: Unit
+            path: test/unit
+            timeout: 30
+          - name: Acceptance
+            path: test/acceptance
+            timeout: 30
+          - name: Integration
+            path: test/integration
+            timeout: 60
+          - name: Fuzz
+            path: test/fuzz
+            timeout: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v6.0.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check RPC_URL
+        shell: bash
+        run: |
+          if [[ -z "$RPC_URL" ]]; then
+            echo "RPC_URL repository secret is required for forked tests." >&2
+            exit 1
+          fi
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+
+      - name: Run ${{ matrix.suite.name }} tests
+        shell: bash
+        run: |
+          shopt -s globstar
+          npx hardhat test ${{ matrix.suite.path }}/**/*.ts --network hardhat
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
