@@ -239,7 +239,10 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
 
         lastTotalRevenueUSD = _revenueSumStrictUSD();
 
-        _anchorReserve();
+        // Anchor the reserve to the activation day itself, so the activation day's reserve is charged
+        // rather than forgiven (unlike the post-checkpoint re-anchor to the next day).
+        reserveAnchorTS = activationTS;
+        emit ReserveAnchored(reserveAnchorTS);
 
         _rollWindow(daily, ONE_DAY, 0);
         _rollWindow(yearly, ONE_YEAR, 0);

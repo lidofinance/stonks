@@ -117,16 +117,16 @@ describe('BuybackAllocator — accumulated budget', function () {
   })
 
   describe('activation:', function () {
-    it('records the strict revenue sum as the baseline and anchors the reserve at the next day', async function () {
+    it('records the strict revenue sum as the baseline and anchors the reserve to the activation day', async function () {
       await deployAllocator({ reserveRate: usd('100') })
       await activateWith(usd('1000'))
 
       expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('1000'))
       expect(await allocator.budgetUSD()).to.equal(0n)
 
-      // Anchor is the start of the day after activation: activationTS (today midnight) + one day.
+      // Anchor is the activation day itself (today midnight), so the activation day reserve is charged.
       const activationTS = await allocator.activationTS()
-      expect(await allocator.reserveAnchorTS()).to.equal(activationTS + ONE_DAY)
+      expect(await allocator.reserveAnchorTS()).to.equal(activationTS)
     })
 
     it('reverts activation when a source is unreachable (strict sum)', async function () {
@@ -135,15 +135,16 @@ describe('BuybackAllocator — accumulated budget', function () {
       await expect(allocator.activate()).to.be.reverted
     })
 
-    it('leaves the activation day reserve-free', async function () {
+    it('charges the activation day reserve', async function () {
       await deployAllocator({ share: SHARE_100, reserveRate: usd('100') })
       await activateWith(0n)
 
-      // Same day as activation (block.timestamp < anchor) → reserve is zero, so the full surplus banks.
+      // Same day as activation: the anchor is today, so one daily reserve (100) is charged and only
+      // the surplus net of it banks.
       await source.setCumulativeRevenueUSD(usd('500'))
       await allocator.allocate() // balance is 0 → skips after checkpointing
 
-      expect(await allocator.budgetUSD()).to.equal(usd('500'))
+      expect(await allocator.budgetUSD()).to.equal(usd('400')) // 500 - 1*100
     })
   })
 
@@ -175,25 +176,24 @@ describe('BuybackAllocator — accumulated budget', function () {
   })
 
   describe('reserve timeline:', function () {
-    it('charges one daily rate on the first full day', async function () {
+    it('charges one daily rate on the activation day', async function () {
       await deployAllocator({ share: SHARE_100, reserveRate: usd('100') })
       await activateWith(0n)
       await source.setCumulativeRevenueUSD(usd('1000'))
 
-      const anchor = await allocator.reserveAnchorTS()
-      await time.setNextBlockTimestamp(anchor)
+      // Anchor is the activation day, so the very first checkpoint charges one daily rate.
       await allocator.allocate()
 
       expect(await allocator.budgetUSD()).to.equal(usd('900')) // 1000 - 1*100
     })
 
-    it('charges two daily rates one day later', async function () {
+    it('charges a second daily rate the next day', async function () {
       await deployAllocator({ share: SHARE_100, reserveRate: usd('100') })
       await activateWith(0n)
       await source.setCumulativeRevenueUSD(usd('1000'))
 
-      const anchor = await allocator.reserveAnchorTS()
-      await time.setNextBlockTimestamp(anchor + ONE_DAY)
+      const activationTS = await allocator.activationTS()
+      await time.setNextBlockTimestamp(activationTS + ONE_DAY)
       await allocator.allocate()
 
       expect(await allocator.budgetUSD()).to.equal(usd('800')) // 1000 - 2*100
@@ -204,19 +204,18 @@ describe('BuybackAllocator — accumulated budget', function () {
     it('falls below zero when revenue does not cover the reserve, then recovers', async function () {
       await deployAllocator({ share: SHARE_100, reserveRate: usd('100') })
       await activateWith(0n)
-      const anchor = await allocator.reserveAnchorTS()
+      const activationTS = await allocator.activationTS()
 
-      // Day 1: reserve 100, revenue 40 → budget dips to -60. No carry-forward: baseline and anchor advance.
+      // Activation day: reserve 100, revenue 40 → budget dips to -60. No carry-forward: baseline and
+      // anchor advance to the next day.
       await source.setCumulativeRevenueUSD(usd('40'))
-      await time.setNextBlockTimestamp(anchor)
       await allocator.allocate()
       expect(await allocator.budgetUSD()).to.equal(-usd('60'))
       expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('40'))
-      expect(await allocator.reserveAnchorTS()).to.equal(anchor + ONE_DAY)
+      expect(await allocator.reserveAnchorTS()).to.equal(activationTS + ONE_DAY)
 
       // More revenue the same day (reserve already counted, so 0 more) climbs the budget back positive.
       await source.setCumulativeRevenueUSD(usd('200'))
-      await time.setNextBlockTimestamp(anchor + 100n)
       await allocator.allocate()
       expect(await allocator.budgetUSD()).to.equal(usd('100')) // -60 + (200 - 40)
     })
@@ -225,14 +224,14 @@ describe('BuybackAllocator — accumulated budget', function () {
       await deployAllocator({ share: SHARE_100, reserveRate: usd('100') })
       await activateWith(0n)
       await source.setCumulativeRevenueUSD(usd('1000'))
+      const activationTS = await allocator.activationTS()
 
-      const anchor = await allocator.reserveAnchorTS()
-      await time.setNextBlockTimestamp(anchor)
+      // Activation day: reserve = 100.
       await allocator.allocate()
       expect(await allocator.budgetUSD()).to.equal(usd('900')) // 1000 - 100
 
-      // 30 idle days: the reserve keeps subtracting (30 * 100), eroding the budget below zero.
-      await time.setNextBlockTimestamp(anchor + 30n * ONE_DAY)
+      // 30 days after activation: the reserve keeps subtracting (30 * 100), eroding the budget below zero.
+      await time.setNextBlockTimestamp(activationTS + 30n * ONE_DAY)
       await allocator.allocate()
       expect(await allocator.budgetUSD()).to.equal(-usd('2100')) // 900 - 3000
     })
@@ -335,32 +334,30 @@ describe('BuybackAllocator — accumulated budget', function () {
       await deployAllocator({ share: SHARE_100, reserveRate: usd('100') })
       await activateWith(0n)
       await source.setCumulativeRevenueUSD(usd('1000'))
-      const anchor = await allocator.reserveAnchorTS()
+      const activationTS = await allocator.activationTS()
 
-      // First full day: old reserve = 100. Changing the rate checkpoints first, banking 1000 - 100.
-      await time.setNextBlockTimestamp(anchor)
+      // Activation day: old reserve = 100. Changing the rate checkpoints first, banking 1000 - 100.
       await allocator.setReserveDailyRateUSD(usd('50'))
 
       expect(await allocator.budgetUSD()).to.equal(usd('900')) // banked at the old rate
       expect(await allocator.reserveDailyRateUSD()).to.equal(usd('50'))
-      expect(await allocator.reserveAnchorTS()).to.equal(anchor + ONE_DAY) // fresh anchor, new rate
+      expect(await allocator.reserveAnchorTS()).to.equal(activationTS + ONE_DAY) // fresh anchor, new rate
     })
 
     it('closes the interval even with no surplus, so the new rate cannot reprice elapsed days', async function () {
       await deployAllocator({ share: SHARE_100, reserveRate: usd('100') })
       await activateWith(0n)
-      const anchor = await allocator.reserveAnchorTS()
+      const activationTS = await allocator.activationTS()
 
-      // Day 1: revenue 50 is below the old reserve of 100 → nothing to bank.
+      // Activation day: revenue 50 is below the old reserve of 100 → nothing to bank.
       await source.setCumulativeRevenueUSD(usd('50'))
-      await time.setNextBlockTimestamp(anchor)
       await allocator.setReserveDailyRateUSD(usd('1000'))
 
       // The interval closed at the OLD rate: revenue 50 minus the old reserve 100 leaves the budget
       // at -50, baseline advanced and reserve re-anchored. The new rate cannot reprice those days.
       expect(await allocator.budgetUSD()).to.equal(-usd('50'))
       expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('50'))
-      expect(await allocator.reserveAnchorTS()).to.equal(anchor + ONE_DAY)
+      expect(await allocator.reserveAnchorTS()).to.equal(activationTS + ONE_DAY)
     })
   })
 
@@ -466,9 +463,7 @@ describe('BuybackAllocator — accumulated budget', function () {
       await source.setCumulativeRevenueUSD(usd('1000'))
       await fund(usd('1000'))
 
-      const anchor = await allocator.reserveAnchorTS()
-      await time.increaseTo(anchor) // first full day: reserve = 100
-
+      // Activation day: reserve = 100.
       const live = await allocator.spendable()
       expect(live.spendableUSD).to.equal(usd('900')) // 1000 - 100 reserve
 
