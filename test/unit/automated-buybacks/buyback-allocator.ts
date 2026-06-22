@@ -35,6 +35,7 @@ enum AllocationStatus {
   QuoteUnavailable,
   StEthPriceBelowMin,
   AllocationBelowMin,
+  WindowCapReached,
 }
 
 enum OracleFailureMode {
@@ -267,7 +268,7 @@ describe('BuybackAllocator — accumulated budget', function () {
       // Same day, cap exhausted → nothing more is spendable.
       await expect(allocator.allocate())
         .to.emit(allocator, 'AllocationSkipped')
-        .withArgs(adminAddr, AllocationStatus.NoAvailableBudget)
+        .withArgs(adminAddr, AllocationStatus.WindowCapReached)
       expect(await allocator.budgetUSD()).to.equal(usd('700'))
     })
 

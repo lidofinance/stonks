@@ -33,10 +33,11 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     /// @dev Whether a release can proceed, or why it is skipped. Reported in the skip event.
     enum AllocationStatus {
         Eligible, // the release can proceed
-        NoAvailableBudget, // no budget, or no room left under the caps
+        NoAvailableBudget, // no budget available to spend
         QuoteUnavailable, // the oracle returned no price
         StEthPriceBelowMin, // the price is below the floor
-        AllocationBelowMin // the spendable amount is below the smallest allowed
+        AllocationBelowMin, // the spendable amount is below the smallest allowed
+        WindowCapReached // the daily or yearly cap leaves no room
     }
 
     struct SpendWindow {
@@ -431,7 +432,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         spendableUSD = Math.min(spendableUSD, _windowUnspent(daily, dailyCapUSD));
         // year/day caps leave nothing
         if (spendableUSD == 0) {
-            return (AllocationStatus.NoAvailableBudget, 0, 0);
+            return (AllocationStatus.WindowCapReached, 0, 0);
         }
 
         // convert to stETH, limit to the balance, then restate the USD actually transferable
