@@ -84,7 +84,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     IOracleRouter public immutable ORACLE_ROUTER;
 
     /// @dev Oracle price unit, used to convert between USD and stETH.
-    uint256 internal immutable PRICE_SCALE;
+    uint256 internal immutable PRICE_UNIT;
 
     /*//////////////////////////////////////////////////////////////
                           CONFIGURABLE STORAGE
@@ -201,7 +201,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         ORACLE_ROUTER = IOracleRouter(initParams_.oracleRouter);
 
         // The USD<->stETH conversions scale by the oracle's own price unit.
-        PRICE_SCALE = ORACLE_ROUTER.PRICE_UNIT();
+        PRICE_UNIT = ORACLE_ROUTER.PRICE_UNIT();
 
         _setExecutor(initParams_.executor);
         _setYearlyCapUSD(initParams_.yearlyCapUSD);
@@ -378,7 +378,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
      * @return spendableStEth stETH a release would transfer now
      */
     function spendable()
-        public
+        external
         view
         whenActivated
         returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth)
@@ -439,9 +439,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         }
 
         // convert to stETH, limit to the balance, then restate the USD actually transferable
-        spendableStEth = Math.mulDiv(spendableUSD, PRICE_SCALE, stEthPriceUSD);
+        spendableStEth = Math.mulDiv(spendableUSD, PRICE_UNIT, stEthPriceUSD);
         spendableStEth = Math.min(spendableStEth, STETH.balanceOf(address(this)));
-        spendableUSD = Math.mulDiv(spendableStEth, stEthPriceUSD, PRICE_SCALE);
+        spendableUSD = Math.mulDiv(spendableStEth, stEthPriceUSD, PRICE_UNIT);
 
         // skip an amount below the smallest allowed allocation
         if (spendableUSD < minSpendPerCallUSD) {
