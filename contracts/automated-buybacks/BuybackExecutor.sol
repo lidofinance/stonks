@@ -36,41 +36,68 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
 
     /// @notice Constructor inputs.
     struct InitParams {
+        // Initial admin role holder
         address admin;
+        // Destination for recovered assets
         address treasury;
+        // The wstETH token, the pool's sell-side asset
         address wstEth;
+        // LDO token, the pool's buy-side asset
         address ldo;
+        // Prices LDO and stETH in USD
         address oracleRouter;
+        // Curve LDO/wstETH pool, also the LP token
         address curvePoolAndToken;
+        // Max pool-EMA vs oracle divergence
         uint16 poolPriceDivergenceToleranceBps;
+        // Smallest valid stETH order
         uint128 minAllowedOrderAmount;
+        // Largest valid stETH order
         uint128 maxAllowedOrderAmount;
+        // Smallest valid deposit value per call
         uint128 minDepositValueUsd;
+        // Largest valid deposit value per call
         uint128 maxDepositValueUsd;
+        // TVL at or above which divergence gate is enforced
         uint128 poolBootstrapMinTvlUsd;
     }
 
     /// @notice `addLiquidity` precondition result. Only `Eligible` permits the deposit.
     enum AddLiquidityStatus {
+        // No LDO to deposit
         ZeroLdoBalance,
+        // No stETH to deposit
         ZeroStEthBalance,
+        // The oracle returned no price or is unreachable
         OraclePriceUnavailable,
+        // The derived LDO/stETH ratio truncates to zero
         InvalidOraclePrice,
+        // Pool EMA past tolerance on a deep pool
         PoolPriceDivergenceTooHigh,
+        // Balanced value to deposit is below the per-call floor
         DepositValueBelowMinimum,
+        // Contract is in the treasury mode, no pool deposits
         NotInLpMode,
+        // The deposit can proceed
         Eligible
     }
 
     /// @notice `_evaluateAddLiquidityGates` output, containing status, capped balanced deposit
     ///         amounts, the deposit USD value, and prices reused by `addLiquidity` for its errors.
     struct AddLiquidityEvaluation {
+        // Precondition result
         AddLiquidityStatus status;
+        // Capped balanced LDO to deposit
         uint256 ldoAmount;
+        // Capped balanced stETH to deposit
         uint256 stEthAmount;
+        // Total deposit value in USD
         uint256 depositValueUsd;
+        // Pool EMA in LDO/stETH
         uint256 poolEmaLdoPerStEth;
+        // Oracle LDO/stETH ratio
         uint256 ldoPerStEth;
+        // Pool EMA vs oracle divergence
         uint256 divergenceBps;
     }
 
@@ -704,7 +731,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     }
 
     /*//////////////////////////////////////////////////////////////
-                    INTERNAL STATE-CHANGING FUNCTIONS
+                           INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
@@ -933,7 +960,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     }
 
     /*//////////////////////////////////////////////////////////////
-                      INTERNAL READ-ONLY FUNCTIONS
+                         INTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**

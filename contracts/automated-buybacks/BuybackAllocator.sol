@@ -29,34 +29,56 @@ contract BuybackAllocator is AssetRecovererACL {
                                  TYPES
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Whether a release can proceed, or why it is skipped. Reported in the skip event.
+    /// @notice Whether a release can proceed, or why it is skipped. Reported in the skip event.
     enum AllocationStatus {
-        Eligible, // the release can proceed
-        NoAvailableBudget, // no budget available to spend
-        QuoteUnavailable, // the oracle returned no price
-        StEthPriceBelowMin, // the price is below the floor
-        AllocationBelowMin, // the spendable amount is below the smallest allowed
-        WindowCapReached // the daily or yearly cap leaves no room
+        // The release can proceed
+        Eligible,
+        // No budget available to spend
+        NoAvailableBudget,
+        // The oracle returned no price
+        QuoteUnavailable,
+        // The price is below the floor
+        StEthPriceBelowMin,
+        // The spendable amount is below the smallest allowed
+        AllocationBelowMin,
+        // The daily or yearly cap leaves no room
+        WindowCapReached
     }
 
+    /// @notice Daily or yearly spend window.
     struct SpendWindow {
-        uint64 endTS; // when the current window ends; the spent total resets after it
-        uint192 spentUSD; // USD spent within the current window
+        // When the current window ends and the spent total resets
+        uint64 endTS;
+        // USD spent within the current window
+        uint192 spentUSD;
     }
 
+    /// @notice Constructor inputs.
     struct ConstructorParams {
-        address admin; // initial admin role holder
-        address treasury; // destination for recovered assets
-        address stEth; // stETH token
-        address oracleRouter; // prices stETH in USD
-        address executor; // receives allocations
-        uint128 dailyCapUSD; // maximum USD per day
-        uint128 yearlyCapUSD; // maximum USD per year
-        uint128 reserveDailyRateUSD; // USD reserved for the protocol each day
-        uint128 minStEthPriceUSD; // lowest stETH price accepted
-        uint128 minSpendPerCallUSD; // smallest allocation allowed
-        uint16 surplusShareBP; // share of the revenue surplus spendable, in basis points
-        address[] revenueSources; // sources registered at deployment
+        // Initial admin role holder
+        address admin;
+        // Destination for recovered assets
+        address treasury;
+        // The stETH token
+        address stEth;
+        // Prices stETH in USD
+        address oracleRouter;
+        // Receives allocations
+        address executor;
+        // Maximum USD per day
+        uint128 dailyCapUSD;
+        // Maximum USD per year
+        uint128 yearlyCapUSD;
+        // USD reserved for the protocol each day
+        uint128 reserveDailyRateUSD;
+        // Lowest stETH price accepted
+        uint128 minStEthPriceUSD;
+        // Smallest allocation allowed
+        uint128 minSpendPerCallUSD;
+        // Share of the revenue surplus spendable, in basis points
+        uint16 surplusShareBP;
+        // Sources registered at deployment
+        address[] revenueSources;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -95,7 +117,7 @@ contract BuybackAllocator is AssetRecovererACL {
     /// @notice Maximum USD spendable per year.
     uint128 public yearlyCapUSD;
 
-    /// @notice USD reserved for the protocol each day; only the surplus above it is spendable.
+    /// @notice USD reserved for the protocol each day. Only the surplus above it is spendable.
     uint128 public reserveDailyRateUSD;
 
     /// @notice Lowest stETH price accepted.
@@ -117,8 +139,8 @@ contract BuybackAllocator is AssetRecovererACL {
     ///         measured against this baseline.
     uint256 public lastTotalRevenueUSD;
 
-    /// @notice USD available for buybacks. Can go below zero when revenue lags behind the reserve; a
-    ///         release then treats it as zero.
+    /// @notice USD available for buybacks. Can go below zero when revenue lags behind the reserve.
+    ///         A release then treats it as zero.
     int256 public budgetUSD;
 
     /// @notice Start of the day from which the current reserve builds up.
@@ -185,16 +207,37 @@ contract BuybackAllocator is AssetRecovererACL {
     error RevenueSourceLimitReached(uint256 maxSources);
 
     /*//////////////////////////////////////////////////////////////
+                               MODIFIERS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Reverts until the contract is activated.
+     */
+    modifier whenActivated() {
+        if (activationTS == 0) {
+            revert NotActivated();
+        }
+        _;
+    }
+
+    /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Sets dependencies, limits, and the initial revenue sources. Activation is a separate
-    ///         step that must run before the first release.
+    /**
+     * @notice Sets dependencies, limits, and the initial revenue sources.
+     * @dev    Activation is a separate step that must run before the first release.
+     * @param  initParams_ See `ConstructorParams`.
+     */
     constructor(
         ConstructorParams memory initParams_
     ) AssetRecovererACL(initParams_.admin, initParams_.treasury) {
-        if (initParams_.stEth == address(0)) revert StEthZeroAddress();
-        if (initParams_.oracleRouter == address(0)) revert OracleRouterZeroAddress();
+        if (initParams_.stEth == address(0)) {
+            revert StEthZeroAddress();
+        }
+        if (initParams_.oracleRouter == address(0)) {
+            revert OracleRouterZeroAddress();
+        }
 
         STETH = IStETH(initParams_.stEth);
         ORACLE_ROUTER = IOracleRouter(initParams_.oracleRouter);
@@ -211,15 +254,9 @@ contract BuybackAllocator is AssetRecovererACL {
         _setReserveDailyRateUSD(initParams_.reserveDailyRateUSD);
 
         address[] memory sources = initParams_.revenueSources;
-        for (uint256 i = 0; i < sources.length; ++i) {
+        for (uint256 i; i < sources.length; ++i) {
             _addRevenueSource(sources[i]);
         }
-    }
-
-    /// @dev Reverts until the contract is activated.
-    modifier whenActivated() {
-        if (activationTS == 0) revert NotActivated();
-        _;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -232,7 +269,9 @@ contract BuybackAllocator is AssetRecovererACL {
      * @dev    Reverts if any registered source cannot be reached.
      */
     function activate() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (activationTS != 0) revert AlreadyActivated();
+        if (activationTS != 0) {
+            revert AlreadyActivated();
+        }
 
         uint256 alignedTS = _todayStartTS();
         activationTS = alignedTS;
@@ -258,7 +297,7 @@ contract BuybackAllocator is AssetRecovererACL {
     function allocate() external nonReentrant whenActivated {
         _checkpoint();
 
-        // budget is current after the checkpoint above; spend only its non-negative part
+        // Budget is current after the checkpoint above. Spend only its non-negative part.
         uint256 availableUSD = _clampBudget(budgetUSD);
         (AllocationStatus status, uint256 spendUSD, uint256 spendStEth) = _spendable(availableUSD);
 
@@ -283,6 +322,7 @@ contract BuybackAllocator is AssetRecovererACL {
      * @notice Sets the share of the revenue surplus spendable on buybacks, in basis points.
      * @dev    Updates the budget at the current share first, so the new share applies only to
      *         revenue earned after this call. Budget already accrued is unaffected.
+     * @param  surplusShareBP_ New surplus share in basis points.
      */
     function setSurplusShareBP(
         uint16 surplusShareBP_
@@ -295,6 +335,7 @@ contract BuybackAllocator is AssetRecovererACL {
      * @notice Sets the daily reserve rate.
      * @dev    Updates the budget at the current rate first, so the new rate applies only to days
      *         after this call.
+     * @param  reserveDailyRateUSD_ New daily reserve rate in USD.
      */
     function setReserveDailyRateUSD(
         uint128 reserveDailyRateUSD_
@@ -305,6 +346,7 @@ contract BuybackAllocator is AssetRecovererACL {
 
     /**
      * @notice Sets the per-day spending cap. Applies to the window in progress.
+     * @param  dailyCapUSD_ New per-day spending cap in USD.
      */
     function setDailyCapUSD(uint128 dailyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setDailyCapUSD(dailyCapUSD_);
@@ -312,17 +354,24 @@ contract BuybackAllocator is AssetRecovererACL {
 
     /**
      * @notice Sets the per-year spending cap. Applies to the window in progress.
+     * @param  yearlyCapUSD_ New per-year spending cap in USD.
      */
     function setYearlyCapUSD(uint128 yearlyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setYearlyCapUSD(yearlyCapUSD_);
     }
 
-    /// @notice Sets the minimum stETH price; a lower price skips the release.
+    /**
+     * @notice Sets the minimum stETH price. A lower price skips the release.
+     * @param  minStEthPriceUSD_ New minimum stETH price in USD.
+     */
     function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setMinStEthPriceUSD(minStEthPriceUSD_);
     }
 
-    /// @notice Sets the smallest allocation allowed; smaller amounts are skipped.
+    /**
+     * @notice Sets the smallest allocation allowed. Smaller amounts are skipped.
+     * @param  minSpendPerCallUSD_ New smallest allocation in USD.
+     */
     function setMinSpendPerCallUSD(
         uint128 minSpendPerCallUSD_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -331,6 +380,7 @@ contract BuybackAllocator is AssetRecovererACL {
 
     /**
      * @notice Redirects all future allocations to a new receiver.
+     * @param  newExecutor_ New receiver address.
      */
     function setExecutor(address newExecutor_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setExecutor(newExecutor_);
@@ -343,6 +393,7 @@ contract BuybackAllocator is AssetRecovererACL {
      *         current total to the baseline. Sources are trusted to report accurate USD totals (18
      *         decimals) that only go up. Reverts if the source does not support the required
      *         interface or cannot be reached.
+     * @param  source_ Revenue source to register.
      */
     function addRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
         _checkpoint();
@@ -354,6 +405,7 @@ contract BuybackAllocator is AssetRecovererACL {
      * @dev    Updates the budget first, capturing the source's surplus up to now, then subtracts its
      *         current total from the baseline so the remaining sources stay measured correctly.
      *         Reverts if the source cannot be reached.
+     * @param  source_ Revenue source to unregister.
      */
     function removeRevenueSource(
         address source_
@@ -372,9 +424,9 @@ contract BuybackAllocator is AssetRecovererACL {
      *         off-chain monitoring.
      * @dev    Applies the same budget math and limits as a release, without changing state, so a
      *         release reproduces this result. Reverts before activation.
-     * @return status         whether a release would proceed, or why it would be skipped
-     * @return spendableUSD   USD a release would spend now
-     * @return spendableStEth stETH a release would transfer now
+     * @return status Whether a release proceeds, or why it is skipped.
+     * @return spendableUSD USD a release spends now.
+     * @return spendableStEth stETH a release transfers now.
      */
     function spendable()
         external
@@ -390,93 +442,32 @@ contract BuybackAllocator is AssetRecovererACL {
                            INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Adds the surplus share of revenue earned since the last update, less the reserve accrued
-    ///      over that interval, to the signed budget, then records the new revenue baseline and
-    ///      restarts the reserve. Runs even with no new revenue, so the budget can fall below zero.
-    ///      A source that reverts on one read counts as zero that time and recovers on the next;
-    ///      because each update measures only the change since the last baseline, a missed read is
-    ///      absorbed and never double-counted.
+    /**
+     * @notice Banks the surplus share of new revenue, less the accrued reserve, into the signed
+     *         budget, then records the new revenue baseline and restarts the reserve.
+     * @dev    Runs even with no new revenue, so the budget can fall below zero. A source that reverts
+     *         once counts as zero that time and recovers next call, since each update measures only
+     *         the change since the last baseline.
+     */
     function _checkpoint() internal {
         (int256 budgetDeltaUSD, uint256 totalRevenueUSD, uint256 reserveUSD) = _budgetable();
 
         budgetUSD += budgetDeltaUSD;
         lastTotalRevenueUSD = totalRevenueUSD;
-        // move the reserve cursor the next day
+        // Move the reserve cursor to the next day.
         reserveAnchorTS = _nextDayStartTS();
         emit ReserveAnchored(reserveAnchorTS);
 
         emit Checkpoint(lastTotalRevenueUSD, reserveUSD, budgetDeltaUSD, budgetUSD);
     }
 
-    /// @dev Eligibility and the amounts a release would produce from a given available amount, after
-    ///      applying the year cap, the day cap, the stETH balance, and the smallest allowed
-    ///      allocation. Shared by the release path and the preview.
-    function _spendable(
-        uint256 availableUSD_
-    ) internal view returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth) {
-        if (availableUSD_ == 0) {
-            return (AllocationStatus.NoAvailableBudget, 0, 0);
-        }
-
-        // no usable price means no allocation
-        uint256 stEthPriceUSD = _getStEthPriceUSD();
-
-        if (stEthPriceUSD == 0) {
-            return (AllocationStatus.QuoteUnavailable, 0, 0);
-        }
-
-        // a price below the floor pauses allocations
-        if (stEthPriceUSD < minStEthPriceUSD) {
-            return (AllocationStatus.StEthPriceBelowMin, 0, 0);
-        }
-
-        // limit to the amount remaining under the year cap, then the day cap
-        spendableUSD = availableUSD_;
-        spendableUSD = Math.min(spendableUSD, _windowUnspent(yearly, yearlyCapUSD));
-        spendableUSD = Math.min(spendableUSD, _windowUnspent(daily, dailyCapUSD));
-        // year/day caps leave nothing
-        if (spendableUSD == 0) {
-            return (AllocationStatus.WindowCapReached, 0, 0);
-        }
-
-        // convert to stETH, limit to the balance, then restate the USD actually transferable
-        spendableStEth = Math.mulDiv(spendableUSD, PRICE_UNIT, stEthPriceUSD);
-        spendableStEth = Math.min(spendableStEth, STETH.balanceOf(address(this)));
-        spendableUSD = Math.mulDiv(spendableStEth, stEthPriceUSD, PRICE_UNIT);
-
-        // skip an amount below the smallest allowed allocation
-        if (spendableUSD < minSpendPerCallUSD) {
-            return (AllocationStatus.AllocationBelowMin, 0, 0);
-        }
-
-        status = AllocationStatus.Eligible;
-    }
-
-    /// @dev The signed change a budget update would apply now, and the revenue total it would record
-    ///      as the new baseline. Change = (current total revenue - baseline - reserve) * surplus
-    ///      share. It can be negative; the signed budget absorbs that, so no clamping is needed.
-    ///      Note: the reserve is subtracted *inside* the share-weighted term on purpose — only the
-    ///      surplus share of (revenue above baseline, net of reserve) is taken, so the reserve is
-    ///      scaled by the share too. This is intended, not a missing full-weight subtraction.
-    function _budgetable()
-        internal
-        view
-        returns (int256 budgetDeltaUSD, uint256 totalRevenueUSD, uint256 reserveUSD)
-    {
-        totalRevenueUSD = _revenueSumUSD();
-        reserveUSD = _reserveCurrentUSD();
-        int256 surplusUSD = int256(totalRevenueUSD) - int256(lastTotalRevenueUSD) - int256(reserveUSD);
-        budgetDeltaUSD = (surplusUSD * int256(uint256(surplusShareBP))) / int256(MAX_BASIS_POINTS);
-    }
-
-    /// @dev Clamps the signed net budget to a non-negative spendable amount. A negative budget spends
-    ///      nothing, but is kept in storage, so later surplus must first lift it back above zero.
-    function _clampBudget(int256 budget_) internal pure returns (uint256) {
-        return budget_ > 0 ? uint256(budget_) : 0;
-    }
-
-    /// @dev Rolls the window forward to the next boundary aligned to activation midnight if it has
-    ///      ended, resetting the spent total, then adds this spend.
+    /**
+     * @notice Rolls an ended window forward to the next activation-aligned boundary and resets its
+     *         spent total, then adds this spend.
+     * @param  window_ Spend window to update.
+     * @param  windowDuration_ Window length in seconds.
+     * @param  spendUSD_ USD spent to add to the window.
+     */
     function _rollWindow(
         SpendWindow storage window_,
         uint256 windowDuration_,
@@ -489,19 +480,266 @@ contract BuybackAllocator is AssetRecovererACL {
                     ((block.timestamp - activationTS) / windowDuration_ + 1) *
                     windowDuration_
             );
+
             emit WindowRolled(windowDuration_, newEndTS, spent);
+
             window_.endTS = newEndTS;
             spent = 0;
         }
         window_.spentUSD = spent + uint192(spendUSD_);
     }
 
-    /// @dev Counts as zero once the window has ended.
+    /**
+     * @notice Validates and registers a revenue source, adding its current total to the baseline.
+     * @param  source_ Revenue source to register.
+     */
+    function _addRevenueSource(address source_) internal {
+        if (source_ == address(0)) {
+            revert RevenueSourceZeroAddress();
+        }
+        if (!ERC165Checker.supportsInterface(source_, type(IRevenueSource).interfaceId)) {
+            revert RevenueSourceUnsupported(source_);
+        }
+        if (_revenueSources.length() >= MAX_REVENUE_SOURCES) {
+            revert RevenueSourceLimitReached(MAX_REVENUE_SOURCES);
+        }
+        if (!_revenueSources.add(source_)) {
+            revert RevenueSourceAlreadyRegistered();
+        }
+
+        lastTotalRevenueUSD += IRevenueSource(source_).getCumulativeRevenueUSD();
+
+        emit RevenueSourceAdded(source_);
+    }
+
+    /**
+     * @notice Removes a revenue source and subtracts its current total from the baseline, so only
+     *         the remaining sources' later growth counts.
+     * @dev    Must run after a budget update, which captures this source's surplus up to now.
+     *         Subtracting the same total keeps the remaining baseline exact and cannot underflow.
+     * @param  source_ Revenue source to unregister.
+     */
+    function _removeRevenueSource(address source_) internal {
+        if (!_revenueSources.remove(source_)) {
+            revert RevenueSourceNotRegistered();
+        }
+
+        // removeRevenueSource() checkpoints first, so lastTotalRevenueUSD already includes this
+        // source's current total — the subtraction is therefore exact and cannot underflow.
+        lastTotalRevenueUSD -= IRevenueSource(source_).getCumulativeRevenueUSD();
+
+        emit RevenueSourceRemoved(source_);
+    }
+
+    /**
+     * @notice Validates and sets the receiver.
+     * @param  executor_ New receiver address.
+     */
+    function _setExecutor(address executor_) internal {
+        if (executor_ == address(0)) {
+            revert ExecutorZeroAddress();
+        }
+
+        executor = executor_;
+
+        emit ExecutorSet(executor_);
+    }
+
+    /**
+     * @notice Validates and sets the yearly cap against the current daily cap.
+     * @param  yearlyCapUSD_ New per-year spending cap in USD.
+     */
+    function _setYearlyCapUSD(uint128 yearlyCapUSD_) internal {
+        if (yearlyCapUSD_ == 0) {
+            revert YearlyCapUSDZero();
+        }
+        if (dailyCapUSD > yearlyCapUSD_) {
+            revert DailyCapExceedsYearlyCap();
+        }
+
+        yearlyCapUSD = yearlyCapUSD_;
+
+        emit YearlyCapUSDSet(yearlyCapUSD_);
+    }
+
+    /**
+     * @notice Validates and sets the daily cap against the yearly cap and the minimum allocation.
+     * @param  dailyCapUSD_ New per-day spending cap in USD.
+     */
+    function _setDailyCapUSD(uint128 dailyCapUSD_) internal {
+        if (dailyCapUSD_ == 0) {
+            revert DailyCapUSDZero();
+        }
+        if (dailyCapUSD_ > yearlyCapUSD) {
+            revert DailyCapExceedsYearlyCap();
+        }
+        if (minSpendPerCallUSD > dailyCapUSD_) {
+            revert MinSpendPerCallExceedsDailyCap();
+        }
+
+        dailyCapUSD = dailyCapUSD_;
+
+        emit DailyCapUSDSet(dailyCapUSD_);
+    }
+
+    /**
+     * @notice Validates and sets the minimum allocation per call against the daily cap.
+     * @param  minSpendPerCallUSD_ New smallest allocation in USD.
+     */
+    function _setMinSpendPerCallUSD(uint128 minSpendPerCallUSD_) internal {
+        if (minSpendPerCallUSD_ == 0) {
+            revert MinSpendPerCallUSDZero();
+        }
+        if (minSpendPerCallUSD_ > dailyCapUSD) {
+            revert MinSpendPerCallExceedsDailyCap();
+        }
+
+        minSpendPerCallUSD = minSpendPerCallUSD_;
+
+        emit MinSpendPerCallUSDSet(minSpendPerCallUSD_);
+    }
+
+    /**
+     * @notice Validates and sets the surplus share.
+     * @param  surplusShareBP_ New surplus share in basis points.
+     */
+    function _setSurplusShareBP(uint16 surplusShareBP_) internal {
+        if (surplusShareBP_ == 0 || surplusShareBP_ > MAX_BASIS_POINTS) {
+            revert SurplusShareBPInvalid();
+        }
+
+        surplusShareBP = surplusShareBP_;
+
+        emit SurplusShareBPSet(surplusShareBP_);
+    }
+
+    /**
+     * @notice Sets the daily reserve rate.
+     * @param  reserveDailyRateUSD_ New daily reserve rate in USD.
+     */
+    function _setReserveDailyRateUSD(uint128 reserveDailyRateUSD_) internal {
+        reserveDailyRateUSD = reserveDailyRateUSD_;
+
+        emit ReserveDailyRateUSDSet(reserveDailyRateUSD_);
+    }
+
+    /**
+     * @notice Sets the minimum stETH price.
+     * @param  minStEthPriceUSD_ New minimum stETH price in USD.
+     */
+    function _setMinStEthPriceUSD(uint128 minStEthPriceUSD_) internal {
+        minStEthPriceUSD = minStEthPriceUSD_;
+
+        emit MinStEthPriceUSDSet(minStEthPriceUSD_);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                         INTERNAL VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Eligibility and the amounts a release produces from a given available amount, after the
+     *         year cap, the day cap, the stETH balance, and the smallest allowed allocation.
+     * @dev    Shared by the release path and the preview.
+     * @param  availableUSD_ Spendable budget in USD.
+     * @return status Whether a release proceeds, or why it is skipped.
+     * @return spendableUSD USD a release spends.
+     * @return spendableStEth stETH a release transfers.
+     */
+    function _spendable(
+        uint256 availableUSD_
+    )
+        internal
+        view
+        returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth)
+    {
+        if (availableUSD_ == 0) {
+            return (AllocationStatus.NoAvailableBudget, 0, 0);
+        }
+
+        // No usable price means no allocation.
+        uint256 stEthPriceUSD = _getStEthPriceUSD();
+
+        if (stEthPriceUSD == 0) {
+            return (AllocationStatus.QuoteUnavailable, 0, 0);
+        }
+
+        // A price below the floor pauses allocations.
+        if (stEthPriceUSD < minStEthPriceUSD) {
+            return (AllocationStatus.StEthPriceBelowMin, 0, 0);
+        }
+
+        // Limit to the amount remaining under the year cap, then the day cap.
+        spendableUSD = availableUSD_;
+        spendableUSD = Math.min(spendableUSD, _windowUnspent(yearly, yearlyCapUSD));
+        spendableUSD = Math.min(spendableUSD, _windowUnspent(daily, dailyCapUSD));
+        // Year and day caps leave nothing.
+        if (spendableUSD == 0) {
+            return (AllocationStatus.WindowCapReached, 0, 0);
+        }
+
+        // Convert to stETH, limit to the balance, then restate the USD actually transferable.
+        spendableStEth = Math.mulDiv(spendableUSD, PRICE_UNIT, stEthPriceUSD);
+        spendableStEth = Math.min(spendableStEth, STETH.balanceOf(address(this)));
+        spendableUSD = Math.mulDiv(spendableStEth, stEthPriceUSD, PRICE_UNIT);
+
+        // Skip an amount below the smallest allowed allocation.
+        if (spendableUSD < minSpendPerCallUSD) {
+            return (AllocationStatus.AllocationBelowMin, 0, 0);
+        }
+
+        status = AllocationStatus.Eligible;
+    }
+
+    /**
+     * @notice The signed budget change applied now, and the revenue total recorded as the new
+     *         baseline. Change is (total revenue - baseline - reserve) * surplus share, and can be
+     *         negative since the signed budget absorbs it.
+     * @dev    The reserve sits inside the share-weighted term on purpose, so only the surplus share
+     *         of revenue net of reserve is taken. This is intended, not a missing full subtraction.
+     * @return budgetDeltaUSD Signed budget change in USD.
+     * @return totalRevenueUSD New revenue baseline in USD.
+     * @return reserveUSD Reserve accrued since the last update in USD.
+     */
+    function _budgetable()
+        internal
+        view
+        returns (int256 budgetDeltaUSD, uint256 totalRevenueUSD, uint256 reserveUSD)
+    {
+        totalRevenueUSD = _revenueSumUSD();
+        reserveUSD = _reserveCurrentUSD();
+        int256 surplusUSD = int256(totalRevenueUSD) -
+            int256(lastTotalRevenueUSD) -
+            int256(reserveUSD);
+        budgetDeltaUSD = (surplusUSD * int256(uint256(surplusShareBP))) / int256(MAX_BASIS_POINTS);
+    }
+
+    /**
+     * @notice Clamps the signed net budget to a non-negative spendable amount.
+     * @dev    A negative budget spends nothing but stays in storage, so later surplus must first
+     *         lift it back above zero.
+     * @param  budget_ Signed net budget.
+     * @return Non-negative spendable amount.
+     */
+    function _clampBudget(int256 budget_) internal pure returns (uint256) {
+        return budget_ > 0 ? uint256(budget_) : 0;
+    }
+
+    /**
+     * @notice USD spent in the current window. Counts as zero once the window has ended.
+     * @param  window_ Spend window to read.
+     * @return spent USD spent in the current window.
+     */
     function _windowSpent(SpendWindow storage window_) internal view returns (uint256 spent) {
         spent = block.timestamp >= window_.endTS ? 0 : uint256(window_.spentUSD);
     }
 
-    /// @dev The amount remaining under the cap for the current window.
+    /**
+     * @notice The amount remaining under the cap for the current window.
+     * @param  window_ Spend window to read.
+     * @param  cap_ Window spending cap in USD.
+     * @return unspent USD remaining under the cap.
+     */
     function _windowUnspent(
         SpendWindow storage window_,
         uint256 cap_
@@ -509,35 +747,51 @@ contract BuybackAllocator is AssetRecovererACL {
         unspent = cap_.saturatedSub(_windowSpent(window_));
     }
 
-    /// @dev Reserve accrued since it last restarted. Zero until the next day begins, then one daily
-    ///      rate at the start of that day and one more at the start of each day after.
+    /**
+     * @notice Reserve accrued since it last restarted.
+     * @dev    Zero until the next day begins, then one daily rate at the start of that day and one
+     *         more at the start of each day after.
+     * @return Reserve accrued in USD.
+     */
     function _reserveCurrentUSD() internal view returns (uint256) {
-        if (block.timestamp < reserveAnchorTS) return 0;
+        if (block.timestamp < reserveAnchorTS) {
+            return 0;
+        }
+
         uint256 daysSinceAnchor = (block.timestamp - reserveAnchorTS) / ONE_DAY;
-        uint256 reserveDaysCharged = daysSinceAnchor + 1; // anchor day + each full day since
+        uint256 reserveDaysCharged = daysSinceAnchor + 1; // Anchor day plus each full day since.
         return uint256(reserveDailyRateUSD) * reserveDaysCharged;
     }
 
-    /// @dev Sums revenue across all sources; reverts if any cannot be reached.
+    /**
+     * @notice Sums revenue across all sources. Reverts if any cannot be reached.
+     * @return revenueSumUSD Total revenue across all sources in USD.
+     */
     function _revenueSumStrictUSD() internal view returns (uint256 revenueSumUSD) {
         address[] memory sources = _revenueSources.values();
-        for (uint256 i = 0; i < sources.length; ++i) {
+        for (uint256 i; i < sources.length; ++i) {
             revenueSumUSD += IRevenueSource(sources[i]).getCumulativeRevenueUSD();
         }
     }
 
-    /// @dev Sums revenue across all sources; a reverting source counts as zero.
+    /**
+     * @notice Sums revenue across all sources. A reverting source counts as zero.
+     * @return revenueSumUSD Total revenue across all sources in USD.
+     */
     function _revenueSumUSD() internal view returns (uint256 revenueSumUSD) {
         address[] memory sources = _revenueSources.values();
-        for (uint256 i = 0; i < sources.length; ++i) {
+        for (uint256 i; i < sources.length; ++i) {
             try IRevenueSource(sources[i]).getCumulativeRevenueUSD() returns (uint256 revenue) {
                 revenueSumUSD += revenue;
             } catch {}
         }
     }
 
-    /// @dev Reads the stETH price in USD from the oracle. Returns zero if the oracle reverts, which
-    ///      a release treats as no quote.
+    /**
+     * @notice Reads the stETH price in USD from the oracle.
+     * @dev    Returns zero if the oracle reverts, which a release treats as no quote.
+     * @return stEthPriceUSD stETH price in USD, or zero when unavailable.
+     */
     function _getStEthPriceUSD() internal view returns (uint256 stEthPriceUSD) {
         try ORACLE_ROUTER.getUsdPrices(address(STETH), address(STETH)) returns (
             uint256 stEthPrice,
@@ -547,99 +801,19 @@ contract BuybackAllocator is AssetRecovererACL {
         } catch {}
     }
 
-    /// @dev Rounds down to midnight UTC.
+    /**
+     * @notice Rounds the current block down to midnight UTC.
+     * @return Midnight UTC of the current day.
+     */
     function _todayStartTS() internal view returns (uint256) {
         return (block.timestamp / ONE_DAY) * ONE_DAY;
     }
 
-    /// @dev Midnight UTC at the start of the day after the current block.
+    /**
+     * @notice Midnight UTC at the start of the day after the current block.
+     * @return Midnight UTC of the next day.
+     */
     function _nextDayStartTS() internal view returns (uint256) {
         return _todayStartTS() + ONE_DAY;
-    }
-
-    /// @dev Validates and registers a revenue source, adding its current total to the baseline.
-    function _addRevenueSource(address source_) internal {
-        if (source_ == address(0)) revert RevenueSourceZeroAddress();
-
-        if (!ERC165Checker.supportsInterface(source_, type(IRevenueSource).interfaceId)) {
-            revert RevenueSourceUnsupported(source_);
-        }
-
-        if (_revenueSources.length() >= MAX_REVENUE_SOURCES) {
-            revert RevenueSourceLimitReached(MAX_REVENUE_SOURCES);
-        }
-
-        if (!_revenueSources.add(source_)) revert RevenueSourceAlreadyRegistered();
-
-        lastTotalRevenueUSD += IRevenueSource(source_).getCumulativeRevenueUSD();
-
-        emit RevenueSourceAdded(source_);
-    }
-
-    /// @dev Removes a revenue source and subtracts its current total from the baseline, so only the
-    ///      remaining sources' later growth counts. Must run after a budget update, which captures
-    ///      this source's surplus up to now; subtracting the same total then keeps the remaining
-    ///      sources' baseline exact without touching their pending surplus. Reverts if the source
-    ///      cannot be reached.
-    function _removeRevenueSource(address source_) internal {
-        if (!_revenueSources.remove(source_)) revert RevenueSourceNotRegistered();
-
-        // removeRevenueSource() checkpoints first, so lastTotalRevenueUSD already includes this
-        // source's current total — the subtraction is therefore exact and cannot underflow.
-        lastTotalRevenueUSD -= IRevenueSource(source_).getCumulativeRevenueUSD();
-
-        emit RevenueSourceRemoved(source_);
-    }
-
-    /// @dev Validates and sets the receiver.
-    function _setExecutor(address executor_) internal {
-        if (executor_ == address(0)) revert ExecutorZeroAddress();
-        executor = executor_;
-        emit ExecutorSet(executor_);
-    }
-
-    /// @dev Validates and sets the yearly cap.
-    function _setYearlyCapUSD(uint128 yearlyCapUSD_) internal {
-        if (yearlyCapUSD_ == 0) revert YearlyCapUSDZero();
-        if (dailyCapUSD > yearlyCapUSD_) revert DailyCapExceedsYearlyCap();
-        yearlyCapUSD = yearlyCapUSD_;
-        emit YearlyCapUSDSet(yearlyCapUSD_);
-    }
-
-    /// @dev Validates and sets the daily cap.
-    function _setDailyCapUSD(uint128 dailyCapUSD_) internal {
-        if (dailyCapUSD_ == 0) revert DailyCapUSDZero();
-        if (dailyCapUSD_ > yearlyCapUSD) revert DailyCapExceedsYearlyCap();
-        if (minSpendPerCallUSD > dailyCapUSD_) revert MinSpendPerCallExceedsDailyCap();
-        dailyCapUSD = dailyCapUSD_;
-        emit DailyCapUSDSet(dailyCapUSD_);
-    }
-
-    /// @dev Validates and sets the minimum allocation per call.
-    function _setMinSpendPerCallUSD(uint128 minSpendPerCallUSD_) internal {
-        if (minSpendPerCallUSD_ == 0) revert MinSpendPerCallUSDZero();
-        if (minSpendPerCallUSD_ > dailyCapUSD) revert MinSpendPerCallExceedsDailyCap();
-        minSpendPerCallUSD = minSpendPerCallUSD_;
-        emit MinSpendPerCallUSDSet(minSpendPerCallUSD_);
-    }
-
-    /// @dev Validates and sets the surplus share.
-    function _setSurplusShareBP(uint16 surplusShareBP_) internal {
-        if (surplusShareBP_ == 0 || surplusShareBP_ > MAX_BASIS_POINTS)
-            revert SurplusShareBPInvalid();
-        surplusShareBP = surplusShareBP_;
-        emit SurplusShareBPSet(surplusShareBP_);
-    }
-
-    /// @dev Sets the daily reserve rate.
-    function _setReserveDailyRateUSD(uint128 reserveDailyRateUSD_) internal {
-        reserveDailyRateUSD = reserveDailyRateUSD_;
-        emit ReserveDailyRateUSDSet(reserveDailyRateUSD_);
-    }
-
-    /// @dev Sets the minimum stETH price.
-    function _setMinStEthPriceUSD(uint128 minStEthPriceUSD_) internal {
-        minStEthPriceUSD = minStEthPriceUSD_;
-        emit MinStEthPriceUSDSet(minStEthPriceUSD_);
     }
 }
