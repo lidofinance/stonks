@@ -409,10 +409,10 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     function _spendable(
         uint256 availableUSD_
     ) internal view returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth) {
-        // Guard order is the observable skip-reason precedence when several conditions hold:
-        // QuoteUnavailable, then StEthPriceBelowMin, then NoAvailableBudget (zero-budget and
-        // zero-after-caps both map here), then AllocationBelowMin. The status is emitted by
-        // allocate() and returned by spendable() — do NOT reorder.
+        if (availableUSD_ == 0) {
+            return (AllocationStatus.NoAvailableBudget, 0, 0);
+        }
+
         // no usable price means no allocation
         uint256 stEthPriceUSD = _getStEthPriceUSD();
 
@@ -425,13 +425,8 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
             return (AllocationStatus.StEthPriceBelowMin, 0, 0);
         }
 
-        spendableUSD = availableUSD_;
-        // incoming budget is empty
-        if (spendableUSD == 0) {
-            return (AllocationStatus.NoAvailableBudget, 0, 0);
-        }
-
         // limit to the amount remaining under the year cap, then the day cap
+        spendableUSD = availableUSD_;
         spendableUSD = Math.min(spendableUSD, _windowUnspent(yearly, yearlyCapUSD));
         spendableUSD = Math.min(spendableUSD, _windowUnspent(daily, dailyCapUSD));
         // year/day caps leave nothing
