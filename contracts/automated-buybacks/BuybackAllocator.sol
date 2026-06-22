@@ -583,6 +583,8 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     function _removeRevenueSource(address source_) internal {
         if (!_revenueSources.remove(source_)) revert RevenueSourceNotRegistered();
 
+        // removeRevenueSource() checkpoints first, so lastTotalRevenueUSD already includes this
+        // source's current total — the subtraction is therefore exact and cannot underflow.
         lastTotalRevenueUSD -= IRevenueSource(source_).getCumulativeRevenueUSD();
 
         emit RevenueSourceRemoved(source_);
