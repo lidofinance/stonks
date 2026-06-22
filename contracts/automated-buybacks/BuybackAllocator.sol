@@ -340,10 +340,13 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     /**
      * @notice Registers a revenue source. Its current total is added to the baseline, so only its
      *         later earnings fund the budget.
-     * @dev    Sources are trusted to report accurate USD totals (18 decimals) that only go up.
-     *         Reverts if the source does not support the required interface or cannot be reached.
+     * @dev    Updates the budget first, banking revenue earned up to now, then adds the source's
+     *         current total to the baseline. Sources are trusted to report accurate USD totals (18
+     *         decimals) that only go up. Reverts if the source does not support the required
+     *         interface or cannot be reached.
      */
     function addRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
+        _checkpoint();
         _addRevenueSource(source_);
     }
 
