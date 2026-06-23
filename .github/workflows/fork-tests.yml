@@ -47,6 +47,11 @@ jobs:
         with:
           node-version: 20
 
+      - name: Enable Corepack
+        # core's package.json pins `packageManager: yarn@4.x`, which requires Corepack — the
+        # runner ships global yarn 1.x otherwise.
+        run: corepack enable
+
       - name: Check RPC_URL
         shell: bash
         run: |
