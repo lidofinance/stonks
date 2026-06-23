@@ -73,6 +73,7 @@ jobs:
           # FORK_NODE=hardhat → `hardhat node --fork`, so hardhat-network-helpers and the
           # `.emit` matcher used by the fork suite keep working (anvil would break them).
           nohup env FORK_NODE=hardhat NETWORK=mainnet RPC_URL="$RPC_URL" \
+            NODE_OPTIONS="--max_old_space_size=8192" \
             yarn upgrade:fork-node > "$GITHUB_WORKSPACE/fork-node.log" 2>&1 &
           echo "fork node launching..."
         env:
