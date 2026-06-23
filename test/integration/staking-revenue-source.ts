@@ -118,6 +118,7 @@ describe('StakingRevenueSource — integration', function () {
       executor: await executor.getAddress(),
       dailyCapUSD: DAILY_CAP_USD,
       yearlyCapUSD: YEARLY_CAP_USD,
+      reserveDailyRateUSD: 0n,
       minStEthPriceUSD: 0n,
       minSpendPerCallUSD: MIN_SPEND_PER_CALL_USD,
       surplusShareBP: SURPLUS_SHARE_BP,
@@ -213,6 +214,7 @@ describe('StakingRevenueSource — integration', function () {
   describe('BuybackAllocator wiring:', function () {
     it('should be accepted by addRevenueSource via the ERC165 IRevenueSource check', async function () {
       const allocator = await deployAllocator([])
+      await allocator.activate()
       await expect(allocator.addRevenueSource(await revenueSource.getAddress()))
         .to.emit(allocator, 'RevenueSourceAdded')
         .withArgs(await revenueSource.getAddress())
@@ -220,6 +222,7 @@ describe('StakingRevenueSource — integration', function () {
 
     it('should reject a contract that does not advertise IRevenueSource', async function () {
       const allocator = await deployAllocator([])
+      await allocator.activate()
       // The oracle stub is a valid contract but does not support IRevenueSource.
       await expect(allocator.addRevenueSource(await oracleStub.getAddress()))
         .to.be.revertedWithCustomError(allocator, 'RevenueSourceUnsupported')
@@ -235,10 +238,10 @@ describe('StakingRevenueSource — integration', function () {
 
       // Register against the allocator (constructor path) and activate.
       const allocator = await deployAllocator([await revenueSource.getAddress()])
-      await allocator.activate(0n)
+      await allocator.activate()
 
       // The allocator summed our source's cumulative into its baseline.
-      expect(await allocator.revenueBaselineUSD()).to.equal(cumulative)
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(cumulative)
     })
 
     it('should baseline at the source cumulative only when the source is registered', async function () {
@@ -251,13 +254,13 @@ describe('StakingRevenueSource — integration', function () {
       expect(cumulative).to.be.gt(0n)
 
       const allocatorWith = await deployAllocator([await revenueSource.getAddress()])
-      await allocatorWith.activate(0n)
+      await allocatorWith.activate()
 
       const allocatorWithout = await deployAllocator([])
-      await allocatorWithout.activate(0n)
+      await allocatorWithout.activate()
 
-      expect(await allocatorWith.revenueBaselineUSD()).to.equal(cumulative)
-      expect(await allocatorWithout.revenueBaselineUSD()).to.equal(0n)
+      expect(await allocatorWith.lastTotalRevenueUSD()).to.equal(cumulative)
+      expect(await allocatorWithout.lastTotalRevenueUSD()).to.equal(0n)
     })
   })
 })
