@@ -51,4 +51,6 @@ interface IOracleRouter {
     function syncTokenFeed(address token_) external;
 
     function MAX_DECIMALS() external view returns (uint128);
+
+    function PRICE_UNIT() external view returns (uint256);
 }

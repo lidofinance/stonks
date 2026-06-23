@@ -12,4 +12,8 @@ interface IWstETH is IERC20 {
     function getStETHByWstETH(uint256 wstEthAmount_) external view returns (uint256 stEthAmount);
 
     function getWstETHByStETH(uint256 stEthAmount_) external view returns (uint256 wstEthAmount);
+
+    function stEthPerToken() external view returns (uint256);
+
+    function stETH() external view returns (address);
 }
