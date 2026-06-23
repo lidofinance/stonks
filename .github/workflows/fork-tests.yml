@@ -66,15 +66,20 @@ jobs:
         working-directory: core
         run: yarn install --frozen-lockfile
 
-      - name: Start core fork node (Hardhat Network)
-        working-directory: core
+      - name: Install stonks dependencies
+        run: npm ci
+
+      - name: Start fork node (Hardhat Network)
         shell: bash
         run: |
-          # FORK_NODE=hardhat → `hardhat node --fork`, so hardhat-network-helpers and the
-          # `.emit` matcher used by the fork suite keep working (anvil would break them).
-          nohup env FORK_NODE=hardhat NETWORK=mainnet RPC_URL="$RPC_URL" \
-            NODE_OPTIONS="--max_old_space_size=8192" \
-            yarn upgrade:fork-node > "$GITHUB_WORKSPACE/fork-node.log" 2>&1 &
+          # Start the fork node from stonks (plain `hardhat node --fork`), NOT core's
+          # `upgrade:fork-node`. Core's run-fork-node.sh hardcodes the hardhat-tracer flags
+          # (--trace --gascost --vvv), which record every EVM step in memory and balloon the
+          # node's heap on a heavy `handlePostTokenRebase` tx (OOM/kill on the runner). Our
+          # hardhat has no tracer plugin, so the node stays lean. Core is only used for the
+          # mock-upgrade scripts, which connect over localhost:8545 regardless of who started it.
+          nohup env RPC_URL="$RPC_URL" NODE_OPTIONS="--max_old_space_size=6144" \
+            npx hardhat node --fork "$RPC_URL" > "$GITHUB_WORKSPACE/fork-node.log" 2>&1 &
           echo "fork node launching..."
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
@@ -106,9 +111,6 @@ jobs:
             yarn upgrade:helper:run
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
-
-      - name: Install stonks dependencies
-        run: npm ci
 
       - name: Run fork tests
         run: npm run test:fork
