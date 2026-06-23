@@ -1,0 +1,115 @@
+name: Fork tests
+
+# Runs the NEST revenue-source fork suite against a mainnet fork that has the new
+# TokenRateNotifier mock-upgrade applied from the core repo. The core branch is checked out,
+# a Hardhat Network fork node is started, the mock-upgrade is run against it (deploys the new
+# notifier and rewires LidoLocator), and finally our `test/fork` suite runs against that node.
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - test/nest-core-fork-integration
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Core branch carrying the new TokenRateNotifier + mock-upgrade step.
+  # TODO: switch to `develop` once the change lands there.
+  CORE_REF: feat/nest-token-rate-notifier
+
+jobs:
+  fork-tests:
+    name: NEST revenue-source fork suite
+    if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout stonks
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout core (${{ env.CORE_REF }})
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: lidofinance/core
+          ref: ${{ env.CORE_REF }}
+          path: core
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v6.0.0
+        with:
+          node-version: 20
+
+      - name: Check RPC_URL
+        shell: bash
+        run: |
+          if [[ -z "$RPC_URL" ]]; then
+            echo "RPC_URL repository secret is required for mainnet forking." >&2
+            exit 1
+          fi
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+
+      - name: Install core dependencies
+        working-directory: core
+        run: yarn install --frozen-lockfile
+
+      - name: Start core fork node (Hardhat Network)
+        working-directory: core
+        shell: bash
+        run: |
+          # FORK_NODE=hardhat → `hardhat node --fork`, so hardhat-network-helpers and the
+          # `.emit` matcher used by the fork suite keep working (anvil would break them).
+          nohup env FORK_NODE=hardhat NETWORK=mainnet RPC_URL="$RPC_URL" \
+            yarn upgrade:fork-node > "$GITHUB_WORKSPACE/fork-node.log" 2>&1 &
+          echo "fork node launching..."
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+
+      - name: Wait for the fork node
+        shell: bash
+        run: |
+          echo "Waiting for fork node on 127.0.0.1:8545..."
+          for i in {1..60}; do
+            if curl -s -X POST -H "Content-Type: application/json" \
+              --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+              http://127.0.0.1:8545 | grep -q '"result"'; then
+              echo "Fork is ready ✅"
+              exit 0
+            fi
+            echo "Not ready yet... ($i/60)"
+            sleep 2
+          done
+          echo "❌ Fork node was not ready in time" >&2
+          cat "$GITHUB_WORKSPACE/fork-node.log" || true
+          exit 1
+
+      - name: Apply mock-upgrade (deploy new TokenRateNotifier + rewire LidoLocator)
+        working-directory: core
+        shell: bash
+        run: |
+          MODE=forking NETWORK=mainnet RPC_URL="$RPC_URL" \
+            STEPS_FILE=upgrade/steps-mock-upgrade-token-rate-notifier-nest.json \
+            yarn upgrade:helper:run
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+
+      - name: Install stonks dependencies
+        run: npm ci
+
+      - name: Run fork tests
+        run: npm run test:fork
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+
+      - name: Dump fork node log on failure
+        if: failure()
+        shell: bash
+        run: cat "$GITHUB_WORKSPACE/fork-node.log" || true
