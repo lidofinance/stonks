@@ -43,6 +43,11 @@ async function main() {
 
   // Envelope checks
   const expectedFactory = contracts.CURVE_TWOCRYPTO_NG_FACTORY
+  if (expectedFactory === ethers.ZeroAddress) {
+    throw new Error(
+      `Curve TwoCrypto-NG factory address is not set for network "${network.name}" - cannot validate`
+    )
+  }
   const toMatches = tx.to.toLowerCase() === expectedFactory.toLowerCase()
   const valueIsZero = tx.value === '0'
   const selectorMatches = tx.data.slice(0, 10).toLowerCase() === DEPLOY_POOL_SELECTOR.toLowerCase()
@@ -68,6 +73,13 @@ async function main() {
   )
   console.log(`   calldata size      : ${(tx.data.length - 2) / 2} bytes`)
   console.log()
+
+  // Decoding assumes deploy_pool's argument layout; a mismatched selector would
+  // make ethers throw a cryptic ABI error instead of our envelope diagnostics.
+  if (!selectorMatches) {
+    console.log('-------------------------------------------------------------')
+    throw new Error('selector does not match deploy_pool - cannot decode calldata; see [!!] above')
+  }
 
   const decoded = DEPLOY_POOL_IFACE.decodeFunctionData('deploy_pool', tx.data)
   const decName = decoded[0] as string
@@ -112,7 +124,7 @@ async function main() {
   console.log(`                       = ~${ldoPerWstEth} LDO per wstETH`)
   console.log()
 
-  if (!toMatches || !valueIsZero || !selectorMatches) {
+  if (!toMatches || !valueIsZero) {
     console.log('-------------------------------------------------------------')
     throw new Error('one or more envelope checks failed - see [!!] markers above')
   }
