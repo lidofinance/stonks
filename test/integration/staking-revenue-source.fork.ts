@@ -1,7 +1,7 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
-import { Contract, Signer } from 'ethers'
+import { Contract } from 'ethers'
 import {
   impersonateAccount,
   setBalance,
