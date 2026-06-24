@@ -69,7 +69,6 @@ if (MAINNET_RPC_URL) {
   config.networks!.hardhat = {
     forking: {
       url: MAINNET_RPC_URL,
-      blockNumber: 25294406,
     },
   }
 }

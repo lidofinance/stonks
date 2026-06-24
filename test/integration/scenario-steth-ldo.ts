@@ -22,7 +22,7 @@ const stethLdoPair: TokenPair = {
   tokenFrom: contracts.STETH,
   tokenTo: contracts.LDO,
   name: 'stETH->LDO Rebasable',
-  priceFeedHeartbeatTimeout: 86400,
+  priceFeedHeartbeatTimeout: 86400 * 7,
   useEthBridge: true,
   allowPartialFill: true,
 }
@@ -712,7 +712,7 @@ describe('stETH -> LDO: Full Lifecycle with Rebases', function () {
         tokenFrom: contracts.STETH,
         tokenTo: contracts.LDO,
         name: 'stETH->LDO No Partial',
-        priceFeedHeartbeatTimeout: 86400,
+        priceFeedHeartbeatTimeout: 86400 * 7,
         useEthBridge: true,
       })
       stonksNoPartial = stonksLocal

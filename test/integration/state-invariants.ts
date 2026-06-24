@@ -26,7 +26,7 @@ describe('State invariants', function () {
   const pair: TokenPair = {
     tokenFrom: contracts.STETH,
     tokenTo: contracts.LDO,
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
     useEthBridge: true,
     allowPartialFill: true,
   }
