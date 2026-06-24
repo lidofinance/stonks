@@ -1,14 +1,9 @@
 name: Integration tests
 
-# Runs the integration suite against a mainnet fork that has the new TokenRateNotifier
-# mock-upgrade applied from the core repo. The core branch is checked out, a Hardhat Network fork
-# node is started (forks from the latest block), the mock-upgrade is run against it (deploys the
-# new notifier and rewires LidoLocator), and finally `test/integration` runs against that node via
-# --network localhost.
+# Integration suite against a mainnet fork with the TokenRateNotifier mock-upgrade.
+# Service runs the fork node; core's mock-upgrade deploys the notifier and rewires LidoLocator.
 #
-# TODO: once the new TokenRateNotifier is deployed on mainnet, drop the core checkout, the fork
-# node, and the mock-upgrade steps, and run the integration suite on a plain `--network hardhat`
-# fork like the other suites in tests.yml.
+# TODO: once the notifier is on mainnet, drop the core checkout, fork-node service, and mock-upgrade.
 
 on:
   pull_request:
@@ -28,6 +23,17 @@ jobs:
     if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
+    # Fork node on localhost:8545. Image has no HEALTHCHECK, so the next step polls for readiness.
+    services:
+      fork-node:
+        image: ghcr.io/lidofinance/hardhat-node:2.26.0
+        ports:
+          - 8545:8545
+        env:
+          ETH_RPC_URL: ${{ secrets.RPC_URL }}
+          NODE_OPTIONS: --max_old_space_size=6144
+        options: --name fork-node
 
     steps:
       - name: Checkout stonks
@@ -49,8 +55,7 @@ jobs:
           node-version: 20
 
       - name: Enable Corepack
-        # core's package.json pins `packageManager: yarn@4.x`, which requires Corepack — the
-        # runner ships global yarn 1.x otherwise.
+        # core pins `packageManager: yarn@4.x`, which needs Corepack; the runner ships yarn 1.x otherwise.
         run: corepack enable
 
       - name: Check RPC_URL
@@ -70,22 +75,6 @@ jobs:
       - name: Install stonks dependencies
         run: npm ci
 
-      - name: Start fork node (Hardhat Network)
-        shell: bash
-        run: |
-          # Start the fork node from stonks (plain `hardhat node --fork`), NOT core's
-          # `upgrade:fork-node`. Core's run-fork-node.sh hardcodes the hardhat-tracer flags
-          # (--trace --gascost --vvv), which record every EVM step in memory and balloon the
-          # node's heap on a heavy `handlePostTokenRebase` tx (OOM/kill on the runner). Our
-          # hardhat has no tracer plugin, so the node stays lean. Core is only used for the
-          # mock-upgrade scripts, which connect over localhost:8545 regardless of who started it.
-          nohup env RPC_URL="$RPC_URL" NODE_OPTIONS="--max_old_space_size=6144" \
-            npx hardhat node --fork "$RPC_URL" \
-            > "$GITHUB_WORKSPACE/fork-node.log" 2>&1 &
-          echo "fork node launching..."
-        env:
-          RPC_URL: ${{ secrets.RPC_URL }}
-
       - name: Wait for the fork node
         shell: bash
         run: |
@@ -101,7 +90,7 @@ jobs:
             sleep 2
           done
           echo "❌ Fork node was not ready in time" >&2
-          cat "$GITHUB_WORKSPACE/fork-node.log" || true
+          docker logs fork-node || true
           exit 1
 
       - name: Apply mock-upgrade (deploy new TokenRateNotifier + rewire LidoLocator)
@@ -121,5 +110,4 @@ jobs:
 
       - name: Dump fork node log on failure
         if: failure()
-        shell: bash
-        run: cat "$GITHUB_WORKSPACE/fork-node.log" || true
+        run: docker logs fork-node || true
