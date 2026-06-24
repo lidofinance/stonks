@@ -33,7 +33,6 @@ jobs:
         env:
           ETH_RPC_URL: ${{ secrets.RPC_URL }}
           NODE_OPTIONS: --max_old_space_size=6144
-        options: --name fork-node
 
     steps:
       - name: Checkout stonks
@@ -90,7 +89,7 @@ jobs:
             sleep 2
           done
           echo "❌ Fork node was not ready in time" >&2
-          docker logs fork-node || true
+          docker logs ${{ job.services.fork-node.id }} || true
           exit 1
 
       - name: Apply mock-upgrade (deploy new TokenRateNotifier + rewire LidoLocator)
@@ -110,4 +109,4 @@ jobs:
 
       - name: Dump fork node log on failure
         if: failure()
-        run: docker logs fork-node || true
+        run: docker logs ${{ job.services.fork-node.id }} || true
