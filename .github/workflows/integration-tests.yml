@@ -2,20 +2,16 @@ name: Integration tests
 
 # Runs the integration suite against a mainnet fork that has the new TokenRateNotifier
 # mock-upgrade applied from the core repo. The core branch is checked out, a Hardhat Network fork
-# node is started (pinned to the same block as the in-process fork the other suites use, for
-# determinism), the mock-upgrade is run against it (deploys the new notifier and rewires
-# LidoLocator), and finally `test/integration` runs against that node via --network localhost.
+# node is started (forks from the latest block), the mock-upgrade is run against it (deploys the
+# new notifier and rewires LidoLocator), and finally `test/integration` runs against that node via
+# --network localhost.
 #
 # TODO: once the new TokenRateNotifier is deployed on mainnet, drop the core checkout, the fork
-# node, and the mock-upgrade steps, bump the fork block past its deployment, and run the
-# integration suite on a plain `--network hardhat` fork like the other suites in tests.yml.
+# node, and the mock-upgrade steps, and run the integration suite on a plain `--network hardhat`
+# fork like the other suites in tests.yml.
 
 on:
-  push:
-    branches:
-      - develop
-      - main
-      - test/nest-core-fork-integration
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -25,9 +21,6 @@ env:
   # Core branch carrying the new TokenRateNotifier + mock-upgrade step.
   # TODO: switch to `develop` once the change lands there.
   CORE_REF: feat/nest-token-rate-notifier
-  # Pin the fork node to the same block the in-process fork uses (see hardhat.config.ts), so the
-  # inherited integration tests see identical state and stay deterministic.
-  FORK_BLOCK_NUMBER: "25294406"
 
 jobs:
   integration-tests:
@@ -87,7 +80,7 @@ jobs:
           # hardhat has no tracer plugin, so the node stays lean. Core is only used for the
           # mock-upgrade scripts, which connect over localhost:8545 regardless of who started it.
           nohup env RPC_URL="$RPC_URL" NODE_OPTIONS="--max_old_space_size=6144" \
-            npx hardhat node --fork "$RPC_URL" --fork-block-number "$FORK_BLOCK_NUMBER" \
+            npx hardhat node --fork "$RPC_URL" \
             > "$GITHUB_WORKSPACE/fork-node.log" 2>&1 &
           echo "fork node launching..."
         env:
