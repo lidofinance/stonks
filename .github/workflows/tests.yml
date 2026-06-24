@@ -26,9 +26,9 @@ jobs:
           - name: Acceptance
             path: test/acceptance
             timeout: 30
-          - name: Integration
-            path: test/integration
-            timeout: 60
+          # NOTE: the Integration suite runs in integration-tests.yml — it needs a fork with the
+          # TokenRateNotifier mock-upgrade applied, which this in-process `--network hardhat`
+          # matrix cannot provide. TODO: fold it back here once the notifier is on mainnet.
           - name: Fuzz
             path: test/fuzz
             timeout: 60

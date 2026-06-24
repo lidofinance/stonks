@@ -60,10 +60,17 @@ To run the tests, open a new terminal tab and execute the following command:
 npm run test
 ```
 
-### Fork tests
+### Integration tests
 
-With the mainnet fork node running in a separate tab:
+Integration tests run against a mainnet fork. With the fork node running in a separate tab
+(`npm run node`):
 
 ```sh
-npm run test:fork
+npm run test:integration
 ```
+
+The NEST revenue-source integration suite additionally needs the new `TokenRateNotifier`
+mock-upgrade applied to the fork (deploys the new notifier and rewires `LidoLocator`). In CI this
+is done automatically by `.github/workflows/integration-tests.yml`, which checks out the core
+branch and runs its mock-upgrade step against the fork before the suite. Once the notifier is on
+mainnet, that prep is dropped and the suite runs on a plain fork like the rest.

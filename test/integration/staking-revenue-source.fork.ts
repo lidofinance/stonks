@@ -77,21 +77,11 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
   }
 
   before(async function () {
-    // Resolve the notifier from the locator, mirroring the contract's own lookup. Skip the whole
-    // suite unless the fork actually has a notifier wired in (the default in-process fork does not).
+    // Resolve the notifier from the locator, mirroring the contract's own lookup. Requires a
+    // prepared fork (mainnet fork + TokenRateNotifier mock-upgrade, see integration-tests.yml);
+    // against any other environment the resolution or the tests below fail loudly — no skip.
     const locator: ILidoLocator = await ethers.getContractAt('ILidoLocator', LIDO_LOCATOR)
-    let notifierAddress: string
-    try {
-      notifierAddress = await locator.postTokenRebaseReceiver()
-    } catch {
-      this.skip()
-    }
-    if (
-      notifierAddress === ethers.ZeroAddress ||
-      (await ethers.provider.getCode(notifierAddress)) === '0x'
-    ) {
-      this.skip()
-    }
+    const notifierAddress = await locator.postTokenRebaseReceiver()
 
     topSnapshot = await takeSnapshot()
 
