@@ -35,7 +35,8 @@ const YEARLY_CAP_USD = ethers.parseEther('10000000')
 const MIN_SPEND_PER_CALL_USD = ethers.parseEther('1')
 const SURPLUS_SHARE_BP = 5000n
 
-// Observer kinds as tagged by the notifier (Legacy = 0, WithArgs = 1).
+// Observer kinds the notifier registers under (enum ObserverKind { NoArgs, WithArgs }).
+const OBSERVER_KIND_NO_ARGS = 0n
 const OBSERVER_KIND_WITH_ARGS = 1n
 
 const NOTIFIER_ABI = [
@@ -43,9 +44,10 @@ const NOTIFIER_ABI = [
   'function TOKEN_RATE_PROVIDER() view returns (address)',
   'function observersLength() view returns (uint256)',
   'function observers(uint256) view returns (address addr, uint8 kind)',
-  'function addObserver(address observer) external',
+  'function addObserver(address observer, uint8 kind) external',
   'function handlePostTokenRebase(uint256,uint256,uint256,uint256,uint256,uint256,uint256) external',
   'event PushTokenRateFailed(address indexed observer, bytes lowLevelRevertData)',
+  'error ErrorBadObserverInterface()',
 ]
 
 describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
@@ -157,11 +159,11 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
     await snapshot.restore()
   })
 
-  describe('addObserver / ERC165 auto-detection:', function () {
-    it('should be registered as a WithArgs observer via ERC165', async function () {
+  describe('addObserver registration:', function () {
+    it('should register as a WithArgs observer (ERC165 validated against the requested kind)', async function () {
       const lengthBefore = await notifierAgent.observersLength()
 
-      await notifierAgent.addObserver(await revenueSource.getAddress())
+      await notifierAgent.addObserver(await revenueSource.getAddress(), OBSERVER_KIND_WITH_ARGS)
 
       const lengthAfter = await notifierAgent.observersLength()
       expect(lengthAfter).to.equal(lengthBefore + 1n)
@@ -170,11 +172,19 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
       expect(addr).to.equal(await revenueSource.getAddress())
       expect(kind).to.equal(OBSERVER_KIND_WITH_ARGS)
     })
+
+    it('should reject registration under the NoArgs kind (source advertises only WithArgs)', async function () {
+      // The notifier validates the source's ERC165 against the requested kind. Our source only
+      // claims ITokenRatePusherWithArgs, so registering it as NoArgs must revert.
+      await expect(
+        notifierAgent.addObserver(await revenueSource.getAddress(), OBSERVER_KIND_NO_ARGS)
+      ).to.be.revertedWithCustomError(notifierAgent, 'ErrorBadObserverInterface')
+    })
   })
 
   describe('rebase callback accumulation:', function () {
     beforeEach(async function () {
-      await notifierAgent.addObserver(await revenueSource.getAddress())
+      await notifierAgent.addObserver(await revenueSource.getAddress(), OBSERVER_KIND_WITH_ARGS)
     })
 
     it('should accept a real notifier callback and accumulate treasury stETH', async function () {
@@ -244,7 +254,7 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
 
   describe('USD settlement against the deployed OracleRouter:', function () {
     beforeEach(async function () {
-      await notifierAgent.addObserver(await revenueSource.getAddress())
+      await notifierAgent.addObserver(await revenueSource.getAddress(), OBSERVER_KIND_WITH_ARGS)
     })
 
     it('should convert pending stETH to USD using the OracleRouter price', async function () {
@@ -289,7 +299,7 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
 
   describe('BuybackAllocator wiring:', function () {
     beforeEach(async function () {
-      await notifierAgent.addObserver(await revenueSource.getAddress())
+      await notifierAgent.addObserver(await revenueSource.getAddress(), OBSERVER_KIND_WITH_ARGS)
     })
 
     it('should be accepted by addRevenueSource via the ERC165 IRevenueSource check', async function () {
