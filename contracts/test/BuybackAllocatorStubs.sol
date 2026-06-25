@@ -66,3 +66,15 @@ contract ExecutorStub {
         onStEthAllocatedCount += 1;
     }
 }
+
+/// @notice Allocation receiver that re-enters `allocate()` inside the callback, so a test can drive
+///         the `nonReentrant` guard on the allocator.
+contract ReentrantExecutorStub {
+    function onStEthAllocated() external {
+        IAllocate(msg.sender).allocate();
+    }
+}
+
+interface IAllocate {
+    function allocate() external;
+}

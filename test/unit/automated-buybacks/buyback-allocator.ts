@@ -14,17 +14,20 @@ import {
   RevenueSourceStub__factory,
   ExecutorStub,
   ExecutorStub__factory,
+  ReentrantExecutorStub__factory,
 } from '../../../typechain-types'
 
 // 1 USD == 1 stETH (both 18 decimals), so USD and stETH amounts are numerically equal.
 const PRICE = ethers.parseEther('1')
 const ONE_DAY = 86_400n
+const ONE_YEAR = 365n * ONE_DAY
 
 const DAILY_CAP = ethers.parseEther('1000000')
 const YEARLY_CAP = ethers.parseEther('10000000')
 const MIN_SPEND = ethers.parseEther('1')
 const SHARE_50 = 5000n
 const SHARE_100 = 10000n
+const MAX_SHARE = 10000n
 
 const usd = (n: string) => ethers.parseEther(n)
 
@@ -49,11 +52,14 @@ interface DeployOpts {
   yearlyCap?: bigint
   minSpend?: bigint
   reserveRate?: bigint
+  executorAddr?: string
 }
 
 describe('BuybackAllocator — accumulated budget', function () {
   let admin: Signer
   let adminAddr: string
+  let stranger: Signer
+  let strangerAddr: string
 
   let allocator: BuybackAllocator
   let stEth: StEthTokenStub
@@ -66,8 +72,9 @@ describe('BuybackAllocator — accumulated budget', function () {
 
   before(async function () {
     topSnapshot = await takeSnapshot()
-    ;[admin] = await ethers.getSigners()
+    ;[admin, stranger] = await ethers.getSigners()
     adminAddr = await admin.getAddress()
+    strangerAddr = await stranger.getAddress()
   })
 
   after(async function () {
@@ -86,7 +93,7 @@ describe('BuybackAllocator — accumulated budget', function () {
       treasury: adminAddr,
       stEth: await stEth.getAddress(),
       oracleRouter: await oracle.getAddress(),
-      executor: await executor.getAddress(),
+      executor: opts.executorAddr ?? (await executor.getAddress()),
       dailyCapUSD: opts.dailyCap ?? DAILY_CAP,
       yearlyCapUSD: opts.yearlyCap ?? YEARLY_CAP,
       reserveDailyRateUSD: opts.reserveRate ?? 0n,
@@ -96,6 +103,28 @@ describe('BuybackAllocator — accumulated budget', function () {
       revenueSources: [await source.getAddress()],
     })
     await allocator.waitForDeployment()
+  }
+
+  // Builds a full ConstructorParams from the already-deployed stubs, with selected fields
+  // overridden, for exercising the constructor's validation reverts.
+  async function deployParams(
+    overrides: Partial<BuybackAllocator.ConstructorParamsStruct> = {}
+  ): Promise<BuybackAllocator.ConstructorParamsStruct> {
+    return {
+      admin: adminAddr,
+      treasury: adminAddr,
+      stEth: await stEth.getAddress(),
+      oracleRouter: await oracle.getAddress(),
+      executor: await executor.getAddress(),
+      dailyCapUSD: DAILY_CAP,
+      yearlyCapUSD: YEARLY_CAP,
+      reserveDailyRateUSD: 0n,
+      minStEthPriceUSD: 0n,
+      minSpendPerCallUSD: MIN_SPEND,
+      surplusShareBP: SHARE_50,
+      revenueSources: [await source.getAddress()],
+      ...overrides,
+    }
   }
 
   // Sets the source cumulative, then activates. The reserve rate is configured at deploy.
@@ -146,6 +175,15 @@ describe('BuybackAllocator — accumulated budget', function () {
       await allocator.allocate() // balance is 0 → skips after checkpointing
 
       expect(await allocator.budgetUSD()).to.equal(usd('400')) // 500 - 1*100
+    })
+
+    it('reverts a second activation', async function () {
+      await deployAllocator()
+      await allocator.activate()
+      await expect(allocator.activate()).to.be.revertedWithCustomError(
+        allocator,
+        'AlreadyActivated'
+      )
     })
   })
 
@@ -309,6 +347,15 @@ describe('BuybackAllocator — accumulated budget', function () {
         .withArgs(adminAddr, AllocationStatus.QuoteUnavailable)
 
       expect(await allocator.budgetUSD()).to.equal(usd('500'))
+    })
+
+    it('skips when there is no available budget', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(0n) // baseline equals current revenue → budget is zero
+
+      await expect(allocator.allocate())
+        .to.emit(allocator, 'AllocationSkipped')
+        .withArgs(adminAddr, AllocationStatus.NoAvailableBudget)
     })
   })
 
@@ -494,6 +541,14 @@ describe('BuybackAllocator — accumulated budget', function () {
       )
     })
 
+    it('reverts setReserveDailyRateUSD() before activation', async function () {
+      await deployAllocator()
+      await expect(allocator.setReserveDailyRateUSD(usd('1'))).to.be.revertedWithCustomError(
+        allocator,
+        'NotActivated'
+      )
+    })
+
     it('reverts addRevenueSource() before activation', async function () {
       await deployAllocator()
       const extra = await new RevenueSourceStub__factory(admin).deploy()
@@ -517,6 +572,315 @@ describe('BuybackAllocator — accumulated budget', function () {
         (f) => f.type === 'function' && (f as { name?: string }).name === 'resetAccounting'
       )
       expect(hasReset).to.equal(false)
+    })
+  })
+
+  describe('deployment validation:', function () {
+    beforeEach(async function () {
+      // A valid deploy populates the stub references deployParams reads and gives an instance
+      // whose interface decodes the custom errors asserted below.
+      await deployAllocator()
+    })
+
+    it('reverts with StEthZeroAddress when stETH is the zero address', async function () {
+      await expect(
+        new BuybackAllocator__factory(admin).deploy(await deployParams({ stEth: ethers.ZeroAddress }))
+      ).to.be.revertedWithCustomError(allocator, 'StEthZeroAddress')
+    })
+
+    it('reverts with OracleRouterZeroAddress when the oracle is the zero address', async function () {
+      await expect(
+        new BuybackAllocator__factory(admin).deploy(await deployParams({ oracleRouter: ethers.ZeroAddress }))
+      ).to.be.revertedWithCustomError(allocator, 'OracleRouterZeroAddress')
+    })
+
+    it('reverts with RevenueSourceLimitReached one past the maximum', async function () {
+      const max = await allocator.MAX_REVENUE_SOURCES()
+      const sources: string[] = []
+      for (let i = 0; i < Number(max) + 1; i++) {
+        const s = await new RevenueSourceStub__factory(admin).deploy()
+        await s.waitForDeployment()
+        sources.push(await s.getAddress())
+      }
+
+      await expect(
+        new BuybackAllocator__factory(admin).deploy(await deployParams({ revenueSources: sources }))
+      )
+        .to.be.revertedWithCustomError(allocator, 'RevenueSourceLimitReached')
+        .withArgs(max)
+    })
+  })
+
+  describe('access control:', function () {
+    // Each admin-gated function reverts for a non-admin caller. The role check runs before any
+    // activation or argument validation, so a fresh (un-activated) deploy is enough.
+    const adminOnly: Array<{ name: string; call: (a: BuybackAllocator) => Promise<unknown> }> = [
+      { name: 'activate', call: (a) => a.activate() },
+      { name: 'setSurplusShareBP', call: (a) => a.setSurplusShareBP(SHARE_50) },
+      { name: 'setReserveDailyRateUSD', call: (a) => a.setReserveDailyRateUSD(usd('1')) },
+      { name: 'setDailyCapUSD', call: (a) => a.setDailyCapUSD(DAILY_CAP) },
+      { name: 'setYearlyCapUSD', call: (a) => a.setYearlyCapUSD(YEARLY_CAP) },
+      { name: 'setMinStEthPriceUSD', call: (a) => a.setMinStEthPriceUSD(0n) },
+      { name: 'setMinSpendPerCallUSD', call: (a) => a.setMinSpendPerCallUSD(MIN_SPEND) },
+      { name: 'setExecutor', call: (a) => a.setExecutor(strangerAddr) },
+      { name: 'addRevenueSource', call: (a) => a.addRevenueSource(strangerAddr) },
+      { name: 'removeRevenueSource', call: (a) => a.removeRevenueSource(strangerAddr) },
+    ]
+
+    beforeEach(async function () {
+      await deployAllocator()
+    })
+
+    for (const { name, call } of adminOnly) {
+      it(`reverts ${name}() for a non-admin caller`, async function () {
+        // OZ v4 AccessControl reverts with this string when the role (DEFAULT_ADMIN_ROLE = 0x0) is missing
+        await expect(call(allocator.connect(stranger))).to.be.revertedWith(
+          `AccessControl: account ${strangerAddr.toLowerCase()} is missing role ${ethers.ZeroHash}`
+        )
+      })
+    }
+  })
+
+  describe('parameter setters:', function () {
+    beforeEach(async function () {
+      await deployAllocator()
+    })
+
+    it('setDailyCapUSD updates the cap and emits', async function () {
+      await expect(allocator.setDailyCapUSD(usd('500000')))
+        .to.emit(allocator, 'DailyCapUSDSet')
+        .withArgs(usd('500000'))
+      expect(await allocator.dailyCapUSD()).to.equal(usd('500000'))
+    })
+
+    it('setDailyCapUSD reverts on zero', async function () {
+      await expect(allocator.setDailyCapUSD(0n)).to.be.revertedWithCustomError(
+        allocator,
+        'DailyCapUSDZero'
+      )
+    })
+
+    it('setDailyCapUSD reverts above the yearly cap', async function () {
+      await expect(allocator.setDailyCapUSD(YEARLY_CAP + 1n)).to.be.revertedWithCustomError(
+        allocator,
+        'DailyCapExceedsYearlyCap'
+      )
+    })
+
+    it('setDailyCapUSD reverts below the minimum spend', async function () {
+      // default minimum spend is 1 USD; a cap under it is rejected
+      await expect(allocator.setDailyCapUSD(usd('0.5'))).to.be.revertedWithCustomError(
+        allocator,
+        'MinSpendPerCallExceedsDailyCap'
+      )
+    })
+
+    it('setYearlyCapUSD updates the cap and emits', async function () {
+      await expect(allocator.setYearlyCapUSD(usd('20000000')))
+        .to.emit(allocator, 'YearlyCapUSDSet')
+        .withArgs(usd('20000000'))
+      expect(await allocator.yearlyCapUSD()).to.equal(usd('20000000'))
+    })
+
+    it('setYearlyCapUSD reverts on zero', async function () {
+      await expect(allocator.setYearlyCapUSD(0n)).to.be.revertedWithCustomError(
+        allocator,
+        'YearlyCapUSDZero'
+      )
+    })
+
+    it('setYearlyCapUSD reverts below the daily cap', async function () {
+      await expect(allocator.setYearlyCapUSD(usd('500000'))).to.be.revertedWithCustomError(
+        allocator,
+        'DailyCapExceedsYearlyCap'
+      )
+    })
+
+    it('setMinSpendPerCallUSD updates the floor and emits', async function () {
+      await expect(allocator.setMinSpendPerCallUSD(usd('2')))
+        .to.emit(allocator, 'MinSpendPerCallUSDSet')
+        .withArgs(usd('2'))
+      expect(await allocator.minSpendPerCallUSD()).to.equal(usd('2'))
+    })
+
+    it('setMinSpendPerCallUSD reverts on zero', async function () {
+      await expect(allocator.setMinSpendPerCallUSD(0n)).to.be.revertedWithCustomError(
+        allocator,
+        'MinSpendPerCallUSDZero'
+      )
+    })
+
+    it('setMinSpendPerCallUSD reverts above the daily cap', async function () {
+      await expect(allocator.setMinSpendPerCallUSD(DAILY_CAP + 1n)).to.be.revertedWithCustomError(
+        allocator,
+        'MinSpendPerCallExceedsDailyCap'
+      )
+    })
+
+    it('setMinStEthPriceUSD updates the floor and emits', async function () {
+      await expect(allocator.setMinStEthPriceUSD(usd('1000')))
+        .to.emit(allocator, 'MinStEthPriceUSDSet')
+        .withArgs(usd('1000'))
+      expect(await allocator.minStEthPriceUSD()).to.equal(usd('1000'))
+    })
+
+    it('setExecutor updates the receiver and emits', async function () {
+      const next = await new ExecutorStub__factory(admin).deploy()
+      const nextAddr = await next.getAddress()
+      await expect(allocator.setExecutor(nextAddr))
+        .to.emit(allocator, 'ExecutorSet')
+        .withArgs(nextAddr)
+      expect(await allocator.executor()).to.equal(nextAddr)
+    })
+
+    it('setExecutor reverts on the zero address', async function () {
+      await expect(allocator.setExecutor(ethers.ZeroAddress)).to.be.revertedWithCustomError(
+        allocator,
+        'ExecutorZeroAddress'
+      )
+    })
+  })
+
+  describe('surplus share:', function () {
+    beforeEach(async function () {
+      await deployAllocator()
+      await activateWith(0n)
+    })
+
+    it('setSurplusShareBP updates the share and emits', async function () {
+      await expect(allocator.setSurplusShareBP(2000n))
+        .to.emit(allocator, 'SurplusShareBPSet')
+        .withArgs(2000n)
+      expect(await allocator.surplusShareBP()).to.equal(2000n)
+    })
+
+    it('setSurplusShareBP reverts on a zero share', async function () {
+      await expect(allocator.setSurplusShareBP(0n)).to.be.revertedWithCustomError(
+        allocator,
+        'SurplusShareBPInvalid'
+      )
+    })
+
+    it('setSurplusShareBP reverts above 100%', async function () {
+      await expect(allocator.setSurplusShareBP(MAX_SHARE + 1n)).to.be.revertedWithCustomError(
+        allocator,
+        'SurplusShareBPInvalid'
+      )
+    })
+  })
+
+  describe('revenue source management:', function () {
+    beforeEach(async function () {
+      await deployAllocator()
+      await activateWith(0n)
+    })
+
+    it('addRevenueSource registers and emits RevenueSourceAdded', async function () {
+      const extra = await new RevenueSourceStub__factory(admin).deploy()
+      const extraAddr = await extra.getAddress()
+      await expect(allocator.addRevenueSource(extraAddr))
+        .to.emit(allocator, 'RevenueSourceAdded')
+        .withArgs(extraAddr)
+    })
+
+    it('addRevenueSource reverts on the zero address', async function () {
+      await expect(allocator.addRevenueSource(ethers.ZeroAddress)).to.be.revertedWithCustomError(
+        allocator,
+        'RevenueSourceZeroAddress'
+      )
+    })
+
+    it('addRevenueSource reverts on an unsupported interface', async function () {
+      // the stETH stub does not implement IRevenueSource
+      const bad = await stEth.getAddress()
+      await expect(allocator.addRevenueSource(bad))
+        .to.be.revertedWithCustomError(allocator, 'RevenueSourceUnsupported')
+        .withArgs(bad)
+    })
+
+    it('addRevenueSource reverts on a duplicate', async function () {
+      await expect(
+        allocator.addRevenueSource(await source.getAddress())
+      ).to.be.revertedWithCustomError(allocator, 'RevenueSourceAlreadyRegistered')
+    })
+
+    it('removeRevenueSource unregisters and emits RevenueSourceRemoved', async function () {
+      const sourceAddr = await source.getAddress()
+      await expect(allocator.removeRevenueSource(sourceAddr))
+        .to.emit(allocator, 'RevenueSourceRemoved')
+        .withArgs(sourceAddr)
+    })
+
+    it('removeRevenueSource reverts when the source is not registered', async function () {
+      const extra = await new RevenueSourceStub__factory(admin).deploy()
+      await expect(
+        allocator.removeRevenueSource(await extra.getAddress())
+      ).to.be.revertedWithCustomError(allocator, 'RevenueSourceNotRegistered')
+    })
+  })
+
+  describe('price floor:', function () {
+    it('skips the allocation when the stETH price is below the minimum', async function () {
+      await deployAllocator({ share: SHARE_100 })
+      await activateWith(0n)
+      await source.setCumulativeRevenueUSD(usd('1000'))
+      await fund(usd('1000'))
+      await allocator.setMinStEthPriceUSD(usd('2')) // price is 1 USD, floor is 2 USD
+
+      await expect(allocator.allocate())
+        .to.emit(allocator, 'AllocationSkipped')
+        .withArgs(adminAddr, AllocationStatus.StEthPriceBelowMin)
+
+      // the checkpoint still banks; only the transfer is withheld
+      expect(await allocator.budgetUSD()).to.equal(usd('1000'))
+      expect(await stEth.balanceOf(await executor.getAddress())).to.equal(0n)
+    })
+  })
+
+  describe('reentrancy guard:', function () {
+    it('reverts allocate() when the executor re-enters', async function () {
+      const reentrant = await new ReentrantExecutorStub__factory(admin).deploy()
+      await deployAllocator({ share: SHARE_100, executorAddr: await reentrant.getAddress() })
+      await activateWith(0n)
+      await source.setCumulativeRevenueUSD(usd('1000'))
+      await fund(usd('1000'))
+
+      await expect(allocator.allocate()).to.be.revertedWith('ReentrancyGuard: reentrant call')
+    })
+  })
+
+  describe('events:', function () {
+    it('activation emits Activated and ReserveAnchored and rolls both windows', async function () {
+      await deployAllocator()
+      await source.setCumulativeRevenueUSD(usd('1000'))
+
+      const tx = await allocator.activate()
+      const ats = await allocator.activationTS()
+
+      await expect(tx).to.emit(allocator, 'Activated').withArgs(ats, usd('1000'))
+      await expect(tx).to.emit(allocator, 'ReserveAnchored').withArgs(ats)
+      await expect(tx).to.emit(allocator, 'WindowRolled').withArgs(ONE_DAY, ats + ONE_DAY, 0n)
+      await expect(tx).to.emit(allocator, 'WindowRolled').withArgs(ONE_YEAR, ats + ONE_YEAR, 0n)
+    })
+
+    it('a checkpoint emits Checkpoint with the banked delta', async function () {
+      await deployAllocator({ share: SHARE_50 })
+      await activateWith(0n)
+      await source.setCumulativeRevenueUSD(usd('1000'))
+
+      // no balance → the allocation skips, but the checkpoint still banks 50% of the new revenue
+      await expect(allocator.allocate())
+        .to.emit(allocator, 'Checkpoint')
+        .withArgs(usd('1000'), 0n, usd('500'), usd('500'))
+    })
+
+    it('setReserveDailyRateUSD emits ReserveDailyRateUSDSet', async function () {
+      await deployAllocator({ reserveRate: usd('100') })
+      await activateWith(0n)
+
+      await expect(allocator.setReserveDailyRateUSD(usd('50')))
+        .to.emit(allocator, 'ReserveDailyRateUSDSet')
+        .withArgs(usd('50'))
     })
   })
 })
