@@ -18,8 +18,8 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
 
 /**
  * @title  BuybackAllocator
- * @notice Holds stETH and releases it to a receiver for buybacks, funded by a share of the
- *         protocol revenue that registered sources report. Anyone can trigger a release.
+ * @notice Holds stETH and sends it to the executor for buybacks. The amount is determined
+ *         by a share of the revenue surplus, as reported by the revenue sources.
  */
 contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -30,34 +30,33 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
                                  TYPES
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Whether a release can proceed, or why it is skipped. Reported in the skip event.
     enum AllocationStatus {
-        Eligible, // the release can proceed
-        NoAvailableBudget, // no budget available to spend
-        QuoteUnavailable, // the oracle returned no price
-        StEthPriceBelowMin, // the price is below the floor
-        AllocationBelowMin, // the spendable amount is below the smallest allowed
-        WindowCapReached // the daily or yearly cap leaves no room
+        Eligible,
+        NoAvailableBudget,
+        QuoteUnavailable,
+        StEthPriceBelowMin,
+        AllocationBelowMin,
+        WindowCapReached
     }
 
     struct SpendWindow {
-        uint64 endTS; // when the current window ends; the spent total resets after it
-        uint192 spentUSD; // USD spent within the current window
+        uint64 endTS;
+        uint192 spentUSD;
     }
 
     struct ConstructorParams {
-        address admin; // initial admin role holder
-        address treasury; // destination for recovered assets
-        address stEth; // stETH token
-        address oracleRouter; // prices stETH in USD
-        address executor; // receives allocations
-        uint128 dailyCapUSD; // maximum USD per day
-        uint128 yearlyCapUSD; // maximum USD per year
-        uint128 reserveDailyRateUSD; // USD reserved for the protocol each day
-        uint128 minStEthPriceUSD; // lowest stETH price accepted
-        uint128 minSpendPerCallUSD; // smallest allocation allowed
-        uint16 surplusShareBP; // share of the revenue surplus spendable, in basis points
-        address[] revenueSources; // sources registered at deployment
+        address admin;
+        address treasury;
+        address stEth;
+        address oracleRouter;
+        address executor;
+        uint128 dailyCapUSD;
+        uint128 yearlyCapUSD;
+        uint128 reserveDailyRateUSD;
+        uint128 minStEthPriceUSD;
+        uint128 minSpendPerCallUSD;
+        uint16 surplusShareBP;
+        address[] revenueSources;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -114,21 +113,19 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     /// @notice Midnight UTC of the day the contract was activated. Zero before activation.
     uint256 public activationTS;
 
-    /// @notice Total revenue reported by all sources as of the last budget update. Later revenue is
-    ///         measured against this baseline.
+    /// @notice Total revenue reported by all sources as of the last budget update.
     uint256 public lastTotalRevenueUSD;
 
-    /// @notice USD available for buybacks. Can go below zero when revenue lags behind the reserve; a
-    ///         release then treats it as zero.
+    /// @notice USD available for buybacks. Negative value means debt against reserve.
     int256 public budgetUSD;
 
     /// @notice Start of the day from which the current reserve builds up.
     uint256 public reserveAnchorTS;
 
-    /// @notice Current day spend window: when it ends and the USD spent in it so far.
+    /// @notice Current day spend window.
     SpendWindow public daily;
 
-    /// @notice Current year spend window: when it ends and the USD spent in it so far.
+    /// @notice Current year spend window.
     SpendWindow public yearly;
 
     /// @dev Registered revenue sources.
@@ -189,8 +186,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Sets dependencies, limits, and the initial revenue sources. Activation is a separate
-    ///         step that must run before the first release.
+    /// @notice Sets dependencies, limits, and the initial revenue sources.
     constructor(
         ConstructorParams memory initParams_
     ) AssetRecovererACL(initParams_.admin, initParams_.treasury) {
@@ -240,8 +236,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
 
         lastTotalRevenueUSD = _revenueSumStrictUSD();
 
-        // Anchor the reserve to the activation day itself, so the activation day's reserve is charged
-        // rather than forgiven (unlike the post-checkpoint re-anchor to the next day).
+        // Anchor the reserve to the activation day, so the reserve is charged from that day.
         reserveAnchorTS = activationTS;
         emit ReserveAnchored(reserveAnchorTS);
 
@@ -252,14 +247,13 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice Updates the budget, then sends the amount available now to the receiver. When nothing
-     *         is eligible it emits a skip event and returns; the budget update still applies, so any
-     *         caller advances the accounting even when no transfer happens.
+     * @notice Updates the budget, then sends the amount available to the receiver. When nothing
+     *         is eligible it emits a skip event and returns; the budget update still applies even
+     *         when no stETH is sent.
      */
     function allocate() external nonReentrant whenActivated {
         _checkpoint();
 
-        // budget is current after the checkpoint above; spend only its non-negative part
         uint256 availableUSD = _clampBudget(budgetUSD);
         (AllocationStatus status, uint256 spendUSD, uint256 spendStEth) = _spendable(availableUSD);
 
@@ -318,7 +312,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         _setYearlyCapUSD(yearlyCapUSD_);
     }
 
-    /// @notice Sets the minimum stETH price; a lower price skips the release.
+    /// @notice Sets the minimum stETH price; a lower price skips the allocation.
     function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setMinStEthPriceUSD(minStEthPriceUSD_);
     }
@@ -331,7 +325,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     }
 
     /**
-     * @notice Redirects all future allocations to a new receiver.
+     * @notice Set a new executor that receives allocations.
      */
     function setExecutor(address newExecutor_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setExecutor(newExecutor_);
@@ -368,14 +362,13 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Previews a release at the current moment, including revenue earned since the last
-     *         budget update. Stays accurate however long ago that update was, so it is safe for
-     *         off-chain monitoring.
-     * @dev    Applies the same budget math and limits as a release, without changing state, so a
-     *         release reproduces this result. Reverts before activation.
-     * @return status         whether a release would proceed, or why it would be skipped
-     * @return spendableUSD   USD a release would spend now
-     * @return spendableStEth stETH a release would transfer now
+     * @notice Returns what an allocation would spend and transfer right now, including revenue
+     *         earned since the last budget update. Stays accurate however long ago that update was.
+     * @dev    Applies the same budget math and limits as an allocation, without changing state, so
+     *         an allocation reproduces this result. Reverts before activation.
+     * @return status         whether an allocation would proceed, or why it would be skipped
+     * @return spendableUSD   USD an allocation would spend now
+     * @return spendableStEth stETH an allocation would transfer now
      */
     function spendable()
         external
@@ -391,27 +384,26 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
                            INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Adds the surplus share of revenue earned since the last update, less the reserve accrued
-    ///      over that interval, to the signed budget, then records the new revenue baseline and
-    ///      restarts the reserve. Runs even with no new revenue, so the budget can fall below zero.
-    ///      A source that reverts on one read counts as zero that time and recovers on the next;
-    ///      because each update measures only the change since the last baseline, a missed read is
-    ///      absorbed and never double-counted.
+    /// @dev Applies the change since the last update to the signed budget, records the new revenue
+    ///      baseline, and restarts the reserve. Runs even with no new revenue, so the budget can
+    ///      fall below zero. A source that reverts on one read counts as zero that time and recovers
+    ///      on the next; because each update measures only the change since the last baseline, a
+    ///      missed read is absorbed and never double-counted.
     function _checkpoint() internal {
         (int256 budgetDeltaUSD, uint256 totalRevenueUSD, uint256 reserveUSD) = _budgetable();
 
         budgetUSD += budgetDeltaUSD;
         lastTotalRevenueUSD = totalRevenueUSD;
-        // move the reserve cursor the next day
+        // restart the reserve from the next day
         reserveAnchorTS = _nextDayStartTS();
         emit ReserveAnchored(reserveAnchorTS);
 
         emit Checkpoint(lastTotalRevenueUSD, reserveUSD, budgetDeltaUSD, budgetUSD);
     }
 
-    /// @dev Eligibility and the amounts a release would produce from a given available amount, after
-    ///      applying the year cap, the day cap, the stETH balance, and the smallest allowed
-    ///      allocation. Shared by the release path and the preview.
+    /// @dev Eligibility and the amounts an allocation would produce from a given available amount,
+    ///      after applying the year cap, the day cap, the stETH balance, and the smallest allowed
+    ///      allocation.
     function _spendable(
         uint256 availableUSD_
     ) internal view returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth) {
@@ -426,7 +418,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
             return (AllocationStatus.QuoteUnavailable, 0, 0);
         }
 
-        // a price below the floor pauses allocations
+        // a price below the minimum means no allocation
         if (stEthPriceUSD < minStEthPriceUSD) {
             return (AllocationStatus.StEthPriceBelowMin, 0, 0);
         }
@@ -454,11 +446,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     }
 
     /// @dev The signed change a budget update would apply now, and the revenue total it would record
-    ///      as the new baseline. Change = (current total revenue - baseline - reserve) * surplus
-    ///      share. It can be negative; the signed budget absorbs that, so no clamping is needed.
-    ///      Note: the reserve is subtracted *inside* the share-weighted term on purpose — only the
-    ///      surplus share of (revenue above baseline, net of reserve) is taken, so the reserve is
-    ///      scaled by the share too. This is intended, not a missing full-weight subtraction.
+    ///      as the new baseline. Change = (total revenue - baseline - reserve) * surplus share.
     function _budgetable()
         internal
         view
@@ -470,8 +458,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         budgetDeltaUSD = (surplusUSD * int256(uint256(surplusShareBP))) / int256(MAX_BASIS_POINTS);
     }
 
-    /// @dev Clamps the signed net budget to a non-negative spendable amount. A negative budget spends
-    ///      nothing, but is kept in storage, so later surplus must first lift it back above zero.
+    /// @dev Clamps the signed net budget to a non-negative spendable amount.
     function _clampBudget(int256 budget_) internal pure returns (uint256) {
         return budget_ > 0 ? uint256(budget_) : 0;
     }
@@ -497,7 +484,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         window_.spentUSD = spent + uint192(spendUSD_);
     }
 
-    /// @dev Counts as zero once the window has ended.
+    /// @dev The amount in the window in progress.
     function _windowSpent(SpendWindow storage window_) internal view returns (uint256 spent) {
         spent = block.timestamp >= window_.endTS ? 0 : uint256(window_.spentUSD);
     }
@@ -510,8 +497,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         unspent = cap_.saturatedSub(_windowSpent(window_));
     }
 
-    /// @dev Reserve accrued since it last restarted. Zero until the next day begins, then one daily
-    ///      rate at the start of that day and one more at the start of each day after.
+    /// @dev Reserve accrued since it last updated.
     function _reserveCurrentUSD() internal view returns (uint256) {
         if (block.timestamp < reserveAnchorTS) return 0;
         uint256 daysSinceAnchor = (block.timestamp - reserveAnchorTS) / ONE_DAY;
@@ -537,8 +523,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         }
     }
 
-    /// @dev Reads the stETH price in USD from the oracle. Returns zero if the oracle reverts, which
-    ///      a release treats as no quote.
+    /// @dev Reads the stETH price in USD from the oracle.
     function _getStEthPriceUSD() internal view returns (uint256 stEthPriceUSD) {
         try ORACLE_ROUTER.getUsdPrices(address(STETH), address(STETH)) returns (
             uint256 stEthPrice,
@@ -578,15 +563,12 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     }
 
     /// @dev Removes a revenue source and subtracts its current total from the baseline, so only the
-    ///      remaining sources' later growth counts. Must run after a budget update, which captures
-    ///      this source's surplus up to now; subtracting the same total then keeps the remaining
-    ///      sources' baseline exact without touching their pending surplus. Reverts if the source
-    ///      cannot be reached.
+    ///      remaining sources' later growth counts. Must run after a checkpoint to prevent underflow.
     function _removeRevenueSource(address source_) internal {
         if (!_revenueSources.remove(source_)) revert RevenueSourceNotRegistered();
 
-        // removeRevenueSource() checkpoints first, so lastTotalRevenueUSD already includes this
-        // source's current total — the subtraction is therefore exact and cannot underflow.
+        // the budget update before this already added this source's total to the baseline, so
+        // subtracting the same total now cannot underflow.
         lastTotalRevenueUSD -= IRevenueSource(source_).getCumulativeRevenueUSD();
 
         emit RevenueSourceRemoved(source_);
