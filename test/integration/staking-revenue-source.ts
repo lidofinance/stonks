@@ -1,120 +1,97 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
-import { Signer } from 'ethers'
-import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
+import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
+import { Contract, Signer } from 'ethers'
+import {
+  impersonateAccount,
+  setBalance,
+  takeSnapshot,
+  SnapshotRestorer,
+} from '@nomicfoundation/hardhat-network-helpers'
 
 import {
   StakingRevenueSource,
   StakingRevenueSource__factory,
-  StEthSharesStub,
-  StEthSharesStub__factory,
-  StakingRouterStub,
-  StakingRouterStub__factory,
-  OracleRouterUsdStub,
-  OracleRouterUsdStub__factory,
-  LidoLocatorStub,
-  LidoLocatorStub__factory,
+  OracleRouter,
+  IStakingRouter,
+  IStETH,
+  ILidoLocator,
   BuybackAllocator,
   BuybackAllocator__factory,
 } from '../../typechain-types'
+import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
 
-const PRICE_SCALE = 10n ** 18n
-const BASE_PRECISION = 10_000n
-const MODULES_FEE = 500n
-const TREASURY_FEE = 500n
-const INITIAL_POOLED_ETH_PER_SHARE = PRICE_SCALE // 1:1 → shares == stETH
-const STETH_USD_PRICE = ethers.parseEther('3500')
-const NOMINAL_FEE_SHARES = ethers.parseEther('1000')
+// The only stable anchor is the canonical LidoLocator proxy. Everything else — the notifier, its
+// owner, the rebase provider, stETH, the staking router — is resolved from it on the fork, so the
+// test follows redeploys of the (test-deployed) TokenRateNotifier exactly as the contract does.
+const LIDO_LOCATOR = '0xC1d0b3DE6792Bf6b4b37EccdcC24e45978Cfd2Eb'
 
-// Allocator config — large caps so revenue accounting, not the caps, is what we observe.
+const PRICE_UNIT = 10n ** 18n
+const FUND = ethers.parseEther('10000')
+
+// BuybackAllocator config — large caps so revenue accounting, not the caps, is what we observe.
 const DAILY_CAP_USD = ethers.parseEther('1000000')
 const YEARLY_CAP_USD = ethers.parseEther('10000000')
 const MIN_SPEND_PER_CALL_USD = ethers.parseEther('1')
 const SURPLUS_SHARE_BP = 5000n
 
-enum OracleFailureMode {
-  None = 0,
-  CustomError = 1,
-  EmptyRevert = 2,
-}
+// Observer kinds as tagged by the notifier (Legacy = 0, WithArgs = 1).
+const OBSERVER_KIND_WITH_ARGS = 1n
 
-// Unused rebase-payload params (timeElapsed, pre/post totals).
-const PUSH_IGNORED = [1n, 1n, 1n, 1n, 1n] as const
+const NOTIFIER_ABI = [
+  'function owner() view returns (address)',
+  'function TOKEN_RATE_PROVIDER() view returns (address)',
+  'function observersLength() view returns (uint256)',
+  'function observers(uint256) view returns (address addr, uint8 kind)',
+  'function addObserver(address observer) external',
+  'function handlePostTokenRebase(uint256,uint256,uint256,uint256,uint256,uint256,uint256) external',
+  'event PushTokenRateFailed(address indexed observer, bytes lowLevelRevertData)',
+]
 
-// Monotonically increasing report timestamp — the contract dedupes on it, so each push must
-// carry a larger value. Global counter keeps every call strictly increasing; each test deploys a
-// fresh source (`lastReportTimestamp == 0`), so any positive value passes the first gate.
-let reportTsCounter = 0n
-function nextReportTs(): bigint {
-  reportTsCounter += 1n
-  return reportTsCounter
-}
-
-async function pushSharesMinted(
-  revenueSource: StakingRevenueSource,
-  caller: Signer,
-  shares: bigint
-) {
-  return revenueSource.connect(caller).pushTokenRate(nextReportTs(), ...PUSH_IGNORED, shares)
-}
-
-function expectedTreasuryStEth(
-  sharesMintedAsFees: bigint,
-  treasuryFee: bigint,
-  modulesFee: bigint,
-  pooledEthPerShare: bigint
-): bigint {
-  const totalFee = modulesFee + treasuryFee
-  if (totalFee === 0n) return 0n
-  const treasuryShares = (sharesMintedAsFees * treasuryFee) / totalFee
-  return (treasuryShares * pooledEthPerShare) / PRICE_SCALE
-}
-
-function expectedRevenueUSD(stEth: bigint, stEthUsdPrice: bigint): bigint {
-  return (stEth * stEthUsdPrice) / PRICE_SCALE
-}
-
-describe('StakingRevenueSource — integration', function () {
+describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
   let factory: StakingRevenueSource__factory
   let revenueSource: StakingRevenueSource
-  let stEthStub: StEthSharesStub
-  let stakingRouterStub: StakingRouterStub
-  let oracleStub: OracleRouterUsdStub
-  let locatorStub: LidoLocatorStub
-
-  let admin: Signer
-  let notifier: Signer
-  let stranger: Signer
-  let executor: Signer
+  let oracleRouter: OracleRouter
+  let stakingRouter: IStakingRouter
+  let stEth: IStETH
+  let stEthAddress: string
+  let notifierAgent: Contract // notifier connected as its owner
+  let notifierProvider: Contract // notifier connected as TOKEN_RATE_PROVIDER
 
   let topSnapshot: SnapshotRestorer
   let snapshot: SnapshotRestorer
+  let reportTsCounter: bigint
+  let deployer: Signer
+  let executor: Signer
 
-  async function deployStubsAndSource() {
-    stEthStub = await new StEthSharesStub__factory(admin).deploy(INITIAL_POOLED_ETH_PER_SHARE)
-    stakingRouterStub = await new StakingRouterStub__factory(admin).deploy()
-    oracleStub = await new OracleRouterUsdStub__factory(admin).deploy()
-    locatorStub = await new LidoLocatorStub__factory(admin).deploy()
+  // Compute the treasury slice exactly as the contract does, against live fork state.
+  async function expectedTreasuryStEth(sharesMintedAsFees: bigint): Promise<bigint> {
+    const [modulesFee, treasuryFee] = await stakingRouter.getStakingFeeAggregateDistribution()
+    const totalFee = modulesFee + treasuryFee
+    if (totalFee === 0n) return 0n
+    const treasuryShares = (sharesMintedAsFees * treasuryFee) / totalFee
+    return stEth.getPooledEthByShares(treasuryShares)
+  }
 
-    await stakingRouterStub.setFeeDistribution(MODULES_FEE, TREASURY_FEE, BASE_PRECISION)
-    await oracleStub.setUsdPrice(STETH_USD_PRICE, STETH_USD_PRICE)
-    await locatorStub.setLido(await stEthStub.getAddress())
-    await locatorStub.setStakingRouter(await stakingRouterStub.getAddress())
-    await locatorStub.setPostTokenRebaseReceiver(await notifier.getAddress())
-
-    revenueSource = await factory.deploy(
-      await oracleStub.getAddress(),
-      await locatorStub.getAddress()
+  async function fireRebase(sharesMintedAsFees: bigint, reportTs?: bigint) {
+    reportTsCounter = reportTs ?? reportTsCounter + 1n
+    return notifierProvider.handlePostTokenRebase(
+      reportTsCounter,
+      1n, // timeElapsed
+      1n, // preTotalShares
+      1n, // preTotalEther
+      1n, // postTotalShares
+      1n, // postTotalEther
+      sharesMintedAsFees
     )
-    await revenueSource.waitForDeployment()
   }
 
   async function deployAllocator(revenueSources: string[]): Promise<BuybackAllocator> {
-    const allocator = await new BuybackAllocator__factory(admin).deploy({
-      admin: await admin.getAddress(),
-      treasury: await admin.getAddress(),
-      stEth: await stEthStub.getAddress(),
-      oracleRouter: await oracleStub.getAddress(),
+    const allocator = await new BuybackAllocator__factory(deployer).deploy({
+      admin: await deployer.getAddress(),
+      treasury: await deployer.getAddress(),
+      stEth: stEthAddress,
+      oracleRouter: await oracleRouter.getAddress(),
       executor: await executor.getAddress(),
       dailyCapUSD: DAILY_CAP_USD,
       yearlyCapUSD: YEARLY_CAP_USD,
@@ -129,89 +106,192 @@ describe('StakingRevenueSource — integration', function () {
   }
 
   before(async function () {
+    ;[deployer, executor] = await ethers.getSigners()
+
+    // Resolve the notifier from the locator, mirroring the contract's own lookup. Requires a
+    // prepared fork (mainnet fork + TokenRateNotifier mock-upgrade, see integration-tests.yml);
+    // against any other environment the resolution or the tests below fail loudly — no skip.
+    const locator: ILidoLocator = await ethers.getContractAt('ILidoLocator', LIDO_LOCATOR)
+    const notifierAddress = await locator.postTokenRebaseReceiver()
+
     topSnapshot = await takeSnapshot()
-    ;[admin, notifier, stranger, executor] = await ethers.getSigners()
+
+    stEthAddress = await locator.lido()
+    stEth = await ethers.getContractAt('IStETH', stEthAddress)
+    stakingRouter = await ethers.getContractAt('IStakingRouter', await locator.stakingRouter())
+
+    // Owner (addObserver) and rebase provider (handlePostTokenRebase) are read off the notifier.
+    const notifierView = new ethers.Contract(notifierAddress, NOTIFIER_ABI, ethers.provider)
+    const ownerAddress: string = await notifierView.owner()
+    const providerAddress: string = await notifierView.TOKEN_RATE_PROVIDER()
+
+    await impersonateAccount(ownerAddress)
+    await impersonateAccount(providerAddress)
+    await setBalance(ownerAddress, FUND)
+    await setBalance(providerAddress, FUND)
+    const owner = await ethers.getSigner(ownerAddress)
+    const provider = await ethers.getSigner(providerAddress)
+
+    notifierAgent = new ethers.Contract(notifierAddress, NOTIFIER_ABI, owner)
+    notifierProvider = new ethers.Contract(notifierAddress, NOTIFIER_ABI, provider)
+
+    oracleRouter = await getTestOracleRouter({ tokens: [stEthAddress] })
+
     factory = await ethers.getContractFactory('StakingRevenueSource')
   })
 
   after(async function () {
-    await topSnapshot.restore()
+    if (topSnapshot) await topSnapshot.restore()
+    resetTestOracleRouter()
   })
 
   beforeEach(async function () {
     snapshot = await takeSnapshot()
-    await deployStubsAndSource()
+    reportTsCounter = BigInt(Math.floor(Date.now() / 1000))
+
+    revenueSource = await factory.deploy(await oracleRouter.getAddress(), LIDO_LOCATOR)
+    await revenueSource.waitForDeployment()
   })
 
   afterEach(async function () {
     await snapshot.restore()
   })
 
-  describe('rebase-to-settlement lifecycle:', function () {
-    it('should push across consecutive rebases then settle the whole bucket through the oracle', async function () {
-      // Three rebases land while the share rate climbs; each push values its slice at the
-      // rate live at that moment, then a single conversion settles the aggregate at spot USD.
-      const rates = [
-        INITIAL_POOLED_ETH_PER_SHARE,
-        (INITIAL_POOLED_ETH_PER_SHARE * 101n) / 100n,
-        (INITIAL_POOLED_ETH_PER_SHARE * 103n) / 100n,
-      ]
+  describe('addObserver / ERC165 auto-detection:', function () {
+    it('should be registered as a WithArgs observer via ERC165', async function () {
+      const lengthBefore = await notifierAgent.observersLength()
 
-      let expectedPending = 0n
-      for (const rate of rates) {
-        await stEthStub.setPooledEthPerShare(rate)
-        const slice = expectedTreasuryStEth(NOMINAL_FEE_SHARES, TREASURY_FEE, MODULES_FEE, rate)
-        expectedPending += slice
-        await pushSharesMinted(revenueSource, notifier, NOMINAL_FEE_SHARES)
-      }
+      await notifierAgent.addObserver(await revenueSource.getAddress())
 
-      expect(await revenueSource.pendingRevenueStEth()).to.equal(expectedPending)
+      const lengthAfter = await notifierAgent.observersLength()
+      expect(lengthAfter).to.equal(lengthBefore + 1n)
+
+      const [addr, kind] = await notifierAgent.observers(lengthAfter - 1n)
+      expect(addr).to.equal(await revenueSource.getAddress())
+      expect(kind).to.equal(OBSERVER_KIND_WITH_ARGS)
+    })
+  })
+
+  describe('rebase callback accumulation:', function () {
+    beforeEach(async function () {
+      await notifierAgent.addObserver(await revenueSource.getAddress())
+    })
+
+    it('should accept a real notifier callback and accumulate treasury stETH', async function () {
+      const sharesMintedAsFees = ethers.parseEther('100')
+      const expected = await expectedTreasuryStEth(sharesMintedAsFees)
+      expect(expected).to.be.gt(0n)
+
+      await fireRebase(sharesMintedAsFees)
+
+      expect(await revenueSource.pendingRevenueStEth()).to.equal(expected)
       expect(await revenueSource.getCumulativeRevenueUSD()).to.equal(0n)
+    })
 
-      const expectedUSD = expectedRevenueUSD(expectedPending, STETH_USD_PRICE)
-      await expect(revenueSource.connect(stranger).convertPendingRevenueToUSD())
+    it('should accumulate across several reports with different sharesMintedAsFees', async function () {
+      const first = ethers.parseEther('100')
+      const second = ethers.parseEther('250')
+
+      const expectedFirst = await expectedTreasuryStEth(first)
+      await fireRebase(first)
+      const expectedSecond = await expectedTreasuryStEth(second)
+      await fireRebase(second)
+
+      expect(await revenueSource.pendingRevenueStEth()).to.equal(expectedFirst + expectedSecond)
+    })
+
+    it('should skip a zero-fee report without changing pending', async function () {
+      await fireRebase(ethers.parseEther('100'))
+      const pendingAfterFirst = await revenueSource.pendingRevenueStEth()
+
+      await fireRebase(0n)
+      expect(await revenueSource.pendingRevenueStEth()).to.equal(pendingAfterFirst)
+    })
+
+    it('should skip a replayed report timestamp', async function () {
+      const ts = reportTsCounter + 1000n
+      const shares = ethers.parseEther('100')
+
+      await fireRebase(shares, ts)
+      const pendingAfterFirst = await revenueSource.pendingRevenueStEth()
+
+      await fireRebase(shares, ts) // same reportTimestamp → replay, skipped
+      expect(await revenueSource.pendingRevenueStEth()).to.equal(pendingAfterFirst)
+      expect(await revenueSource.lastReportTimestamp()).to.equal(ts)
+    })
+
+    it('should isolate our revert from the rebase and leave our state untouched', async function () {
+      await fireRebase(ethers.parseEther('100'))
+      const pendingBefore = await revenueSource.pendingRevenueStEth()
+      const tsBefore = await revenueSource.lastReportTimestamp()
+
+      // `MaxUint256 * treasuryFee` overflows uint256 → our pushTokenRate reverts (Panic 0x11).
+      // The notifier wraps observer calls in try/catch, so the rebase itself must not revert; it
+      // surfaces the failure as `PushTokenRateFailed` for our observer instead, and our reverted
+      // sub-call rolls back entirely (no partial state, no poisoned watermark).
+      await expect(fireRebase(ethers.MaxUint256))
+        .to.emit(notifierProvider, 'PushTokenRateFailed')
+        .withArgs(await revenueSource.getAddress(), anyValue)
+      expect(await revenueSource.pendingRevenueStEth()).to.equal(pendingBefore)
+      expect(await revenueSource.lastReportTimestamp()).to.equal(tsBefore)
+
+      // A subsequent healthy rebase still accumulates — the source was not left poisoned.
+      const expected = await expectedTreasuryStEth(ethers.parseEther('50'))
+      await fireRebase(ethers.parseEther('50'))
+      expect(await revenueSource.pendingRevenueStEth()).to.equal(pendingBefore + expected)
+    })
+  })
+
+  describe('USD settlement against the deployed OracleRouter:', function () {
+    beforeEach(async function () {
+      await notifierAgent.addObserver(await revenueSource.getAddress())
+    })
+
+    it('should convert pending stETH to USD using the OracleRouter price', async function () {
+      await fireRebase(ethers.parseEther('100'))
+      const pending = await revenueSource.pendingRevenueStEth()
+      expect(pending).to.be.gt(0n)
+
+      const [stEthUsdPrice] = await oracleRouter.getUsdPrices(stEthAddress, stEthAddress)
+      expect(stEthUsdPrice).to.be.gt(0n)
+      const expectedUSD = (pending * stEthUsdPrice) / PRICE_UNIT
+
+      await expect(revenueSource.convertPendingRevenueToUSD())
         .to.emit(revenueSource, 'PendingRevenueConverted')
-        .withArgs(expectedPending, STETH_USD_PRICE, expectedUSD)
+        .withArgs(pending, stEthUsdPrice, expectedUSD)
 
       expect(await revenueSource.getCumulativeRevenueUSD()).to.equal(expectedUSD)
       expect(await revenueSource.pendingRevenueStEth()).to.equal(0n)
     })
-  })
 
-  describe('oracle outage deferral:', function () {
-    it('should defer revenue through an outage and settle the full amount on retry without loss', async function () {
-      // Rebases keep arriving while the oracle is down — pushes are oracle-free so they all land.
-      await oracleStub.setFailureMode(OracleFailureMode.CustomError)
+    it('should grow cumulative monotonically across push/convert cycles', async function () {
+      const [stEthUsdPrice] = await oracleRouter.getUsdPrices(stEthAddress, stEthAddress)
+      expect(stEthUsdPrice).to.be.gt(0n)
 
-      const pushCount = 4n
-      for (let i = 0n; i < pushCount; i++) {
-        await pushSharesMinted(revenueSource, notifier, NOMINAL_FEE_SHARES)
-      }
+      // Cycle 1
+      const expected1 = await expectedTreasuryStEth(ethers.parseEther('100'))
+      await fireRebase(ethers.parseEther('100'))
+      await revenueSource.convertPendingRevenueToUSD()
+      const cumulative1 = await revenueSource.getCumulativeRevenueUSD()
+      expect(cumulative1).to.equal((expected1 * stEthUsdPrice) / PRICE_UNIT)
+      expect(await revenueSource.pendingRevenueStEth()).to.equal(0n)
 
-      const accruedStEth =
-        expectedTreasuryStEth(NOMINAL_FEE_SHARES, TREASURY_FEE, MODULES_FEE, INITIAL_POOLED_ETH_PER_SHARE) *
-        pushCount
-      expect(await revenueSource.pendingRevenueStEth()).to.equal(accruedStEth)
-
-      // Conversion is blocked while the oracle is down; the bucket is preserved.
-      await expect(revenueSource.connect(stranger).convertPendingRevenueToUSD()).to.be.reverted
-      expect(await revenueSource.pendingRevenueStEth()).to.equal(accruedStEth)
-      expect(await revenueSource.getCumulativeRevenueUSD()).to.equal(0n)
-
-      // Oracle recovers — the entire deferred bucket settles in one conversion, nothing lost.
-      await oracleStub.setFailureMode(OracleFailureMode.None)
-      const expectedUSD = expectedRevenueUSD(accruedStEth, STETH_USD_PRICE)
-
-      await expect(revenueSource.connect(stranger).convertPendingRevenueToUSD())
-        .to.emit(revenueSource, 'PendingRevenueConverted')
-        .withArgs(accruedStEth, STETH_USD_PRICE, expectedUSD)
-
-      expect(await revenueSource.getCumulativeRevenueUSD()).to.equal(expectedUSD)
+      // Cycle 2
+      const expected2 = await expectedTreasuryStEth(ethers.parseEther('250'))
+      await fireRebase(ethers.parseEther('250'))
+      await revenueSource.convertPendingRevenueToUSD()
+      const cumulative2 = await revenueSource.getCumulativeRevenueUSD()
+      expect(cumulative2).to.be.gt(cumulative1)
+      expect(cumulative2).to.equal(cumulative1 + (expected2 * stEthUsdPrice) / PRICE_UNIT)
       expect(await revenueSource.pendingRevenueStEth()).to.equal(0n)
     })
   })
 
   describe('BuybackAllocator wiring:', function () {
+    beforeEach(async function () {
+      await notifierAgent.addObserver(await revenueSource.getAddress())
+    })
+
     it('should be accepted by addRevenueSource via the ERC165 IRevenueSource check', async function () {
       const allocator = await deployAllocator([])
       await allocator.activate()
@@ -223,39 +303,31 @@ describe('StakingRevenueSource — integration', function () {
     it('should reject a contract that does not advertise IRevenueSource', async function () {
       const allocator = await deployAllocator([])
       await allocator.activate()
-      // The oracle stub is a valid contract but does not support IRevenueSource.
-      await expect(allocator.addRevenueSource(await oracleStub.getAddress()))
+      // stETH is a real contract but does not advertise IRevenueSource.
+      await expect(allocator.addRevenueSource(stEthAddress))
         .to.be.revertedWithCustomError(allocator, 'RevenueSourceUnsupported')
-        .withArgs(await oracleStub.getAddress())
+        .withArgs(stEthAddress)
     })
 
     it('should feed getCumulativeRevenueUSD() into the allocator activation baseline', async function () {
-      // Accrue revenue through the full push → convert path first.
-      await pushSharesMinted(revenueSource, notifier, NOMINAL_FEE_SHARES)
-      await revenueSource.connect(stranger).convertPendingRevenueToUSD()
+      await fireRebase(ethers.parseEther('100'))
+      await revenueSource.convertPendingRevenueToUSD()
       const cumulative = await revenueSource.getCumulativeRevenueUSD()
       expect(cumulative).to.be.gt(0n)
 
-      // Register against the allocator (constructor path) and activate.
       const allocator = await deployAllocator([await revenueSource.getAddress()])
       await allocator.activate()
-
-      // The allocator summed our source's cumulative into its baseline.
       expect(await allocator.lastTotalRevenueUSD()).to.equal(cumulative)
     })
 
     it('should baseline at the source cumulative only when the source is registered', async function () {
-      // Accrue revenue once, then activate two allocators against the same chain state: one
-      // with the source registered, one without. The baseline picks up the cumulative only
-      // through registration, proving the allocator's sum is driven by the registered source.
-      await pushSharesMinted(revenueSource, notifier, NOMINAL_FEE_SHARES)
-      await revenueSource.connect(stranger).convertPendingRevenueToUSD()
+      await fireRebase(ethers.parseEther('100'))
+      await revenueSource.convertPendingRevenueToUSD()
       const cumulative = await revenueSource.getCumulativeRevenueUSD()
       expect(cumulative).to.be.gt(0n)
 
       const allocatorWith = await deployAllocator([await revenueSource.getAddress()])
       await allocatorWith.activate()
-
       const allocatorWithout = await deployAllocator([])
       await allocatorWithout.activate()
 
