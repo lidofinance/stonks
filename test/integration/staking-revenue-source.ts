@@ -1,7 +1,7 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs'
-import { Contract, Signer } from 'ethers'
+import { Signer } from 'ethers'
 import {
   impersonateAccount,
   setBalance,
@@ -16,6 +16,7 @@ import {
   IStakingRouter,
   IStETH,
   ILidoLocator,
+  ITokenRateNotifier,
   BuybackAllocator,
   BuybackAllocator__factory,
 } from '../../typechain-types'
@@ -39,17 +40,6 @@ const SURPLUS_SHARE_BP = 5000n
 const OBSERVER_KIND_NO_ARGS = 0n
 const OBSERVER_KIND_WITH_ARGS = 1n
 
-const NOTIFIER_ABI = [
-  'function owner() view returns (address)',
-  'function TOKEN_RATE_PROVIDER() view returns (address)',
-  'function observersLength() view returns (uint256)',
-  'function observers(uint256) view returns (address addr, uint8 kind)',
-  'function addObserver(address observer, uint8 kind) external',
-  'function handlePostTokenRebase(uint256,uint256,uint256,uint256,uint256,uint256,uint256) external',
-  'event PushTokenRateFailed(address indexed observer, bytes lowLevelRevertData)',
-  'error ErrorBadObserverInterface()',
-]
-
 describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
   let factory: StakingRevenueSource__factory
   let revenueSource: StakingRevenueSource
@@ -57,8 +47,9 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
   let stakingRouter: IStakingRouter
   let stEth: IStETH
   let stEthAddress: string
-  let notifierAgent: Contract // notifier connected as its owner
-  let notifierProvider: Contract // notifier connected as TOKEN_RATE_PROVIDER
+  let notifier: ITokenRateNotifier
+  let notifierOwner: Signer // owner, authorizes addObserver
+  let rebaseProvider: Signer // TOKEN_RATE_PROVIDER, authorizes handlePostTokenRebase
 
   let topSnapshot: SnapshotRestorer
   let snapshot: SnapshotRestorer
@@ -77,7 +68,7 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
 
   async function fireRebase(sharesMintedAsFees: bigint, reportTs?: bigint) {
     reportTsCounter = reportTs ?? reportTsCounter + 1n
-    return notifierProvider.handlePostTokenRebase(
+    return notifier.connect(rebaseProvider).handlePostTokenRebase(
       reportTsCounter,
       1n, // timeElapsed
       1n, // preTotalShares
@@ -122,20 +113,18 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
     stEth = await ethers.getContractAt('IStETH', stEthAddress)
     stakingRouter = await ethers.getContractAt('IStakingRouter', await locator.stakingRouter())
 
-    // Owner (addObserver) and rebase provider (handlePostTokenRebase) are read off the notifier.
-    const notifierView = new ethers.Contract(notifierAddress, NOTIFIER_ABI, ethers.provider)
-    const ownerAddress: string = await notifierView.owner()
-    const providerAddress: string = await notifierView.TOKEN_RATE_PROVIDER()
+    // One notifier instance; addObserver and handlePostTokenRebase are each .connect'd to their
+    // authorized caller — owner() for the former, TOKEN_RATE_PROVIDER() for the latter.
+    notifier = await ethers.getContractAt('ITokenRateNotifier', notifierAddress)
+    const ownerAddress = await notifier.owner()
+    const providerAddress = await notifier.TOKEN_RATE_PROVIDER()
 
     await impersonateAccount(ownerAddress)
     await impersonateAccount(providerAddress)
     await setBalance(ownerAddress, FUND)
     await setBalance(providerAddress, FUND)
-    const owner = await ethers.getSigner(ownerAddress)
-    const provider = await ethers.getSigner(providerAddress)
-
-    notifierAgent = new ethers.Contract(notifierAddress, NOTIFIER_ABI, owner)
-    notifierProvider = new ethers.Contract(notifierAddress, NOTIFIER_ABI, provider)
+    notifierOwner = await ethers.getSigner(ownerAddress)
+    rebaseProvider = await ethers.getSigner(providerAddress)
 
     oracleRouter = await getTestOracleRouter({ tokens: [stEthAddress] })
 
@@ -161,14 +150,16 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
 
   describe('addObserver registration:', function () {
     it('should register as a WithArgs observer (ERC165 validated against the requested kind)', async function () {
-      const lengthBefore = await notifierAgent.observersLength()
+      const lengthBefore = await notifier.observersLength()
 
-      await notifierAgent.addObserver(await revenueSource.getAddress(), OBSERVER_KIND_WITH_ARGS)
+      await notifier
+        .connect(notifierOwner)
+        .addObserver(await revenueSource.getAddress(), OBSERVER_KIND_WITH_ARGS)
 
-      const lengthAfter = await notifierAgent.observersLength()
+      const lengthAfter = await notifier.observersLength()
       expect(lengthAfter).to.equal(lengthBefore + 1n)
 
-      const [addr, kind] = await notifierAgent.observers(lengthAfter - 1n)
+      const [addr, kind] = await notifier.observers(lengthAfter - 1n)
       expect(addr).to.equal(await revenueSource.getAddress())
       expect(kind).to.equal(OBSERVER_KIND_WITH_ARGS)
     })
@@ -177,14 +168,18 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
       // The notifier validates the source's ERC165 against the requested kind. Our source only
       // claims ITokenRatePusherWithArgs, so registering it as NoArgs must revert.
       await expect(
-        notifierAgent.addObserver(await revenueSource.getAddress(), OBSERVER_KIND_NO_ARGS)
-      ).to.be.revertedWithCustomError(notifierAgent, 'ErrorBadObserverInterface')
+        notifier
+          .connect(notifierOwner)
+          .addObserver(await revenueSource.getAddress(), OBSERVER_KIND_NO_ARGS)
+      ).to.be.revertedWithCustomError(notifier, 'ErrorBadObserverInterface')
     })
   })
 
   describe('rebase callback accumulation:', function () {
     beforeEach(async function () {
-      await notifierAgent.addObserver(await revenueSource.getAddress(), OBSERVER_KIND_WITH_ARGS)
+      await notifier
+        .connect(notifierOwner)
+        .addObserver(await revenueSource.getAddress(), OBSERVER_KIND_WITH_ARGS)
     })
 
     it('should accept a real notifier callback and accumulate treasury stETH', async function () {
@@ -240,7 +235,7 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
       // surfaces the failure as `PushTokenRateFailed` for our observer instead, and our reverted
       // sub-call rolls back entirely (no partial state, no poisoned watermark).
       await expect(fireRebase(ethers.MaxUint256))
-        .to.emit(notifierProvider, 'PushTokenRateFailed')
+        .to.emit(notifier, 'PushTokenRateFailed')
         .withArgs(await revenueSource.getAddress(), anyValue)
       expect(await revenueSource.pendingRevenueStEth()).to.equal(pendingBefore)
       expect(await revenueSource.lastReportTimestamp()).to.equal(tsBefore)
@@ -254,7 +249,9 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
 
   describe('USD settlement against the deployed OracleRouter:', function () {
     beforeEach(async function () {
-      await notifierAgent.addObserver(await revenueSource.getAddress(), OBSERVER_KIND_WITH_ARGS)
+      await notifier
+        .connect(notifierOwner)
+        .addObserver(await revenueSource.getAddress(), OBSERVER_KIND_WITH_ARGS)
     })
 
     it('should convert pending stETH to USD using the OracleRouter price', async function () {
@@ -299,7 +296,9 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
 
   describe('BuybackAllocator wiring:', function () {
     beforeEach(async function () {
-      await notifierAgent.addObserver(await revenueSource.getAddress(), OBSERVER_KIND_WITH_ARGS)
+      await notifier
+        .connect(notifierOwner)
+        .addObserver(await revenueSource.getAddress(), OBSERVER_KIND_WITH_ARGS)
     })
 
     it('should be accepted by addRevenueSource via the ERC165 IRevenueSource check', async function () {
