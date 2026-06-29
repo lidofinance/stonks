@@ -29,17 +29,26 @@ enum OracleFailureMode {
   EmptyRevert = 2,
 }
 
-// Bounds keep `sharesMintedAsFees_ * treasuryFee` and `pending * price` well clear of uint256
-// overflow, so the only reverts are the ones the properties intend (oracle failures).
-const sharesArb = fc.bigInt({ min: 0n, max: 10n ** 30n })
-const sharesPosArb = fc.bigInt({ min: 10n ** 18n, max: 10n ** 30n }) // forces a non-zero treasury slice
-const pricePosArb = fc.bigInt({ min: 1n, max: 10n ** 24n })
-// [modulesFee, treasuryFee]. `feeArb` allows a zero split (early-return branch); `feeActiveArb`
-// guarantees totalFee > 0.
-const feeArb = fc.tuple(fc.bigInt({ min: 0n, max: 100_000n }), fc.bigInt({ min: 0n, max: 100_000n }))
-const feeActiveArb = fc.tuple(
-  fc.bigInt({ min: 0n, max: 100_000n }),
-  fc.bigInt({ min: 1n, max: 100_000n })
+// Realistic ceilings (wei / PRICE_SCALE-scaled). stETH total supply is ~1e7 stETH (~1e25 wei); we
+// cap an order of magnitude above it. Per-rebase fee shares are a tiny fraction of supply in
+// practice, so this is already generous — and far below the uint256-overflow boundary of the
+// contract's products.
+const MAX_SHARES = 10n ** 26n // ~100M stETH, ~10x current stETH supply
+const MAX_PRICE = 10n ** 23n // ~100,000 USD per stETH, PRICE_SCALE-scaled
+const MIN_NONZERO_SHARES = 10n ** 18n // 1 stETH worth — guarantees a non-zero treasury slice
+
+const sharesGenerator = fc.bigInt({ min: 0n, max: MAX_SHARES })
+const nonZeroSharesGenerator = fc.bigInt({ min: MIN_NONZERO_SHARES, max: MAX_SHARES })
+const positivePriceGenerator = fc.bigInt({ min: 1n, max: MAX_PRICE })
+// [modulesFee, treasuryFee], each a portion of BASE_PRECISION. `feeSplitGenerator` allows a zero split
+// (early-return branch); `activeFeeSplitGenerator` guarantees totalFee > 0.
+const feeSplitGenerator = fc.tuple(
+  fc.bigInt({ min: 0n, max: BASE_PRECISION }),
+  fc.bigInt({ min: 0n, max: BASE_PRECISION })
+)
+const activeFeeSplitGenerator = fc.tuple(
+  fc.bigInt({ min: 0n, max: BASE_PRECISION }),
+  fc.bigInt({ min: 1n, max: BASE_PRECISION })
 )
 
 // Mirrors the contract with the stub identity rate (1 share == 1 stETH).
@@ -52,7 +61,7 @@ function expectedTreasuryStEth(shares: bigint, modulesFee: bigint, treasuryFee: 
 describe('StakingRevenueSource - Fuzz Tests', () => {
   let admin: Signer
   let notifier: Signer // postTokenRebaseReceiver, the authorized pushTokenRate caller
-  let subject: StakingRevenueSource
+  let revenueSource: StakingRevenueSource
   let stEthStub: StEthSharesStub
   let stakingRouterStub: StakingRouterStub
   let oracleStub: OracleRouterUsdStub
@@ -65,7 +74,7 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
   }
 
   async function push(shares: bigint, reportTs: bigint) {
-    return subject.connect(notifier).pushTokenRate(reportTs, ...PUSH_IGNORED, shares)
+    return revenueSource.connect(notifier).pushTokenRate(reportTs, ...PUSH_IGNORED, shares)
   }
 
   before(async () => {
@@ -82,8 +91,8 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
     await locatorStub.setPostTokenRebaseReceiver(await notifier.getAddress())
 
     const factory = await ethers.getContractFactory('StakingRevenueSource')
-    subject = await factory.deploy(await oracleStub.getAddress(), await locatorStub.getAddress())
-    await subject.waitForDeployment()
+    revenueSource = await factory.deploy(await oracleStub.getAddress(), await locatorStub.getAddress())
+    await revenueSource.waitForDeployment()
   })
 
   after(async () => {
@@ -92,13 +101,13 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
 
   it('should keep treasuryShares within sharesMintedAsFees_ for any fee split', async () => {
     await fc.assert(
-      fc.asyncProperty(sharesArb, feeActiveArb, async (shares, [modulesFee, treasuryFee]) => {
+      fc.asyncProperty(sharesGenerator, activeFeeSplitGenerator, async (shares, [modulesFee, treasuryFee]) => {
         const snap = await takeSnapshot()
         await setFee(modulesFee, treasuryFee)
         await push(shares, 1n)
 
         // Identity rate: pendingRevenueStEth == treasuryShares.
-        const treasuryShares = await subject.pendingRevenueStEth()
+        const treasuryShares = await revenueSource.pendingRevenueStEth()
         expect(treasuryShares).to.be.lte(shares)
         expect(treasuryShares).to.equal(expectedTreasuryStEth(shares, modulesFee, treasuryFee))
 
@@ -111,7 +120,7 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
   it('should match pendingRevenueStEth to the summed per-push treasury stETH across random share and fee-split sequences', async () => {
     await fc.assert(
       fc.asyncProperty(
-        fc.array(fc.tuple(sharesArb, feeArb), { minLength: 1, maxLength: 8 }),
+        fc.array(fc.tuple(sharesGenerator, feeSplitGenerator), { minLength: 1, maxLength: 8 }),
         async (pushes) => {
           const snap = await takeSnapshot()
 
@@ -124,7 +133,7 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
             expectedPending += expectedTreasuryStEth(shares, modulesFee, treasuryFee)
           }
 
-          expect(await subject.pendingRevenueStEth()).to.equal(expectedPending)
+          expect(await revenueSource.pendingRevenueStEth()).to.equal(expectedPending)
 
           await snap.restore()
         }
@@ -136,21 +145,21 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
   it('should match revenueUSD to pending * price / PRICE_SCALE for any positive price and pending bucket', async () => {
     await fc.assert(
       fc.asyncProperty(
-        sharesPosArb,
-        feeActiveArb,
-        pricePosArb,
+        nonZeroSharesGenerator,
+        activeFeeSplitGenerator,
+        positivePriceGenerator,
         async (shares, [modulesFee, treasuryFee], price) => {
           const snap = await takeSnapshot()
 
           await setFee(modulesFee, treasuryFee)
           await push(shares, 1n)
-          const pending = await subject.pendingRevenueStEth()
+          const pending = await revenueSource.pendingRevenueStEth()
           fc.pre(pending > 0n) // skip splits that round the treasury slice to zero
 
           await oracleStub.setUsdPrice(price, price)
-          await subject.convertPendingRevenueToUSD()
+          await revenueSource.convertPendingRevenueToUSD()
 
-          expect(await subject.getCumulativeRevenueUSD()).to.equal((pending * price) / PRICE_SCALE)
+          expect(await revenueSource.getCumulativeRevenueUSD()).to.equal((pending * price) / PRICE_SCALE)
 
           await snap.restore()
         }
@@ -160,17 +169,17 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
   })
 
   it('getCumulativeRevenueUSD() is non-decreasing across any call sequence', async () => {
-    const opArb = fc.oneof(
-      fc.record({ kind: fc.constant('push' as const), shares: sharesArb, fee: feeArb }),
+    const operationGenerator = fc.oneof(
+      fc.record({ kind: fc.constant('push' as const), shares: sharesGenerator, fee: feeSplitGenerator }),
       // price 0 makes the conversion fail (OracleReturnedZeroPrice); both paths must hold the invariant.
       fc.record({ kind: fc.constant('convert' as const), price: fc.bigInt({ min: 0n, max: 10n ** 24n }) })
     )
 
     await fc.assert(
-      fc.asyncProperty(fc.array(opArb, { minLength: 1, maxLength: 12 }), async (ops) => {
+      fc.asyncProperty(fc.array(operationGenerator, { minLength: 1, maxLength: 12 }), async (ops) => {
         const snap = await takeSnapshot()
 
-        let previous = await subject.getCumulativeRevenueUSD()
+        let previous = await revenueSource.getCumulativeRevenueUSD()
         let ts = 0n
         for (const op of ops) {
           if (op.kind === 'push') {
@@ -180,13 +189,13 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
           } else {
             await oracleStub.setUsdPrice(op.price, op.price)
             try {
-              await subject.convertPendingRevenueToUSD()
+              await revenueSource.convertPendingRevenueToUSD()
             } catch {
               // Zero-price conversion reverts and rolls back — the invariant must still hold.
             }
           }
 
-          const current = await subject.getCumulativeRevenueUSD()
+          const current = await revenueSource.getCumulativeRevenueUSD()
           expect(current).to.be.gte(previous)
           previous = current
         }
@@ -200,8 +209,8 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
   it('pendingRevenueStEth is zero immediately after a successful conversion', async () => {
     await fc.assert(
       fc.asyncProperty(
-        fc.array(fc.tuple(sharesArb, feeArb), { maxLength: 8 }),
-        pricePosArb,
+        fc.array(fc.tuple(sharesGenerator, feeSplitGenerator), { maxLength: 8 }),
+        positivePriceGenerator,
         async (pushes, price) => {
           const snap = await takeSnapshot()
 
@@ -214,9 +223,9 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
 
           // Positive price => conversion succeeds (no-op if the bucket was empty).
           await oracleStub.setUsdPrice(price, price)
-          await subject.convertPendingRevenueToUSD()
+          await revenueSource.convertPendingRevenueToUSD()
 
-          expect(await subject.pendingRevenueStEth()).to.equal(0n)
+          expect(await revenueSource.pendingRevenueStEth()).to.equal(0n)
 
           await snap.restore()
         }
@@ -227,20 +236,20 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
 
   it('a failed conversion leaves pendingRevenueStEth and the cumulative unchanged', async () => {
     // 0 -> zero price, 1 -> CustomError revert, 2 -> EmptyRevert.
-    const failureArb = fc.constantFrom(0, 1, 2)
+    const failureModeGenerator = fc.constantFrom(0, 1, 2)
 
     await fc.assert(
       fc.asyncProperty(
-        sharesPosArb,
-        feeActiveArb,
-        failureArb,
+        nonZeroSharesGenerator,
+        activeFeeSplitGenerator,
+        failureModeGenerator,
         async (shares, [modulesFee, treasuryFee], failure) => {
           const snap = await takeSnapshot()
 
           await setFee(modulesFee, treasuryFee)
           await push(shares, 1n)
-          const pendingBefore = await subject.pendingRevenueStEth()
-          const cumulativeBefore = await subject.getCumulativeRevenueUSD()
+          const pendingBefore = await revenueSource.pendingRevenueStEth()
+          const cumulativeBefore = await revenueSource.getCumulativeRevenueUSD()
           fc.pre(pendingBefore > 0n)
 
           if (failure === 0) {
@@ -251,9 +260,9 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
             await oracleStub.setFailureMode(OracleFailureMode.EmptyRevert)
           }
 
-          await expect(subject.convertPendingRevenueToUSD()).to.be.reverted
-          expect(await subject.pendingRevenueStEth()).to.equal(pendingBefore)
-          expect(await subject.getCumulativeRevenueUSD()).to.equal(cumulativeBefore)
+          await expect(revenueSource.convertPendingRevenueToUSD()).to.be.reverted
+          expect(await revenueSource.pendingRevenueStEth()).to.equal(pendingBefore)
+          expect(await revenueSource.getCumulativeRevenueUSD()).to.equal(cumulativeBefore)
 
           await snap.restore()
         }
@@ -264,7 +273,7 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
 
   it('pushTokenRate never touches the cumulative accumulator or the oracle', async () => {
     await fc.assert(
-      fc.asyncProperty(fc.array(fc.tuple(sharesArb, feeArb), { maxLength: 8 }), async (pushes) => {
+      fc.asyncProperty(fc.array(fc.tuple(sharesGenerator, feeSplitGenerator), { maxLength: 8 }), async (pushes) => {
         const snap = await takeSnapshot()
 
         // Poison the oracle: any read from it reverts. Pushes must still succeed and never settle USD.
@@ -277,7 +286,7 @@ describe('StakingRevenueSource - Fuzz Tests', () => {
           await push(shares, ts) // would revert if pushTokenRate read the poisoned oracle
         }
 
-        expect(await subject.getCumulativeRevenueUSD()).to.equal(0n)
+        expect(await revenueSource.getCumulativeRevenueUSD()).to.equal(0n)
 
         await snap.restore()
       }),
