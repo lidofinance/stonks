@@ -35,7 +35,13 @@ const config: HardhatUserConfig = {
         url: process.env.RPC_URL!,
       },
     },
-    localhost: { gas: 'auto' },
+    localhost: {
+      gas: 'auto',
+      // Fork-suite calls (e.g. handlePostTokenRebase fanning out to all migrated mainnet
+      // observers) can be slow against a cold CI fork, exceeding the default ~40s HTTP timeout
+      // and surfacing as an undici HeadersTimeoutError. Give RPC requests room.
+      timeout: 20 * 60 * 1000, // 20 minutes
+    },
   },
   etherscan: {
     apiKey: ETHERSCAN_API_KEY,
@@ -63,7 +69,6 @@ if (MAINNET_RPC_URL) {
   config.networks!.hardhat = {
     forking: {
       url: MAINNET_RPC_URL,
-      blockNumber: 25294406,
     },
   }
 }

@@ -117,15 +117,15 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
      *         oracle outage cannot cause a rebase-time revert and cannot lose revenue — the
      *         stETH owed to the DAO sits in the pending bucket until any caller settles it.
      *
-     *         The signature mirrors `Lido.handlePostTokenRebase` so the notifier can forward
-     *         the full rebase payload to all observers uniformly. This source consumes
+     *         The signature mirrors the rebase payload forwarded from `Accounting.handleOracleReport`
+     *         so the notifier can forward it to all observers uniformly. This source consumes
      *         `reportTimestamp_` (dedupe guard) and `sharesMintedAsFees_`; the remaining
      *         parameters are accepted but ignored.
      * @param  reportTimestamp_ Timestamp of the oracle report behind this rebase. Strictly
      *         increasing across rebases; a callback whose timestamp does not exceed the last
      *         accepted one is treated as a replay and skipped.
      * @param  sharesMintedAsFees_ Total fee shares minted by the protocol on this rebase, as
-     *         passed through `TokenRateNotifier` from `Lido.handlePostTokenRebase`. Zero on
+     *         passed through `TokenRateNotifier` from `Accounting.handleOracleReport`. Zero on
      *         rebases where no fees were minted (e.g. negative CL delta offset by EL rewards
      *         that lift the rate but produce no protocol fees).
      */
@@ -170,7 +170,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
         uint256 treasuryShares = (sharesMintedAsFees_ * treasuryFee) / totalFee;
 
         // Shares → stETH at the post-rebase rate. `pushTokenRate` fires inside
-        // `handlePostTokenRebase` after the rebase has been applied, so the rate already
+        // `Accounting.handleOracleReport` after the rebase has been applied, so the rate already
         // reflects the new period.
         uint256 treasuryStEth = IStETH(LIDO_LOCATOR.lido()).getPooledEthByShares(treasuryShares);
 
