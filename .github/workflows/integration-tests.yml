@@ -1,0 +1,112 @@
+name: Integration tests
+
+# Integration suite against a mainnet fork with the TokenRateNotifier mock-upgrade.
+# Service runs the fork node; core's mock-upgrade deploys the notifier and rewires LidoLocator.
+#
+# TODO: once the notifier is on mainnet, drop the core checkout, fork-node service, and mock-upgrade.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Core branch carrying the new TokenRateNotifier + mock-upgrade step.
+  # TODO: switch to `develop` once the change lands there.
+  CORE_REF: feat/nest-token-rate-notifier
+
+jobs:
+  integration-tests:
+    name: Integration suite (forked + mock-upgrade)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    # Fork node on localhost:8545. Image has no HEALTHCHECK, so the next step polls for readiness.
+    services:
+      fork-node:
+        image: ghcr.io/lidofinance/hardhat-node:2.26.0
+        ports:
+          - 8545:8545
+        env:
+          ETH_RPC_URL: ${{ secrets.RPC_URL }}
+          NODE_OPTIONS: --max_old_space_size=6144
+
+    steps:
+      - name: Checkout stonks
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout core (${{ env.CORE_REF }})
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: lidofinance/core
+          ref: ${{ env.CORE_REF }}
+          path: core
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v6.0.0
+        with:
+          node-version: 20
+
+      - name: Enable Corepack
+        # core pins `packageManager: yarn@4.x`, which needs Corepack; the runner ships yarn 1.x otherwise.
+        run: corepack enable
+
+      - name: Check RPC_URL
+        shell: bash
+        run: |
+          if [[ -z "$RPC_URL" ]]; then
+            echo "RPC_URL repository secret is required for mainnet forking." >&2
+            exit 1
+          fi
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+
+      - name: Install core dependencies
+        working-directory: core
+        run: yarn install --frozen-lockfile
+
+      - name: Install stonks dependencies
+        run: npm ci
+
+      - name: Wait for the fork node
+        shell: bash
+        run: |
+          echo "Waiting for fork node on 127.0.0.1:8545..."
+          for i in {1..60}; do
+            if curl -s -X POST -H "Content-Type: application/json" \
+              --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+              http://127.0.0.1:8545 | grep -q '"result"'; then
+              echo "Fork is ready ✅"
+              exit 0
+            fi
+            echo "Not ready yet... ($i/60)"
+            sleep 2
+          done
+          echo "❌ Fork node was not ready in time" >&2
+          docker logs ${{ job.services.fork-node.id }} || true
+          exit 1
+
+      - name: Apply mock-upgrade (deploy new TokenRateNotifier + rewire LidoLocator)
+        working-directory: core
+        shell: bash
+        run: |
+          MODE=forking NETWORK=mainnet RPC_URL="$RPC_URL" \
+            STEPS_FILE=upgrade/steps-mock-upgrade-token-rate-notifier-nest.json \
+            yarn upgrade:helper:run
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+
+      - name: Dump fork node log on failure
+        if: failure()
+        run: docker logs ${{ job.services.fork-node.id }} || true

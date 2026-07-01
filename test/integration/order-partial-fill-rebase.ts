@@ -25,7 +25,7 @@ const stethLdoPair: TokenPair = {
   tokenFrom: contracts.STETH,
   tokenTo: contracts.LDO,
   name: 'stETH->LDO Partial Fill + Rebase',
-  priceFeedHeartbeatTimeout: 86400,
+  priceFeedHeartbeatTimeout: 86400 * 7,
   useEthBridge: true,
   allowPartialFill: true,
 }

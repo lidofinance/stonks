@@ -60,7 +60,11 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
     //////////////////////////////////////////////////////////////*/
 
     event RevenueAccumulatedInStEth(uint256 stEthAmount, uint256 pendingRevenueStEth);
-    event PendingRevenueConverted(uint256 stEthConverted, uint256 stEthUsdPrice, uint256 revenueUSD);
+    event PendingRevenueConverted(
+        uint256 stEthConverted,
+        uint256 stEthUsdPrice,
+        uint256 revenueUSD
+    );
 
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
@@ -113,15 +117,15 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
      *         oracle outage cannot cause a rebase-time revert and cannot lose revenue — the
      *         stETH owed to the DAO sits in the pending bucket until any caller settles it.
      *
-     *         The signature mirrors `Lido.handlePostTokenRebase` so the notifier can forward
-     *         the full rebase payload to all observers uniformly. This source consumes
+     *         The signature mirrors the rebase payload forwarded from `Accounting.handleOracleReport`
+     *         so the notifier can forward it to all observers uniformly. This source consumes
      *         `reportTimestamp_` (dedupe guard) and `sharesMintedAsFees_`; the remaining
      *         parameters are accepted but ignored.
      * @param  reportTimestamp_ Timestamp of the oracle report behind this rebase. Strictly
      *         increasing across rebases; a callback whose timestamp does not exceed the last
      *         accepted one is treated as a replay and skipped.
      * @param  sharesMintedAsFees_ Total fee shares minted by the protocol on this rebase, as
-     *         passed through `TokenRateNotifier` from `Lido.handlePostTokenRebase`. Zero on
+     *         passed through `TokenRateNotifier` from `Accounting.handleOracleReport`. Zero on
      *         rebases where no fees were minted (e.g. negative CL delta offset by EL rewards
      *         that lift the rate but produce no protocol fees).
      */
@@ -143,6 +147,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
         if (reportTimestamp_ <= lastReportTimestamp) {
             return;
         }
+
         lastReportTimestamp = reportTimestamp_;
 
         if (sharesMintedAsFees_ == 0) {
@@ -157,18 +162,21 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
         // revenue. This branch is defensive — the protocol does not mint fees at all in that
         // configuration, so `sharesMintedAsFees_` would already be zero in practice.
         uint256 totalFee = modulesFee + treasuryFee;
+
         if (totalFee == 0) {
             return;
         }
+
         uint256 treasuryShares = (sharesMintedAsFees_ * treasuryFee) / totalFee;
 
         // Shares → stETH at the post-rebase rate. `pushTokenRate` fires inside
-        // `handlePostTokenRebase` after the rebase has been applied, so the rate already
+        // `Accounting.handleOracleReport` after the rebase has been applied, so the rate already
         // reflects the new period.
         uint256 treasuryStEth = IStETH(LIDO_LOCATOR.lido()).getPooledEthByShares(treasuryShares);
 
         uint256 newPending = pendingRevenueStEth + treasuryStEth;
         pendingRevenueStEth = newPending;
+        
         emit RevenueAccumulatedInStEth(treasuryStEth, newPending);
     }
 
@@ -188,10 +196,12 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
         if (pending == 0) {
             return;
         }
+
         pendingRevenueStEth = 0;
 
         address stEth = LIDO_LOCATOR.lido();
         (uint256 stEthUsdPrice, ) = ORACLE_ROUTER.getUsdPrices(stEth, stEth);
+
         if (stEthUsdPrice == 0) {
             revert OracleReturnedZeroPrice();
         }
@@ -199,6 +209,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
         uint256 revenueUSD = (pending * stEthUsdPrice) / PRICE_UNIT;
 
         _addRevenueUSD(revenueUSD);
+
         emit PendingRevenueConverted(pending, stEthUsdPrice, revenueUSD);
     }
 

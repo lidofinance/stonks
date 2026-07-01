@@ -5,6 +5,7 @@ pragma solidity 0.8.23;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {AccessControlEnumerable} from "@openzeppelin/contracts/access/AccessControlEnumerable.sol";
 
 /**
@@ -13,7 +14,7 @@ import {AccessControlEnumerable} from "@openzeppelin/contracts/access/AccessCont
  * @notice Asset-recovery base for NEST contracts with role-based access control.
  * @dev    All recovery flows send to the immutable `TREASURY` address.
  */
-abstract contract AssetRecovererACL is AccessControlEnumerable {
+abstract contract AssetRecovererACL is AccessControlEnumerable, ReentrancyGuard {
     using Address for address payable;
     using SafeERC20 for IERC20;
 
@@ -74,7 +75,7 @@ abstract contract AssetRecovererACL is AccessControlEnumerable {
     /**
      * @notice Sweeps the contract's entire ETH balance to the treasury.
      */
-    function recoverEther() external onlyRole(MANAGER_ROLE) {
+    function recoverEther() external nonReentrant onlyRole(MANAGER_ROLE) {
         uint256 amount = address(this).balance;
 
         emit EtherRecovered(amount);
@@ -87,7 +88,10 @@ abstract contract AssetRecovererACL is AccessControlEnumerable {
      * @param  token_ ERC-20 token to recover.
      * @param  amount_ Token amount transferred to `TREASURY`.
      */
-    function recoverERC20(address token_, uint256 amount_) external onlyRole(MANAGER_ROLE) {
+    function recoverERC20(
+        address token_,
+        uint256 amount_
+    ) external nonReentrant onlyRole(MANAGER_ROLE) {
         emit ERC20Recovered(token_, amount_);
 
         IERC20(token_).safeTransfer(TREASURY, amount_);
