@@ -65,3 +65,34 @@ jobs:
           npx hardhat test ${{ matrix.suite.path }}/**/*.ts --network hardhat
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
+
+  forge:
+    name: Forge (invariant/fuzz)
+    # Self-contained (stubs, no fork), so no RPC secret is needed — safe to run on fork PRs too.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v6.0.0
+        with:
+          node-version: 20
+          cache: npm
+
+      # Forge compiles the contracts with the @openzeppelin remapping into node_modules.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1.8.0
+
+      - name: Vendor forge-std
+        run: git clone --depth 1 --branch v1.16.2 https://github.com/foundry-rs/forge-std lib/forge-std
+
+      - name: Run Forge tests
+        run: forge test -vvv
