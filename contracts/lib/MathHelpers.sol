@@ -9,14 +9,24 @@ pragma solidity 0.8.23;
  */
 library MathHelpers {
     /**
-     * @notice Subtracts `b_` from `a_`, returning 0 when `b_ >= a_` instead of reverting.
-     * @param  a_ Minuend.
-     * @param  b_ Subtrahend.
-     * @return Difference, or 0 if the subtraction would underflow.
+     * @dev Unsigned saturating subtraction, bounds to zero instead of overflowing.
      */
-    function saturatedSub(uint256 a_, uint256 b_) internal pure returns (uint256) {
+    function saturatingSub(uint256 a, uint256 b) internal pure returns (uint256) {
         unchecked {
-            return a_ > b_ ? a_ - b_ : 0;
+            uint256 c = a - b;
+            bool success = c <= a;
+            uint256 result = c * _toUint(success);
+
+            return result;
+        }
+    }
+
+    /**
+     * @dev Cast a boolean (false or true) to a uint256 (0 or 1) with no jump.
+     */
+    function _toUint(bool b) internal pure returns (uint256 u) {
+        assembly ("memory-safe") {
+            u := iszero(iszero(b))
         }
     }
 }

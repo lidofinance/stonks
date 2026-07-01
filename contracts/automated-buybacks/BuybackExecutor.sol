@@ -159,10 +159,10 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     bool public lpModeEnabled;
 
     /// @notice Cached `ORDER_DURATION_IN_SECONDS` of the active Stonks. Refreshed by
-    ///         `_setStonksAndOperatingMode` so order placement skips the per-call external read.
+    ///         `_setStonks` so order placement skips the per-call external read.
     uint32 public stonksOrderDurationSeconds;
 
-    /// @notice Active Stonks instance. Replaced via `setStonksAndOperatingMode`.
+    /// @notice Active Stonks instance. Replaced via `setStonks`.
     IStonks public stonks;
 
     /// @notice Most recent order placed by this contract, or zero when none is tracked.
@@ -511,10 +511,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
      * @param  stonks_ New Stonks address. LP mode when its receiver is this contract, treasury
      *         mode when it is `TREASURY`.
      */
-    function setStonksAndOperatingMode(
-        address stonks_
-    ) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setStonksAndOperatingMode(stonks_);
+    function setStonks(address stonks_) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setStonks(stonks_);
     }
 
     /**
@@ -851,7 +849,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
      * @param  stonks_ New Stonks address. LP mode when its receiver is this contract, treasury
      *         mode when it is `TREASURY`. Any other receiver reverts.
      */
-    function _setStonksAndOperatingMode(address stonks_) internal {
+    function _setStonks(address stonks_) internal {
         if (stonks_ == address(0)) {
             revert InvalidStonksAddress();
         }
@@ -1010,13 +1008,16 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         uint256 orderBalance = lastOrderAddress == address(0)
             ? 0
             : STETH.balanceOf(lastOrderAddress);
-        uint256 freeAfterLdo = MathHelpers.saturatedSub(STETH.balanceOf(address(this)), ldoInStEth);
-        uint256 freeAfterStonks = MathHelpers.saturatedSub(
+        uint256 freeAfterLdo = MathHelpers.saturatingSub(
+            STETH.balanceOf(address(this)),
+            ldoInStEth
+        );
+        uint256 freeAfterStonks = MathHelpers.saturatingSub(
             freeAfterLdo,
             STETH.balanceOf(address(stonks))
         );
 
-        return MathHelpers.saturatedSub(freeAfterStonks, orderBalance);
+        return MathHelpers.saturatingSub(freeAfterStonks, orderBalance);
     }
 
     /**

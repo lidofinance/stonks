@@ -1,6 +1,6 @@
-// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
+// SPDX-FileCopyrightText: 2926 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.23;
+pragma solidity ^0.8.0;
 
 import {IStETH} from "./IStETH.sol";
 import {IOracleRouter} from "./IOracleRouter.sol";
@@ -15,12 +15,8 @@ interface IBuybackAllocator {
         NoAvailableBudget,
         QuoteUnavailable,
         StEthPriceBelowMin,
-        AllocationBelowMin
-    }
-
-    struct SpendWindow {
-        uint64 endTS;
-        uint192 spentUSD;
+        AllocationBelowMin,
+        WindowCapReached
     }
 
     function MAX_BASIS_POINTS() external view returns (uint256);
@@ -61,6 +57,8 @@ interface IBuybackAllocator {
         external
         view
         returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth);
+
+    function revenueSources() external view returns (address[] memory);
 
     function activate() external;
 

@@ -176,12 +176,12 @@ contract BuybackAllocator is AssetRecovererACL {
     event WindowRolled(uint256 windowDurationSeconds, uint256 newEndTS, uint256 previousSpentUSD);
     event ReserveAnchored(uint256 anchorTS);
     event ExecutorSet(address indexed executor);
-    event DailyCapUSDSet(uint128 dailyCapUSD);
-    event YearlyCapUSDSet(uint128 yearlyCapUSD);
-    event ReserveDailyRateUSDSet(uint128 reserveDailyRateUSD);
-    event MinStEthPriceUSDSet(uint128 minStEthPriceUSD);
-    event MinSpendPerCallUSDSet(uint128 minSpendPerCallUSD);
-    event SurplusShareBPSet(uint16 surplusShareBP);
+    event DailyCapUSDSet(uint256 dailyCapUSD);
+    event YearlyCapUSDSet(uint256 yearlyCapUSD);
+    event ReserveDailyRateUSDSet(uint256 reserveDailyRateUSD);
+    event MinStEthPriceUSDSet(uint256 minStEthPriceUSD);
+    event MinSpendPerCallUSDSet(uint256 minSpendPerCallUSD);
+    event SurplusShareBPSet(uint256 surplusShareBP);
     event RevenueSourceAdded(address indexed source);
     event RevenueSourceRemoved(address indexed source);
 
@@ -280,7 +280,7 @@ contract BuybackAllocator is AssetRecovererACL {
 
         // Anchor the reserve to the activation day itself, so the activation day's reserve is charged
         // rather than forgiven (unlike the post-checkpoint re-anchor to the next day).
-        reserveAnchorTS = activationTS;
+        reserveAnchorTS = alignedTS;
         emit ReserveAnchored(reserveAnchorTS);
 
         _rollWindow(daily, ONE_DAY, 0);
@@ -439,6 +439,13 @@ contract BuybackAllocator is AssetRecovererACL {
     {
         (int256 budgetDeltaUSD, , ) = _budgetable();
         return _spendable(_clampBudget(budgetUSD + budgetDeltaUSD));
+    }
+
+    /**
+     * @notice Registered revenue sources.
+     */
+    function revenueSources() external view returns (address[] memory) {
+        return _revenueSources.values();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -745,7 +752,7 @@ contract BuybackAllocator is AssetRecovererACL {
         SpendWindow storage window_,
         uint256 cap_
     ) internal view returns (uint256 unspent) {
-        unspent = cap_.saturatedSub(_windowSpent(window_));
+        unspent = cap_.saturatingSub(_windowSpent(window_));
     }
 
     /**

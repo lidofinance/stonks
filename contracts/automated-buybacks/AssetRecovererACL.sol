@@ -11,7 +11,7 @@ import {AccessControlEnumerable} from "@openzeppelin/contracts/access/AccessCont
 /**
  * @title AssetRecovererACL
  * @author swissarmytowel <info@lido.fi>
- * @notice Asset-recovery base for NEST contracts with role-based access control.
+ * @notice Asset-recovery base for Buyback contracts with role-based access control.
  * @dev    All recovery flows send to the immutable `TREASURY` address.
  */
 abstract contract AssetRecovererACL is AccessControlEnumerable, ReentrancyGuard {

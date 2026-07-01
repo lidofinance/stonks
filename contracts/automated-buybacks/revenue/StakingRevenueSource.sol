@@ -113,7 +113,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
      *         a locator upgrade that retargets the receiver is auto-followed. The notifier
      *         wraps this call in try/catch, so reverts here are non-blocking and surface as
      *         `PushTokenRateFailed` on the notifier. The rebase critical path is intentionally
-     *         oracle-free: USD conversion is deferred to `convertPendingRevenueToUSD`, so an
+     *         3rd-party-oracle-free: USD conversion is deferred to `convertPendingRevenueToUSD`, so an
      *         oracle outage cannot cause a rebase-time revert and cannot lose revenue — the
      *         stETH owed to the DAO sits in the pending bucket until any caller settles it.
      *
@@ -176,7 +176,7 @@ contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
 
         uint256 newPending = pendingRevenueStEth + treasuryStEth;
         pendingRevenueStEth = newPending;
-        
+
         emit RevenueAccumulatedInStEth(treasuryStEth, newPending);
     }
 
