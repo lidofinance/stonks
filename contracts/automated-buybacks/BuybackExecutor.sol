@@ -4,7 +4,6 @@ pragma solidity 0.8.23;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
@@ -27,7 +26,7 @@ import {IOrder} from "../interfaces/IOrder.sol";
  *         In LP mode deposits balanced LDO/wstETH into the Curve LDO/wstETH pool.
  *         In treasury mode forwards all stETH to Stonks and lets LDO settle to the treasury.
  */
-contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard, Pausable {
+contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
@@ -37,42 +36,68 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
 
     /// @notice Constructor inputs.
     struct InitParams {
+        // Initial admin role holder
         address admin;
+        // Destination for recovered assets
         address treasury;
+        // The wstETH token, the pool's sell-side asset
         address wstEth;
+        // LDO token, the pool's buy-side asset
         address ldo;
+        // Prices LDO and stETH in USD
         address oracleRouter;
+        // Curve LDO/wstETH pool, also the LP token
         address curvePoolAndToken;
+        // Max pool-EMA vs oracle divergence
         uint16 poolPriceDivergenceToleranceBps;
+        // Smallest valid stETH order
         uint128 minAllowedOrderAmount;
+        // Largest valid stETH order
         uint128 maxAllowedOrderAmount;
+        // Smallest valid deposit value per call
         uint128 minDepositValueUsd;
+        // Largest valid deposit value per call
         uint128 maxDepositValueUsd;
+        // TVL at or above which divergence gate is enforced
         uint128 poolBootstrapMinTvlUsd;
-        address stonks;
     }
 
     /// @notice `addLiquidity` precondition result. Only `Eligible` permits the deposit.
     enum AddLiquidityStatus {
+        // No LDO to deposit
         ZeroLdoBalance,
+        // No stETH to deposit
         ZeroStEthBalance,
+        // The oracle returned no price or is unreachable
         OraclePriceUnavailable,
+        // The derived LDO/stETH ratio truncates to zero
         InvalidOraclePrice,
+        // Pool EMA past tolerance on a deep pool
         PoolPriceDivergenceTooHigh,
+        // Balanced value to deposit is below the per-call floor
         DepositValueBelowMinimum,
+        // Contract is in the treasury mode, no pool deposits
         NotInLpMode,
+        // The deposit can proceed
         Eligible
     }
 
     /// @notice `_evaluateAddLiquidityGates` output, containing status, capped balanced deposit
     ///         amounts, the deposit USD value, and prices reused by `addLiquidity` for its errors.
     struct AddLiquidityEvaluation {
+        // Precondition result
         AddLiquidityStatus status;
+        // Capped balanced LDO to deposit
         uint256 ldoAmount;
+        // Capped balanced stETH to deposit
         uint256 stEthAmount;
+        // Total deposit value in USD
         uint256 depositValueUsd;
+        // Pool EMA in LDO/stETH
         uint256 poolEmaLdoPerStEth;
+        // Oracle LDO/stETH ratio
         uint256 ldoPerStEth;
+        // Pool EMA vs oracle divergence
         uint256 divergenceBps;
     }
 
@@ -252,6 +277,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
 
     /**
      * @notice Initializes immutables, tolerances, roles, and operating mode.
+     * @dev    Stonks and operating mode should be set as a separate call during governance procedures to avoid circular dependencies.
      * @param  initParams_ See `InitParams`.
      */
     constructor(
@@ -260,15 +286,12 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         if (initParams_.wstEth == address(0)) {
             revert InvalidWstEthAddress();
         }
-
         if (initParams_.ldo == address(0)) {
             revert InvalidLdoAddress();
         }
-
         if (initParams_.oracleRouter == address(0)) {
             revert InvalidOracleRouterAddress();
         }
-
         if (initParams_.curvePoolAndToken == address(0)) {
             revert InvalidCurvePoolAndTokenAddress();
         }
@@ -317,10 +340,6 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         _setMinDepositValueUsd(initParams_.minDepositValueUsd);
         _setPoolBootstrapMinTvlUsd(initParams_.poolBootstrapMinTvlUsd);
 
-        // `_setStonksAndOperatingMode` validates the Stonks address and its receiver to set the operating mode, so the Stonks
-        // instance should be deployed using the CREATE2-predicted executor address before this constructor is called.
-        _setStonksAndOperatingMode(initParams_.stonks);
-
         // `wrap` pulls stETH through wstETH, so grant a one-time max approval here.
         IERC20(address(STETH)).forceApprove(address(WSTETH), type(uint256).max);
     }
@@ -348,23 +367,18 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         if (status == AddLiquidityStatus.NotInLpMode) {
             revert NotInLpMode();
         }
-
         if (status == AddLiquidityStatus.ZeroLdoBalance) {
             revert ZeroLdoBalance();
         }
-
         if (status == AddLiquidityStatus.ZeroStEthBalance) {
             revert ZeroStEthBalance();
         }
-
         if (status == AddLiquidityStatus.OraclePriceUnavailable) {
             revert OraclePriceUnavailable();
         }
-
         if (status == AddLiquidityStatus.InvalidOraclePrice) {
             revert InvalidOraclePrice();
         }
-
         if (status == AddLiquidityStatus.PoolPriceDivergenceTooHigh) {
             revert PoolPriceDivergenceTooHigh(
                 evaluation.poolEmaLdoPerStEth,
@@ -373,7 +387,6 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
                 poolPriceDivergenceToleranceBps
             );
         }
-
         if (status == AddLiquidityStatus.DepositValueBelowMinimum) {
             revert DepositValueBelowMinimum(evaluation.depositValueUsd, minDepositValueUsd);
         }
@@ -643,7 +656,6 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         }
 
         (bool pricesValid, uint256 ldoUsdPrice, uint256 stEthUsdPrice) = _tryGetLdoStEthUsdPrices();
-
         if (!pricesValid) {
             return (0, 0);
         }
@@ -665,8 +677,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
 
     /**
      * @notice Placement preconditions and next sell sizing for keepers.
-     * @dev    `estimatedBuyAmount` falls back to zero on oracle revert. An expired tracked order
-     *         is reported as `activeOrder == address(0)`.
+     * @dev    `estimatedBuyAmount` falls back to zero on oracle revert. An expired tracked order is
+     *         reported as `activeOrder == address(0)`, with its recoverable residual folded into `sellAmount`.
      * @return status Placement preconditions and the next sell sizing.
      */
     function getPlacementStatus() external view returns (PlacementStatus memory status) {
@@ -676,14 +688,25 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         status.isStonksKilled = currentStonks.isKilled();
 
         address trackedOrderAddress = lastOrderAddress;
-        if (trackedOrderAddress != address(0) && block.timestamp <= lastOrderValidTo) {
-            status.activeOrder = trackedOrderAddress;
-            status.activeOrderValidTo = lastOrderValidTo;
+        uint256 recoverableResidual;
+
+        if (trackedOrderAddress != address(0)) {
+            if (block.timestamp <= lastOrderValidTo) {
+                status.activeOrder = trackedOrderAddress;
+                status.activeOrderValidTo = lastOrderValidTo;
+            } else {
+                // placeOrder sweeps an expired order's residual stETH back to Stonks before sizing,
+                // so include it in the balance the next sale draws from.
+                uint256 residual = STETH.balanceOf(trackedOrderAddress);
+                if (residual >= MIN_ORDER_RESIDUAL_TO_RECOVER) {
+                    recoverableResidual = residual;
+                }
+            }
         }
 
-        uint256 stonksBalance = STETH.balanceOf(address(currentStonks));
-        status.sellAmount = Math.min(stonksBalance, maxAllowedOrderAmount);
+        uint256 stonksBalance = STETH.balanceOf(address(currentStonks)) + recoverableResidual;
 
+        status.sellAmount = Math.min(stonksBalance, maxAllowedOrderAmount);
         if (status.sellAmount >= minAllowedOrderAmount) {
             try currentStonks.estimateTradeOutput(status.sellAmount) returns (uint256 estimate) {
                 status.estimatedBuyAmount = estimate;
@@ -708,7 +731,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
     }
 
     /*//////////////////////////////////////////////////////////////
-                    INTERNAL STATE-CHANGING FUNCTIONS
+                           INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
@@ -832,7 +855,6 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         if (stonks_ == address(0)) {
             revert InvalidStonksAddress();
         }
-
         if (stonks_ == address(stonks)) {
             return;
         }
@@ -886,10 +908,10 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
      */
     function _sweepExpiredOrder() internal {
         address trackedOrderAddress = lastOrderAddress;
+
         if (trackedOrderAddress == address(0)) {
             return;
         }
-
         if (block.timestamp <= lastOrderValidTo) {
             return;
         }
@@ -934,13 +956,11 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, ReentrancyGuard
         // therefore it will always use the state the deposit mints against.
         // So it will always pass internally regardless of the estimation and setting it to the
         // trivial value of 1 is cheaper and has the same effect.
-        // The slippage check is the EMA divergence gate in `_evaluateAddLiquidityGates`, which
-        // compares the pool to the oracle across blocks and resists in-block manipulation.
         lpTokensMinted = CURVE_POOL_AND_TOKEN.add_liquidity(amounts, 1);
     }
 
     /*//////////////////////////////////////////////////////////////
-                      INTERNAL READ-ONLY FUNCTIONS
+                         INTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**

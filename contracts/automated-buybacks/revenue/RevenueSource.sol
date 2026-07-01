@@ -63,6 +63,7 @@ abstract contract RevenueSource is IRevenueSource {
     function _addRevenueUSD(uint256 amountUSD_) internal {
         uint256 newTotal = _cumulativeRevenueUSD + amountUSD_;
         _cumulativeRevenueUSD = newTotal;
+
         emit RevenueAdded(amountUSD_, newTotal);
     }
 }

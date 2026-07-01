@@ -4,7 +4,6 @@ pragma solidity 0.8.23;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ERC165Checker} from "@openzeppelin/contracts/utils/introspection/ERC165Checker.sol";
@@ -21,7 +20,7 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
  * @notice Holds stETH and sends it to the executor for buybacks. The amount is determined
  *         by a share of the revenue surplus, as reported by the revenue sources.
  */
-contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
+contract BuybackAllocator is AssetRecovererACL {
     using SafeERC20 for IERC20;
     using MathHelpers for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -39,11 +38,13 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         WindowCapReached
     }
 
+    /// @notice Daily or yearly spend window.
     struct SpendWindow {
         uint64 endTS;
         uint192 spentUSD;
     }
 
+    /// @notice Constructor inputs.
     struct ConstructorParams {
         address admin;
         address treasury;
@@ -95,7 +96,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     /// @notice Maximum USD spendable per year.
     uint128 public yearlyCapUSD;
 
-    /// @notice USD reserved for the protocol each day; only the surplus above it is spendable.
+    /// @notice USD reserved for the protocol each day. Only the surplus above it is spendable.
     uint128 public reserveDailyRateUSD;
 
     /// @notice Lowest stETH price accepted.
@@ -183,6 +184,20 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     error RevenueSourceLimitReached(uint256 maxSources);
 
     /*//////////////////////////////////////////////////////////////
+                               MODIFIERS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Reverts until the contract is activated.
+     */
+    modifier whenActivated() {
+        if (activationTS == 0) {
+            revert NotActivated();
+        }
+        _;
+    }
+
+    /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
@@ -190,8 +205,12 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
     constructor(
         ConstructorParams memory initParams_
     ) AssetRecovererACL(initParams_.admin, initParams_.treasury) {
-        if (initParams_.stEth == address(0)) revert StEthZeroAddress();
-        if (initParams_.oracleRouter == address(0)) revert OracleRouterZeroAddress();
+        if (initParams_.stEth == address(0)) {
+            revert StEthZeroAddress();
+        }
+        if (initParams_.oracleRouter == address(0)) {
+            revert OracleRouterZeroAddress();
+        }
 
         STETH = IStETH(initParams_.stEth);
         ORACLE_ROUTER = IOracleRouter(initParams_.oracleRouter);
@@ -208,15 +227,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         _setReserveDailyRateUSD(initParams_.reserveDailyRateUSD);
 
         address[] memory sources = initParams_.revenueSources;
-        for (uint256 i = 0; i < sources.length; ++i) {
+        for (uint256 i; i < sources.length; ++i) {
             _addRevenueSource(sources[i]);
         }
-    }
-
-    /// @dev Reverts until the contract is activated.
-    modifier whenActivated() {
-        if (activationTS == 0) revert NotActivated();
-        _;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -229,7 +242,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
      * @dev    Reverts if any registered source cannot be reached.
      */
     function activate() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (activationTS != 0) revert AlreadyActivated();
+        if (activationTS != 0) {
+            revert AlreadyActivated();
+        }
 
         uint256 alignedTS = _todayStartTS();
         activationTS = alignedTS;
@@ -278,6 +293,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
      * @notice Sets the share of the revenue surplus spendable on buybacks, in basis points.
      * @dev    Updates the budget at the current share first, so the new share applies only to
      *         revenue earned after this call. Budget already accrued is unaffected.
+     * @param  surplusShareBP_ New surplus share in basis points.
      */
     function setSurplusShareBP(
         uint16 surplusShareBP_
@@ -290,6 +306,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
      * @notice Sets the daily reserve rate.
      * @dev    Updates the budget at the current rate first, so the new rate applies only to days
      *         after this call.
+     * @param  reserveDailyRateUSD_ New daily reserve rate in USD.
      */
     function setReserveDailyRateUSD(
         uint128 reserveDailyRateUSD_
@@ -300,6 +317,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
 
     /**
      * @notice Sets the per-day spending cap. Applies to the window in progress.
+     * @param  dailyCapUSD_ New per-day spending cap in USD.
      */
     function setDailyCapUSD(uint128 dailyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setDailyCapUSD(dailyCapUSD_);
@@ -307,6 +325,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
 
     /**
      * @notice Sets the per-year spending cap. Applies to the window in progress.
+     * @param  yearlyCapUSD_ New per-year spending cap in USD.
      */
     function setYearlyCapUSD(uint128 yearlyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setYearlyCapUSD(yearlyCapUSD_);
@@ -317,7 +336,10 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         _setMinStEthPriceUSD(minStEthPriceUSD_);
     }
 
-    /// @notice Sets the smallest allocation allowed; smaller amounts are skipped.
+    /**
+     * @notice Sets the smallest allocation allowed. Smaller amounts are skipped.
+     * @param  minSpendPerCallUSD_ New smallest allocation in USD.
+     */
     function setMinSpendPerCallUSD(
         uint128 minSpendPerCallUSD_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -338,6 +360,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
      *         current total to the baseline. Sources are trusted to report accurate USD totals (18
      *         decimals) that only go up. Reverts if the source does not support the required
      *         interface or cannot be reached.
+     * @param  source_ Revenue source to register.
      */
     function addRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
         _checkpoint();
@@ -349,6 +372,7 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
      * @dev    Updates the budget first, capturing the source's surplus up to now, then subtracts its
      *         current total from the baseline so the remaining sources stay measured correctly.
      *         Reverts if the source cannot be reached.
+     * @param  source_ Revenue source to unregister.
      */
     function removeRevenueSource(
         address source_
@@ -477,7 +501,9 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
                     ((block.timestamp - activationTS) / windowDuration_ + 1) *
                     windowDuration_
             );
+
             emit WindowRolled(windowDuration_, newEndTS, spent);
+
             window_.endTS = newEndTS;
             spent = 0;
         }
@@ -489,7 +515,12 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         spent = block.timestamp >= window_.endTS ? 0 : uint256(window_.spentUSD);
     }
 
-    /// @dev The amount remaining under the cap for the current window.
+    /**
+     * @notice The amount remaining under the cap for the current window.
+     * @param  window_ Spend window to read.
+     * @param  cap_ Window spending cap in USD.
+     * @return unspent USD remaining under the cap.
+     */
     function _windowUnspent(
         SpendWindow storage window_,
         uint256 cap_
@@ -499,24 +530,33 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
 
     /// @dev Reserve accrued since it last updated.
     function _reserveCurrentUSD() internal view returns (uint256) {
-        if (block.timestamp < reserveAnchorTS) return 0;
+        if (block.timestamp < reserveAnchorTS) {
+            return 0;
+        }
+
         uint256 daysSinceAnchor = (block.timestamp - reserveAnchorTS) / ONE_DAY;
-        uint256 reserveDaysCharged = daysSinceAnchor + 1; // anchor day + each full day since
+        uint256 reserveDaysCharged = daysSinceAnchor + 1; // Anchor day plus each full day since.
         return uint256(reserveDailyRateUSD) * reserveDaysCharged;
     }
 
-    /// @dev Sums revenue across all sources; reverts if any cannot be reached.
+    /**
+     * @notice Sums revenue across all sources. Reverts if any cannot be reached.
+     * @return revenueSumUSD Total revenue across all sources in USD.
+     */
     function _revenueSumStrictUSD() internal view returns (uint256 revenueSumUSD) {
         address[] memory sources = _revenueSources.values();
-        for (uint256 i = 0; i < sources.length; ++i) {
+        for (uint256 i; i < sources.length; ++i) {
             revenueSumUSD += IRevenueSource(sources[i]).getCumulativeRevenueUSD();
         }
     }
 
-    /// @dev Sums revenue across all sources; a reverting source counts as zero.
+    /**
+     * @notice Sums revenue across all sources. A reverting source counts as zero.
+     * @return revenueSumUSD Total revenue across all sources in USD.
+     */
     function _revenueSumUSD() internal view returns (uint256 revenueSumUSD) {
         address[] memory sources = _revenueSources.values();
-        for (uint256 i = 0; i < sources.length; ++i) {
+        for (uint256 i; i < sources.length; ++i) {
             try IRevenueSource(sources[i]).getCumulativeRevenueUSD() returns (uint256 revenue) {
                 revenueSumUSD += revenue;
             } catch {}
@@ -533,12 +573,18 @@ contract BuybackAllocator is AssetRecovererACL, ReentrancyGuard {
         } catch {}
     }
 
-    /// @dev Rounds down to midnight UTC.
+    /**
+     * @notice Rounds the current block down to midnight UTC.
+     * @return Midnight UTC of the current day.
+     */
     function _todayStartTS() internal view returns (uint256) {
         return (block.timestamp / ONE_DAY) * ONE_DAY;
     }
 
-    /// @dev Midnight UTC at the start of the day after the current block.
+    /**
+     * @notice Midnight UTC at the start of the day after the current block.
+     * @return Midnight UTC of the next day.
+     */
     function _nextDayStartTS() internal view returns (uint256) {
         return _todayStartTS() + ONE_DAY;
     }
