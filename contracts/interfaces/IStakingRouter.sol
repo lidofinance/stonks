@@ -8,7 +8,7 @@ interface IStakingRouter {
     /// @return treasuryFee Treasury fee in base precision.
     /// @return basePrecision Base precision: a value corresponding to the full fee.
     function getStakingFeeAggregateDistribution()
-        public
+        external
         view
-        returns (uint96 modulesFee, uint96 treasuryFee, uint256 basePrecision)
+        returns (uint96 modulesFee, uint96 treasuryFee, uint256 basePrecision);
 }
