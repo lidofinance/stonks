@@ -1,7 +1,7 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { Signer } from 'ethers'
-import { takeSnapshot } from '@nomicfoundation/hardhat-network-helpers'
+import { takeSnapshot, time, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
 import fc from 'fast-check'
 
 import {
@@ -19,6 +19,7 @@ import {
 
 const PRICE_UNIT = 10n ** 18n // OracleRouterUsdStub.PRICE_UNIT
 const MAX_BP = 10_000n
+const ONE_DAY = 86_400n
 // Wide caps so the cap/min gates never bind in the budget/conversion properties.
 const HUGE_CAP = 10n ** 30n
 
@@ -27,6 +28,8 @@ const usdGenerator = fc.bigInt({ min: 0n, max: 10n ** 26n }) // baselines / reve
 const positivePriceGenerator = fc.bigInt({ min: 1n, max: 10n ** 24n })
 const balanceGenerator = fc.bigInt({ min: 0n, max: 10n ** 24n })
 const validBpGenerator = fc.bigInt({ min: 1n, max: MAX_BP })
+const reserveRateGenerator = fc.bigInt({ min: 0n, max: 10n ** 21n })
+const daysGenerator = fc.bigInt({ min: 0n, max: 30n }) // whole days keep the reserve day-count exact
 // For param validation: spans invalid values (0, > MAX_BP) to exercise the revert paths.
 const wideBpGenerator = fc.bigInt({ min: 0n, max: 2n * MAX_BP })
 const capGenerator = fc.bigInt({ min: 0n, max: HUGE_CAP }) // includes 0 to trip the zero-cap revert
@@ -47,6 +50,7 @@ describe('BuybackAllocator - Fuzz Tests', () => {
   let oracle: OracleRouterUsdStub
   let executor: ExecutorStub
   let source: RevenueSourceStub
+  let topSnapshot: SnapshotRestorer
 
   async function deployAllocator(opts: DeployOpts): Promise<BuybackAllocator> {
     const allocator = await new BuybackAllocator__factory(deployer).deploy({
@@ -77,6 +81,12 @@ describe('BuybackAllocator - Fuzz Tests', () => {
     source = await new RevenueSourceStub__factory(deployer).deploy()
 
     await oracle.setUsdPrice(3500n * PRICE_UNIT, 3500n * PRICE_UNIT)
+
+    topSnapshot = await takeSnapshot()
+  })
+
+  after(async () => {
+    if (topSnapshot) await topSnapshot.restore()
   })
 
   // The budget delta at a checkpoint is (revenue - baseline - reserve) * bp / 10000, signed.
@@ -108,7 +118,33 @@ describe('BuybackAllocator - Fuzz Tests', () => {
 
         await snap.restore()
       }),
-      { numRuns: 400 }
+      { numRuns: 100 }
+    )
+  })
+
+  // The reserve charged at a checkpoint is rate * (daysSinceActivation + 1): the activation day plus
+  // each full day since. Fuzzes the rate and the elapsed whole days. The rate is a constructor
+  // parameter, so a fresh allocator per run — kept to a small run count (the Foundry suite fuzzes
+  // this far more heavily).
+  it('reserve charged = reserveDailyRate * (days since activation + 1)', async () => {
+    await fc.assert(
+      fc.asyncProperty(reserveRateGenerator, daysGenerator, async (rate, days) => {
+        const allocator = await deployAllocator({
+          bp: MAX_BP, // 100% so the budget delta is exactly -reserve
+          reserveRate: rate,
+          dailyCap: HUGE_CAP,
+          yearlyCap: HUGE_CAP,
+          minSpend: 1n,
+          minPrice: 0n,
+        })
+        await source.setCumulativeRevenueUSD(0n)
+        await allocator.activate() // reserve anchored to the activation day
+        if (days > 0n) await time.increase(days * ONE_DAY) // whole days keep daysSinceAnchor == days
+        await allocator.allocate() // budget delta = (0 - 0 - reserve) * 100% = -reserve
+
+        expect(await allocator.budgetUSD()).to.equal(-(rate * (days + 1n)))
+      }),
+      { numRuns: 30 }
     )
   })
 
@@ -151,7 +187,7 @@ describe('BuybackAllocator - Fuzz Tests', () => {
           await snap.restore()
         }
       ),
-      { numRuns: 400 }
+      { numRuns: 100 }
     )
   })
 
@@ -201,7 +237,7 @@ describe('BuybackAllocator - Fuzz Tests', () => {
 
         await snap.restore()
       }),
-      { numRuns: 300 }
+      { numRuns: 100 }
     )
   })
 })

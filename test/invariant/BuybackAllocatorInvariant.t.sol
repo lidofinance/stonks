@@ -18,8 +18,6 @@ import {OracleRouterUsdStub} from "contracts/test/StakingRevenueSourceStubs.sol"
 ///         a real bug, not a rejected precondition. Caps move only within valid bounds and never
 ///         below what a window already spent; their standalone validation is fuzzed in fast-check.
 contract AllocatorHandler is Test {
-    uint256 internal constant MAX_SOURCES = 50; // mirrors BuybackAllocator.MAX_REVENUE_SOURCES
-
     BuybackAllocator public allocator;
     StEthTokenStub public stEth;
     OracleRouterUsdStub public oracle;
@@ -80,7 +78,7 @@ contract AllocatorHandler is Test {
     /// @dev Register a source. Guarded so it never reverts (skip if already registered or full).
     function addSource(uint256 index) external {
         uint256 i = bound(index, 0, sources.length - 1);
-        if (registered[i] || registeredCount >= MAX_SOURCES) return;
+        if (registered[i] || registeredCount >= allocator.MAX_REVENUE_SOURCES()) return;
         allocator.addRevenueSource(address(sources[i]));
         registered[i] = true;
         registeredCount += 1;

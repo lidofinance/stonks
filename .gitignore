@@ -19,4 +19,3 @@ solc
 # Foundry
 forge-out/
 forge-cache/
-lib/forge-std/

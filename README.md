@@ -66,10 +66,10 @@ This includes the property/fuzz tests written with [fast-check](https://fast-che
 
 The `BuybackAllocator` stateful **invariant** and fuzz tests run under [Foundry](https://book.getfoundry.sh/) (`forge`), alongside the Hardhat suite. They use the stubs in `contracts/test/`, so they need no mainnet fork or local node.
 
-One-time: vendor `forge-std` (git-ignored under `lib/`):
+One-time: fetch the `forge-std` submodule (pinned under `lib/forge-std`):
 
 ```sh
-git clone --depth 1 --branch v1.16.2 https://github.com/foundry-rs/forge-std lib/forge-std
+git submodule update --init lib/forge-std
 ```
 
 Then:
