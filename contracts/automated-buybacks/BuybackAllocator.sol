@@ -331,10 +331,13 @@ contract BuybackAllocator is AssetRecovererACL {
         _setYearlyCapUSD(yearlyCapUSD_);
     }
 
-    /// @notice Sets the minimum stETH price; a lower price skips the allocation.
-    function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setMinStEthPriceUSD(minStEthPriceUSD_);
-    }
+/**
+ * @notice Sets the minimum stETH price; a lower price skips the allocation.
+ * @param  minStEthPriceUSD_ New minimum stETH price in USD.
+ */
+function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    _setMinStEthPriceUSD(minStEthPriceUSD_);
+}
 
     /**
      * @notice Sets the smallest allocation allowed. Smaller amounts are skipped.
