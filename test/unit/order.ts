@@ -284,7 +284,9 @@ describe('Order', async function () {
     })
 
     it('should expose the stored receiver through the emitted OrderCreated event', async function () {
+      const subjectAddress = await subject.getAddress()
       const orderCreatedEvent = placeOrderReceipt.logs
+        .filter((log) => log.address === subjectAddress)
         .map((log) => subject.interface.parseLog({ topics: [...log.topics], data: log.data }))
         .find((log) => log?.name === 'OrderCreated')
 
