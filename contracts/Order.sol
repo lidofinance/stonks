@@ -71,7 +71,7 @@ contract Order is IERC1271, AssetRecoverer {
     /// @notice token to address (cached from Stonks to avoid external calls).
     address private tokenTo;
     /// @notice Settlement destination for this order. Supplied by Stonks at `initialize` time so
-    ///         the same Order template can serve treasury-direct and NEST LP flows.
+    ///         the same Order template can serve treasury-direct and buyback LP flows.
     address private receiver;
     /// @notice Internal flag indicating whether the contract has been initialized.
     bool private initialized;

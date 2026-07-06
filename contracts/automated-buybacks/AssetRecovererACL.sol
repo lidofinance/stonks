@@ -23,7 +23,7 @@ abstract contract AssetRecovererACL is AccessControlEnumerable, ReentrancyGuard 
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Gates asset recovery and operational actions.
-    bytes32 public constant MANAGER_ROLE = keccak256("NEST.MANAGER_ROLE");
+    bytes32 public constant MANAGER_ROLE = keccak256("Buybacks.MANAGER_ROLE");
 
     /*//////////////////////////////////////////////////////////////
                               IMMUTABLES

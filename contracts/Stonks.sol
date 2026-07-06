@@ -57,7 +57,8 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
         bool allowPartialFill;
         /// @notice Settlement destination for orders created by this Stonks instance. `address(0)`
-        ///         falls back to `AGENT` for NEST treasury mode and preserving behavior for non-NEST deployments.
+        ///         maps to `AGENT`, which serves buyback treasury mode and keeps legacy behavior
+        ///         for non-buyback deployments.
         address receiver;
     }
 

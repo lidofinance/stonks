@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 
 /**
  * @title ILidoLocator (minimal)
- * @notice Subset of `LidoLocator` getters consumed by NEST revenue sources. Each getter is
+ * @notice Subset of `LidoLocator` getters consumed by the buybacks revenue sources. Each getter is
  *         backed by an `immutable` in `LidoLocator` so calls are gas-cheap, but the locator
  *         contract itself is upgradeable behind a proxy — values may change across upgrades.
  */

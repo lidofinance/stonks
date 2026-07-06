@@ -5,11 +5,11 @@ pragma solidity 0.8.23;
 /**
  * @title MathHelpers
  * @author swissarmytowel <info@lido.fi>
- * @notice Small math helpers shared across NEST contracts.
+ * @notice Small math helpers shared across buyback contracts.
  */
 library MathHelpers {
     /**
-     * @dev Unsigned saturating subtraction, bounds to zero instead of overflowing.
+     * @dev Unsigned saturating subtraction, bounds to zero on underflow.
      */
     function saturatingSub(uint256 a, uint256 b) internal pure returns (uint256) {
         unchecked {
