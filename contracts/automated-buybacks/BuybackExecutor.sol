@@ -23,7 +23,9 @@ import {IOrder} from "../interfaces/IOrder.sol";
  * @title BuybackExecutor
  * @author swissarmytowel <info@lido.fi>
  * @notice Receives stETH from the BuybackAllocator and LDO from Stonks settlements.
- *         In LP mode deposits balanced LDO/wstETH into the Curve LDO/wstETH pool.
+ *         In LP mode sells half of each stETH allocation for LDO and pairs the bought LDO with
+ *         the retained half as a balanced deposit into the Curve LDO/wstETH pool, so the whole
+ *         allocation ends up in the DAO-owned LP position.
  *         In treasury mode forwards all stETH to Stonks and lets LDO settle to the treasury.
  */
 contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
@@ -393,7 +395,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
 
         assert(status == AddLiquidityStatus.Eligible);
 
-        // `wrap` rounds down by up to 1 wei. Use the minted amount for the Curve deposit.
+        // `wrap` rounds the minted wstETH down, worth a few wei of stETH less than sent.
+        // Use the minted amount for the Curve deposit.
         uint256 actualWstEthMinted = WSTETH.wrap(evaluation.stEthAmount);
 
         lpTokensMinted = _depositToCurve(evaluation.ldoAmount, actualWstEthMinted);
@@ -449,7 +452,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
 
     /**
      * @notice BuybackAllocator hook invoked after a stETH push. Sweeps an expired tracked order,
-     *         then forwards free stETH to Stonks, half in LP mode and all in treasury mode.
+     *         then forwards free stETH to Stonks, half in LP mode and all in treasury mode. The
+     *         half retained in LP mode pairs with the bought LDO in the next pool deposit.
      * @dev    Does not revert on missing oracle prices or sub-threshold forward amounts.
      */
     function onStEthAllocated() external nonReentrant whenNotPaused onlyRole(ALLOCATOR_ROLE) {
@@ -577,9 +581,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
      * @param  minAllowedOrderAmount_ New minimum. Must be non-zero and strictly below `maxAllowedOrderAmount`.
      */
     function setMinAllowedOrderAmount(
-        uint128 minAllowedOrderAmount_
+        uint256 minAllowedOrderAmount_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setMinAllowedOrderAmount(minAllowedOrderAmount_);
+        _setMinAllowedOrderAmount(minAllowedOrderAmount_.toUint128());
     }
 
     /**
@@ -587,9 +591,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
      * @param  maxAllowedOrderAmount_ New maximum. Must be strictly above `minAllowedOrderAmount`.
      */
     function setMaxAllowedOrderAmount(
-        uint128 maxAllowedOrderAmount_
+        uint256 maxAllowedOrderAmount_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setMaxAllowedOrderAmount(maxAllowedOrderAmount_);
+        _setMaxAllowedOrderAmount(maxAllowedOrderAmount_.toUint128());
     }
 
     /**
@@ -598,9 +602,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
      *         and strictly below `maxDepositValueUsd`.
      */
     function setMinDepositValueUsd(
-        uint128 minDepositValueUsd_
+        uint256 minDepositValueUsd_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setMinDepositValueUsd(minDepositValueUsd_);
+        _setMinDepositValueUsd(minDepositValueUsd_.toUint128());
     }
 
     /**
@@ -609,9 +613,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
      *         above `minDepositValueUsd`.
      */
     function setMaxDepositValueUsd(
-        uint128 maxDepositValueUsd_
+        uint256 maxDepositValueUsd_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setMaxDepositValueUsd(maxDepositValueUsd_);
+        _setMaxDepositValueUsd(maxDepositValueUsd_.toUint128());
     }
 
     /**
@@ -620,9 +624,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
      *         In `(0, MAX_POOL_BOOTSTRAP_MIN_TVL_USD]`.
      */
     function setPoolBootstrapMinTvlUsd(
-        uint128 poolBootstrapMinTvlUsd_
+        uint256 poolBootstrapMinTvlUsd_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setPoolBootstrapMinTvlUsd(poolBootstrapMinTvlUsd_);
+        _setPoolBootstrapMinTvlUsd(poolBootstrapMinTvlUsd_.toUint128());
     }
 
     /*//////////////////////////////////////////////////////////////

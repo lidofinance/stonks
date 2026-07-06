@@ -6,12 +6,14 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ERC165Checker} from "@openzeppelin/contracts/utils/introspection/ERC165Checker.sol";
 
 import {AssetRecovererACL} from "./AssetRecovererACL.sol";
 import {IStETH} from "../interfaces/IStETH.sol";
 import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
 import {IRevenueSource} from "../interfaces/IRevenueSource.sol";
+import {IBuybackAllocator} from "../interfaces/IBuybackAllocator.sol";
 import {IBuybackExecutor} from "../interfaces/IBuybackExecutor.sol";
 import {MathHelpers} from "../lib/MathHelpers.sol";
 
@@ -20,30 +22,15 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
  * @notice Holds stETH and releases it to a receiver for buybacks, funded by a share of the
  *         protocol revenue that registered sources report. Anyone can trigger a release.
  */
-contract BuybackAllocator is AssetRecovererACL {
+contract BuybackAllocator is IBuybackAllocator, AssetRecovererACL {
     using SafeERC20 for IERC20;
+    using SafeCast for uint256;
     using MathHelpers for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
 
     /*//////////////////////////////////////////////////////////////
                                  TYPES
     //////////////////////////////////////////////////////////////*/
-
-    /// @notice Whether a release can proceed, or why it is skipped. Reported in the skip event.
-    enum AllocationStatus {
-        // The release can proceed
-        Eligible,
-        // No budget available to spend
-        NoAvailableBudget,
-        // The oracle returned no price
-        QuoteUnavailable,
-        // The price is below the floor
-        StEthPriceBelowMin,
-        // The spendable amount is below the smallest allowed
-        AllocationBelowMin,
-        // The daily or yearly cap leaves no room
-        WindowCapReached
-    }
 
     /// @notice Daily or yearly spend window.
     struct SpendWindow {
@@ -212,6 +199,8 @@ contract BuybackAllocator is AssetRecovererACL {
 
     /**
      * @notice Reverts until the contract is activated.
+     * @dev    Guards every function that runs `_checkpoint`, whose math reads activation-derived
+     *         state. Plain setters stay callable before activation.
      */
     modifier whenActivated() {
         if (activationTS == 0) {
@@ -325,10 +314,10 @@ contract BuybackAllocator is AssetRecovererACL {
      * @param  surplusShareBP_ New surplus share in basis points.
      */
     function setSurplusShareBP(
-        uint16 surplusShareBP_
+        uint256 surplusShareBP_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
         _checkpoint();
-        _setSurplusShareBP(surplusShareBP_);
+        _setSurplusShareBP(surplusShareBP_.toUint16());
     }
 
     /**
@@ -338,34 +327,34 @@ contract BuybackAllocator is AssetRecovererACL {
      * @param  reserveDailyRateUSD_ New daily reserve rate in USD.
      */
     function setReserveDailyRateUSD(
-        uint128 reserveDailyRateUSD_
+        uint256 reserveDailyRateUSD_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
         _checkpoint();
-        _setReserveDailyRateUSD(reserveDailyRateUSD_);
+        _setReserveDailyRateUSD(reserveDailyRateUSD_.toUint128());
     }
 
     /**
      * @notice Sets the per-day spending cap. Applies to the window in progress.
      * @param  dailyCapUSD_ New per-day spending cap in USD.
      */
-    function setDailyCapUSD(uint128 dailyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setDailyCapUSD(dailyCapUSD_);
+    function setDailyCapUSD(uint256 dailyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setDailyCapUSD(dailyCapUSD_.toUint128());
     }
 
     /**
      * @notice Sets the per-year spending cap. Applies to the window in progress.
      * @param  yearlyCapUSD_ New per-year spending cap in USD.
      */
-    function setYearlyCapUSD(uint128 yearlyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setYearlyCapUSD(yearlyCapUSD_);
+    function setYearlyCapUSD(uint256 yearlyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setYearlyCapUSD(yearlyCapUSD_.toUint128());
     }
 
     /**
      * @notice Sets the minimum stETH price. A lower price skips the release.
      * @param  minStEthPriceUSD_ New minimum stETH price in USD.
      */
-    function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setMinStEthPriceUSD(minStEthPriceUSD_);
+    function setMinStEthPriceUSD(uint256 minStEthPriceUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setMinStEthPriceUSD(minStEthPriceUSD_.toUint128());
     }
 
     /**
@@ -373,9 +362,9 @@ contract BuybackAllocator is AssetRecovererACL {
      * @param  minSpendPerCallUSD_ New smallest allocation in USD.
      */
     function setMinSpendPerCallUSD(
-        uint128 minSpendPerCallUSD_
+        uint256 minSpendPerCallUSD_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setMinSpendPerCallUSD(minSpendPerCallUSD_);
+        _setMinSpendPerCallUSD(minSpendPerCallUSD_.toUint128());
     }
 
     /**
@@ -489,9 +478,10 @@ contract BuybackAllocator is AssetRecovererACL {
                     windowDuration_
             );
 
+            window_.endTS = newEndTS;
+
             emit WindowRolled(windowDuration_, newEndTS, spent);
 
-            window_.endTS = newEndTS;
             spent = 0;
         }
         window_.spentUSD = spent + uint192(spendUSD_);

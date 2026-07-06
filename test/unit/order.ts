@@ -1,6 +1,6 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
-import { Signer } from 'ethers'
+import { ContractTransactionReceipt, Signer } from 'ethers'
 import {
   takeSnapshot,
   SnapshotRestorer,
@@ -35,6 +35,7 @@ describe('Order', async function () {
   let subject: Order
   let orderHash: string
   let orderData: PlaceOrderDataEvent
+  let placeOrderReceipt: ContractTransactionReceipt
   let expectedBuyAmount: bigint
 
   before(async function () {
@@ -124,6 +125,8 @@ describe('Order', async function () {
     const placeOrderTx = await stonks.placeOrder(expectedBuyAmount)
     const placeOrderTxReceipt = await placeOrderTx.wait()
     if (!placeOrderTxReceipt) throw Error('placeOrderTxReceipt is null')
+
+    placeOrderReceipt = placeOrderTxReceipt
 
     const decodedOrderTx = await getPlaceOrderData(placeOrderTxReceipt)
 
@@ -230,6 +233,26 @@ describe('Order', async function () {
         .withArgs(ethers.ZeroAddress)
     })
 
+    it('should deploy the exact runtime bytecode Clones.clone() produces', async function () {
+      const implementation = (await stonks.ORDER_SAMPLE()).toLowerCase()
+
+      const clonesDeployerFactory = await ethers.getContractFactory('ClonesDeployerStub')
+      const clonesDeployer = await clonesDeployerFactory.deploy()
+      await clonesDeployer.waitForDeployment()
+
+      const ozCloneAddress = await clonesDeployer.clone.staticCall(implementation)
+      await clonesDeployer.clone(implementation)
+
+      const manualClone = await deployOrderClone(implementation)
+
+      const canonicalRuntime = `0x363d3d373d3d3d363d73${implementation.slice(2)}5af43d82803e903d91602b57fd5bf3`
+      const ozRuntime = await ethers.provider.getCode(ozCloneAddress)
+      const manualRuntime = await ethers.provider.getCode(await manualClone.getAddress())
+
+      expect(ozRuntime).to.equal(canonicalRuntime)
+      expect(manualRuntime).to.equal(ozRuntime)
+    })
+
     it('should short-circuit on OrderAlreadyInitialized for a fresh Order deployment', async function () {
       const orderFactory = await ethers.getContractFactory('Order')
       const fresh = await orderFactory.deploy(
@@ -261,7 +284,12 @@ describe('Order', async function () {
     })
 
     it('should expose the stored receiver through the emitted OrderCreated event', async function () {
-      expect(orderData.order.receiver).to.equal(contracts.AGENT)
+      const orderCreatedEvent = placeOrderReceipt.logs
+        .map((log) => subject.interface.parseLog({ topics: [...log.topics], data: log.data }))
+        .find((log) => log?.name === 'OrderCreated')
+
+      expect(orderCreatedEvent, 'OrderCreated event missing from the placement receipt').to.exist
+      expect(orderCreatedEvent!.args.orderData.receiver).to.equal(contracts.AGENT)
     })
   })
 

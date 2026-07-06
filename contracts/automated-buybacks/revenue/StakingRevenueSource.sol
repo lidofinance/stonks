@@ -25,6 +25,9 @@ import {IStakingRouter} from "../../interfaces/IStakingRouter.sol";
  *         `LidoLocator.postTokenRebaseReceiver`. ERC165 support for
  *         `ITokenRatePusherWithArgs.interfaceId` is required so `TokenRateNotifier.addObserver`
  *         auto-detects the args-bearing flavor.
+ * @dev    Register on the `BuybackAllocator` and wire as a notifier observer in one atomic
+ *         governance action, with the pending bucket settled first. The allocator baselines the
+ *         cumulative at registration, so pending stETH settled later shows up as fresh surplus.
  */
 contract StakingRevenueSource is RevenueSource, ITokenRatePusherWithArgs {
     /*//////////////////////////////////////////////////////////////

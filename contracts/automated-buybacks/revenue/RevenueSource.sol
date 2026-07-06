@@ -13,6 +13,9 @@ import {IRevenueSource} from "../../interfaces/IRevenueSource.sol";
  * @dev    Carries the ERC-165 advertisement for `IRevenueSource` so every concrete source is
  *         registrable by consumers (e.g. `BuybackAllocator`) without re-declaring it. Children
  *         that expose extra interfaces override `supportsInterface` and chain through `super`.
+ * @dev    Every source must stay monotonic, always-live, and fully settled: the cumulative only
+ *         grows, `getCumulativeRevenueUSD` never reverts, and it reflects all revenue earned up
+ *         to the read. `BuybackAllocator` budget integrity rests on these properties.
  */
 abstract contract RevenueSource is IRevenueSource {
     /*//////////////////////////////////////////////////////////////
