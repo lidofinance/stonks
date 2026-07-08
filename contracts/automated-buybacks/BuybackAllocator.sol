@@ -249,7 +249,7 @@ contract BuybackAllocator is AssetRecovererACL {
         uint256 alignedTS = _todayStartTS();
         activationTS = alignedTS;
 
-        lastTotalRevenueUSD = _revenueSumStrictUSD();
+        lastTotalRevenueUSD = _revenueSumUSD();
 
         // Anchor the reserve to the activation day, so the reserve is charged from that day.
         reserveAnchorTS = activationTS;
@@ -362,7 +362,7 @@ function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external onlyRole(DEFAUL
      * @dev    Updates the budget first, banking revenue earned up to now, then adds the source's
      *         current total to the baseline. Sources are trusted to report accurate USD totals (18
      *         decimals) that only go up. Reverts if the source does not support the required
-     *         interface or cannot be reached.
+     *         interface, or if it or any registered source cannot be reached.
      * @param  source_ Revenue source to register.
      */
     function addRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
@@ -374,7 +374,9 @@ function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external onlyRole(DEFAUL
      * @notice Unregisters a revenue source. Budget already accrued from it stays.
      * @dev    Updates the budget first, capturing the source's surplus up to now, then subtracts its
      *         current total from the baseline so the remaining sources stay measured correctly.
-     *         Reverts if the source cannot be reached.
+     *         Reverts if any registered source cannot be reached, including the one being removed.
+     *         Sources are trusted to always respond with a sane value. In an unlikely scenario where
+     *         a source ever stops responding, buybacks are paused and the allocator is redeployed.
      * @param  source_ Revenue source to unregister.
      */
     function removeRevenueSource(
@@ -392,7 +394,8 @@ function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external onlyRole(DEFAUL
      * @notice Returns what an allocation would spend and transfer right now, including revenue
      *         earned since the last budget update. Stays accurate however long ago that update was.
      * @dev    Applies the same budget math and limits as an allocation, without changing state, so
-     *         an allocation reproduces this result. Reverts before activation.
+     *         an allocation reproduces this result. Reverts before activation, or when any
+     *         registered source cannot be reached.
      * @return status         whether an allocation would proceed, or why it would be skipped
      * @return spendableUSD   USD an allocation would spend now
      * @return spendableStEth stETH an allocation would transfer now
@@ -413,9 +416,7 @@ function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external onlyRole(DEFAUL
 
     /// @dev Applies the change since the last update to the signed budget, records the new revenue
     ///      baseline, and restarts the reserve. Runs even with no new revenue, so the budget can
-    ///      fall below zero. A source that reverts on one read counts as zero that time and recovers
-    ///      on the next; because each update measures only the change since the last baseline, a
-    ///      missed read is absorbed and never double-counted.
+    ///      fall below zero.
     function _checkpoint() internal {
         (int256 budgetDeltaUSD, uint256 totalRevenueUSD, uint256 reserveUSD) = _budgetable();
 
@@ -542,27 +543,12 @@ function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external onlyRole(DEFAUL
         return uint256(reserveDailyRateUSD) * reserveDaysCharged;
     }
 
-    /**
-     * @notice Sums revenue across all sources. Reverts if any cannot be reached.
-     * @return revenueSumUSD Total revenue across all sources in USD.
-     */
-    function _revenueSumStrictUSD() internal view returns (uint256 revenueSumUSD) {
-        address[] memory sources = _revenueSources.values();
-        for (uint256 i; i < sources.length; ++i) {
-            revenueSumUSD += IRevenueSource(sources[i]).getCumulativeRevenueUSD();
-        }
-    }
-
-    /**
-     * @notice Sums revenue across all sources. A reverting source counts as zero.
-     * @return revenueSumUSD Total revenue across all sources in USD.
-     */
+    /// @dev Sums revenue across all sources in USD. Sources are trusted, so a source that cannot
+    ///      be reached makes the read revert rather than count as zero.
     function _revenueSumUSD() internal view returns (uint256 revenueSumUSD) {
         address[] memory sources = _revenueSources.values();
         for (uint256 i; i < sources.length; ++i) {
-            try IRevenueSource(sources[i]).getCumulativeRevenueUSD() returns (uint256 revenue) {
-                revenueSumUSD += revenue;
-            } catch {}
+            revenueSumUSD += IRevenueSource(sources[i]).getCumulativeRevenueUSD();
         }
     }
 

@@ -30,7 +30,7 @@ contract StEthTokenStub {
 }
 
 /// @notice Revenue source with a directly settable cumulative total and a revert switch, so tests
-///         can drive both the accounting math and the reverting-source (non-strict sum) path.
+///         can drive both the accounting math and the unreachable-source revert path.
 contract RevenueSourceStub is IRevenueSource {
     uint256 private _cumulativeRevenueUSD;
     bool public reverting;

@@ -147,7 +147,7 @@ describe('BuybackAllocator — accumulated budget', function () {
   })
 
   describe('activation:', function () {
-    it('records the strict revenue sum as the baseline and anchors the reserve to the activation day', async function () {
+    it('records the revenue sum as the baseline and anchors the reserve to the activation day', async function () {
       await deployAllocator({ reserveRate: usd('100') })
       await activateWith(usd('1000'))
 
@@ -159,7 +159,7 @@ describe('BuybackAllocator — accumulated budget', function () {
       expect(await allocator.reserveAnchorTS()).to.equal(activationTS)
     })
 
-    it('reverts activation when a source is unreachable (strict sum)', async function () {
+    it('reverts activation when a source is unreachable', async function () {
       await deployAllocator()
       await source.setReverting(true)
       await expect(allocator.activate()).to.be.reverted
@@ -453,7 +453,7 @@ describe('BuybackAllocator — accumulated budget', function () {
       expect(await allocator.budgetUSD()).to.equal(usd('2500'))
     })
 
-    it('reverts when removing an unreachable source (strict read)', async function () {
+    it('reverts when removing an unreachable source', async function () {
       // Removal subtracts the source's current total from the baseline, so it must read the source.
       // A reverting source makes removal revert (known limitation: remove a source only while it is
       // reachable). This keeps the accounting exact rather than erasing earned/debt.
@@ -470,19 +470,24 @@ describe('BuybackAllocator — accumulated budget', function () {
     })
   })
 
-  describe('flaky source:', function () {
-    it('reads a reverting source as a revenue drop and nets out on recovery (no double-count)', async function () {
+  describe('unreachable source:', function () {
+    it('reverts budget updates while a source is unreachable and banks revenue once on recovery', async function () {
       await deployAllocator({ share: SHARE_100 })
       await activateWith(usd('1000'))
 
-      // Reverting source → non-strict sum reads 0 → budget dips by the apparent loss; no revert.
+      // Sources are trusted, so a failed read blocks the update instead of counting as zero:
+      // nothing is banked and the baseline is untouched.
       await source.setReverting(true)
-      await expect(allocator.allocate()).to.not.be.reverted
-      expect(await allocator.budgetUSD()).to.equal(-usd('1000'))
-      expect(await allocator.lastTotalRevenueUSD()).to.equal(0n)
+      await expect(allocator.allocate()).to.be.reverted
+      expect(await allocator.budgetUSD()).to.equal(0n)
+      expect(await allocator.lastTotalRevenueUSD()).to.equal(usd('1000'))
 
-      // On recovery the deltas telescope: genuine new revenue is 1000 (1000 → 2000), so the budget
-      // ends at 1000, not 2000 — the pre-outage total is not counted twice.
+      // The failed read blocks every path that sums revenue, not just allocate().
+      await expect(allocator.spendable()).to.be.reverted
+      const other = await new RevenueSourceStub__factory(admin).deploy()
+      await expect(allocator.addRevenueSource(await other.getAddress())).to.be.reverted
+
+      // On recovery the growth since the baseline (1000 → 2000) banks exactly once.
       await source.setReverting(false)
       await source.setCumulativeRevenueUSD(usd('2000'))
       await allocator.allocate()

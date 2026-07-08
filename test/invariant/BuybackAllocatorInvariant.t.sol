@@ -34,7 +34,7 @@ contract AllocatorHandler is Test {
     uint256 public ghostRegisteredRevenue; // revenue grown while its source was registered
     uint256 public ghostSpentUSD; // total USD ever allocated (sum of per-call spend)
     uint256 public ghostEligibleAllocations; // count of allocations that proceeded (not skipped)
-    bool public ghostAllocateReverted; // allocate() ever reverted (it must only skip, never revert)
+    bool public ghostAllocateReverted; // allocate() ever reverted (with reachable sources it must only skip)
     bool public ghostSpendableMismatch; // spendable() preview ever disagreed with allocate()
 
     constructor(
@@ -137,8 +137,9 @@ contract AllocatorHandler is Test {
         allocator.setYearlyCapUSD(uint128(bound(seed, lo, hi)));
     }
 
-    /// @dev The core action. allocate() must never revert (only skip via event), its effect must
-    ///      match the spendable() preview taken in the same block, and we bank the spent USD.
+    /// @dev The core action. With every source reachable, as in this harness, allocate() must never
+    ///      revert (only skip via event), its effect must match the spendable() preview taken in
+    ///      the same block, and we bank the spent USD.
     function allocate() external {
         (BuybackAllocator.AllocationStatus status, uint256 predUSD, uint256 predStEth) = allocator
             .spendable();
@@ -254,7 +255,8 @@ contract BuybackAllocatorInvariant is StdInvariant, Test {
         assertLe(uint256(spentUSD), allocator.yearlyCapUSD());
     }
 
-    /// @notice allocate() never reverts — it only proceeds or skips via event.
+    /// @notice With every source reachable, as in this harness, allocate() never reverts: it only
+    ///         proceeds or skips via event.
     function invariant_allocateNeverReverts() public view {
         assertFalse(handler.ghostAllocateReverted());
     }
@@ -350,11 +352,11 @@ contract BuybackAllocatorInvariant is StdInvariant, Test {
         assertEq(a.budgetUSD(), budgetAfterFirst);
     }
 
-    /// @notice A reverting source contributes zero to the budget math (and never breaks the
-    ///         checkpoint): its lifetime total stays frozen in the baseline while the remaining
-    ///         sources keep funding the budget. Isolated with surplusShare = 100% and zero reserve,
-    ///         so the post-checkpoint budget is exactly the live source's growth minus the frozen one.
-    function testFuzz_revenueSumExcludesRevertingSource(
+    /// @notice An unreachable source blocks the budget update: allocate reverts and no state
+    ///         changes, then a recovered read banks the live source's growth exactly once.
+    ///         Isolated with surplusShare = 100% and zero reserve, so the post-recovery budget
+    ///         is exactly the live source's growth.
+    function testFuzz_unreachableSourceBlocksCheckpointUntilRecovery(
         uint256 liveBase,
         uint256 frozenBase,
         uint256 growth
@@ -376,14 +378,20 @@ contract BuybackAllocatorInvariant is StdInvariant, Test {
         sources[0] = address(live);
         sources[1] = address(frozen);
         BuybackAllocator a = _deploy(s, o, e, sources, 0, 10_000);
-        a.activate(); // strict baseline = liveBase + frozenBase
+        a.activate(); // baseline = liveBase + frozenBase
 
-        frozen.setReverting(true); // excluded from the non-strict sum from now on
+        frozen.setReverting(true); // every revenue read now reverts
         live.setCumulativeRevenueUSD(liveBase + growth);
 
-        a.allocate(); // checkpoint: revenueSum = liveBase + growth (frozen counted as 0), no spend
+        vm.expectRevert(RevenueSourceStub.RevenueSourceStubReverting.selector);
+        a.allocate();
+        assertEq(a.budgetUSD(), int256(0));
+        assertEq(a.lastTotalRevenueUSD(), liveBase + frozenBase);
 
-        // budget = (liveBase + growth − (liveBase + frozenBase)) * 100% = growth − frozenBase
-        assertEq(a.budgetUSD(), int256(growth) - int256(frozenBase));
+        frozen.setReverting(false);
+        a.allocate(); // checkpoint: revenueSum = liveBase + growth + frozenBase, no spend
+
+        // budget = (liveBase + growth + frozenBase − (liveBase + frozenBase)) * 100% = growth
+        assertEq(a.budgetUSD(), int256(growth));
     }
 }
