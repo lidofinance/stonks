@@ -3,7 +3,7 @@ import { ethers, network } from 'hardhat'
 
 import fmt from '../utils/format'
 import { confirmOrAbort } from '../utils/prompt'
-import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
+import { getDeployer, saveDeployment, verify, waitForDeployment } from '../utils/deployment'
 import { StonksFactory__factory } from '../typechain-types'
 import { StonksDeployedEvent } from '../typechain-types/contracts/factories/StonksFactory'
 import { setTimeout } from 'timers/promises'
@@ -110,6 +110,29 @@ async function main() {
         `was deployed successfully: ${fmt.address(stonksAddress)}\n`,
       ].join(' ')
     )
+
+    saveDeployment(pair, {
+      contract: 'contracts/Stonks.sol',
+      address: stonksAddress,
+      deployTx: receipt.hash,
+      constructorArgs: [
+        {
+          admin,
+          agent,
+          manager,
+          tokenFrom,
+          tokenTo,
+          amountConverter,
+          orderSample,
+          orderDurationInSeconds,
+          marginInBasisPoints,
+          priceToleranceInBasisPoints,
+          maxImprovementInBasisPoints,
+          allowPartialFill,
+          receiver,
+        },
+      ],
+    })
 
     console.log('Waiting for 15 seconds to let Etherscan index the new contract...')
 

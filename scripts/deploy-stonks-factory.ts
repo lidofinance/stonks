@@ -4,7 +4,7 @@ import { network, ethers } from 'hardhat'
 import fmt from '../utils/format'
 import { confirmOrAbort } from '../utils/prompt'
 import { StonksFactory__factory } from '../typechain-types'
-import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
+import { getDeployer, saveDeployment, verify, waitForDeployment } from '../utils/deployment'
 import { OrderSampleDeployedEvent } from '../typechain-types/contracts/factories/StonksFactory'
 
 const ADMIN = ''
@@ -66,6 +66,28 @@ async function main() {
     `The ${fmt.name('StonksFactory')} contract was deployed successfully: ${fmt.address(stonksFactoryAddress)}\n`
   )
   console.log(`Sample of the ${fmt.name('Order')} contract was deployed at ${fmt.address(order)}\n`)
+
+  // Get domainSeparator from the CoWSwapSettlement contract, which is needed for the Order constructor
+  const settlement = new ethers.Contract(
+    COWSWAP_SETTLEMENT,
+    ['function domainSeparator() view returns (bytes32)'],
+    deployer
+  )
+  const domainSeparator = await settlement.domainSeparator()
+
+  saveDeployment('stonksFactory', {
+    contract: 'contracts/factories/StonksFactory.sol',
+    address: stonksFactoryAddress,
+    deployTx: receipt.hash,
+    constructorArgs: [ADMIN, AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER],
+  })
+  saveDeployment('orderSample', {
+    contract: 'contracts/Order.sol',
+    address: order,
+    deployTx: receipt.hash,
+    constructorArgs: [ADMIN, AGENT, COWSWAP_VAULT_RELAYER, domainSeparator],
+  })
+
   if (!['localhost', 'hardhat'].includes(network.name)) {
     await verify(
       stonksFactoryAddress,

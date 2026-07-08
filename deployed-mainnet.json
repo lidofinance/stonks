@@ -1,0 +1,26 @@
+{
+  "oracleRouter": {
+    "implementation": {
+      "contract": "contracts/routers/OracleRouter.sol",
+      "address": "0x79ef3a538200Fe4981D67E7e886bfb36D4Cb5a31",
+      "deployTx": "0x5b10055ad68a135ec447a48ddf73c84c55957ebce35412801eab45358b946299",
+      "constructorArgs": [
+        "0x2e59A20f205bB85a89C53f1936454680651E618e",
+        "0x47Fb2585D2C56Fe188D0E6ec628a38b74fCeeeDf"
+      ]
+    }
+  },
+  "amountConverterEthAnchored": {
+    "implementation": {
+      "contract": "contracts/AmountConverter.sol",
+      "address": "0x70dA04C5D0f325F5AF1426dE6672BF2424B4593d",
+      "deployTx": "0x3d071b5677340c572ff87dd9ae73a853e2fd1df1440c4d45033fe181c3dc7b0d",
+      "constructorArgs": [
+        "0x79ef3a538200Fe4981D67E7e886bfb36D4Cb5a31",
+        ["0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84"],
+        ["0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32"],
+        true
+      ]
+    }
+  }
+}
