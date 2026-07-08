@@ -18,6 +18,7 @@ export type Contracts = {
   MANAGER: string
   ORACLE_ROUTER: string
   WSTETH: string
+  CURVE_POOL_TWOCRYPTO_NG_FACTORY?: string
 }
 
 export const mainnet: Contracts = {
@@ -39,6 +40,7 @@ export const mainnet: Contracts = {
   MANAGER: '0xa02FC823cCE0D016bD7e17ac684c9abAb2d6D647',
   ORACLE_ROUTER: '0x0000000000000000000000000000000000000000',
   WSTETH: '0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0',
+  CURVE_POOL_TWOCRYPTO_NG_FACTORY: '0x98EE851a00abeE0d95D08cF4CA2BdCE32aeaAF7F',
 }
 
 export const hoodi: Contracts = {
