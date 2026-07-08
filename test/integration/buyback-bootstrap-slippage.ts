@@ -42,7 +42,8 @@ const GATE_ACTIVE_MIN_TVL_USD = parseEther('1') // below any seeded TVL => diver
 const DEPOSIT_WST_PER_SIDE = parseEther('0.7')
 
 // The realized loss a balanced deposit into an unmanipulated pool may take (Curve imbalance fee only).
-const HONEST_LOSS_TOLERANCE_BPS = 100n // 1%
+// A balanced-at-oracle deposit into a fair pool has ~zero imbalance, so the honest fee is sub-bp.
+const HONEST_LOSS_TOLERANCE_BPS = 10n // 0.1%
 
 // How far the pool's marginal spot may sit from the oracle after a deposit and still count as aligned.
 const SPOT_ALIGNMENT_TOLERANCE_BPS = 100n // 1%
