@@ -30,7 +30,7 @@ contract StEthTokenStub {
 }
 
 /// @notice Revenue source with a directly settable cumulative total and a revert switch, so tests
-///         can drive both the accounting math and the reverting-source (non-strict sum) path.
+///         can drive both the accounting math and the unreachable-source revert path.
 contract RevenueSourceStub is IRevenueSource {
     uint256 private _cumulativeRevenueUSD;
     bool public reverting;
@@ -65,4 +65,16 @@ contract ExecutorStub {
     function onStEthAllocated() external {
         onStEthAllocatedCount += 1;
     }
+}
+
+/// @notice Allocation receiver that re-enters `allocate()` inside the callback, so a test can drive
+///         the `nonReentrant` guard on the allocator.
+contract ReentrantExecutorStub {
+    function onStEthAllocated() external {
+        IAllocate(msg.sender).allocate();
+    }
+}
+
+interface IAllocate {
+    function allocate() external;
 }

@@ -1,0 +1,29 @@
+[profile.default]
+src = "contracts"
+test = "test/invariant"
+# Keep Foundry's build output separate from Hardhat's `artifacts/` and `cache/`.
+out = "forge-out"
+cache_path = "forge-cache"
+libs = ["lib", "node_modules"]
+solc = "0.8.23"
+optimizer = true
+optimizer_runs = 200
+remappings = [
+    "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+    "forge-std/=lib/forge-std/src/",
+    "contracts/=contracts/",
+]
+
+# Stateless fuzz tests (testFuzz_*).
+[profile.default.fuzz]
+runs = 2048
+
+# Invariant (stateful) fuzzing: random sequences of handler calls, ghost-model checks after each.
+[profile.default.invariant]
+runs = 2048
+# Deep sequences matter more than extra starts here: windows roll per day/year and the reserve
+# accrues per day, so temporal bugs surface only after many warp+checkpoint steps in one run.
+# The handler bounds every action to a valid call (allocate() is caught internally), so any revert
+# here is an unexpected bug, not a rejected precondition — fail loudly instead of silently discarding.
+depth = 100
+fail_on_revert = true

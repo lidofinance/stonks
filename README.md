@@ -60,6 +60,24 @@ To run the tests, open a new terminal tab and execute the following command:
 npm run test
 ```
 
+This includes the property/fuzz tests written with [fast-check](https://fast-check.dev/) under `test/fuzz/*.ts`.
+
+### Fuzzing & invariant tests (Foundry)
+
+The `BuybackAllocator` stateful **invariant** and fuzz tests run under [Foundry](https://book.getfoundry.sh/) (`forge`), alongside the Hardhat suite. They use the stubs in `contracts/test/`, so they need no mainnet fork or local node.
+
+One-time: fetch the `forge-std` submodule (pinned under `lib/forge-std`):
+
+```sh
+git submodule update --init lib/forge-std
+```
+
+Then:
+
+```sh
+forge test
+```
+
 ### Integration tests
 
 Integration tests run against a mainnet fork. With the fork node running in a separate tab

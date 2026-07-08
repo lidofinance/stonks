@@ -276,7 +276,7 @@ contract BuybackAllocator is AssetRecovererACL {
         uint256 alignedTS = _todayStartTS();
         activationTS = alignedTS;
 
-        lastTotalRevenueUSD = _revenueSumStrictUSD();
+        lastTotalRevenueUSD = _revenueSumUSD();
 
         // Anchor the reserve to the activation day itself, so the activation day's reserve is charged
         // rather than forgiven (unlike the post-checkpoint re-anchor to the next day).
@@ -392,7 +392,7 @@ contract BuybackAllocator is AssetRecovererACL {
      * @dev    Updates the budget first, banking revenue earned up to now, then adds the source's
      *         current total to the baseline. Sources are trusted to report accurate USD totals (18
      *         decimals) that only go up. Reverts if the source does not support the required
-     *         interface or cannot be reached.
+     *         interface, or if it or any registered source cannot be reached.
      * @param  source_ Revenue source to register.
      */
     function addRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
@@ -404,7 +404,9 @@ contract BuybackAllocator is AssetRecovererACL {
      * @notice Unregisters a revenue source. Budget already accrued from it stays.
      * @dev    Updates the budget first, capturing the source's surplus up to now, then subtracts its
      *         current total from the baseline so the remaining sources stay measured correctly.
-     *         Reverts if the source cannot be reached.
+     *         Reverts if any registered source cannot be reached, including the one being removed.
+     *         Sources are trusted to always respond with a sane value. In an unlikely scenario where
+     *         a source ever stops responding, buybacks are paused and the allocator is redeployed.
      * @param  source_ Revenue source to unregister.
      */
     function removeRevenueSource(
@@ -423,7 +425,8 @@ contract BuybackAllocator is AssetRecovererACL {
      *         budget update. Stays accurate however long ago that update was, so it is safe for
      *         off-chain monitoring.
      * @dev    Applies the same budget math and limits as a release, without changing state, so a
-     *         release reproduces this result. Reverts before activation.
+     *         release reproduces this result. Reverts before activation, or when any registered
+     *         source cannot be reached.
      * @return status Whether a release proceeds, or why it is skipped.
      * @return spendableUSD USD a release spends now.
      * @return spendableStEth stETH a release transfers now.
@@ -445,9 +448,7 @@ contract BuybackAllocator is AssetRecovererACL {
     /**
      * @notice Banks the surplus share of new revenue, less the accrued reserve, into the signed
      *         budget, then records the new revenue baseline and restarts the reserve.
-     * @dev    Runs even with no new revenue, so the budget can fall below zero. A source that reverts
-     *         once counts as zero that time and recovers next call, since each update measures only
-     *         the change since the last baseline.
+     * @dev    Runs even with no new revenue, so the budget can fall below zero.
      */
     function _checkpoint() internal {
         (int256 budgetDeltaUSD, uint256 totalRevenueUSD, uint256 reserveUSD) = _budgetable();
@@ -765,25 +766,14 @@ contract BuybackAllocator is AssetRecovererACL {
 
     /**
      * @notice Sums revenue across all sources. Reverts if any cannot be reached.
-     * @return revenueSumUSD Total revenue across all sources in USD.
-     */
-    function _revenueSumStrictUSD() internal view returns (uint256 revenueSumUSD) {
-        address[] memory sources = _revenueSources.values();
-        for (uint256 i; i < sources.length; ++i) {
-            revenueSumUSD += IRevenueSource(sources[i]).getCumulativeRevenueUSD();
-        }
-    }
-
-    /**
-     * @notice Sums revenue across all sources. A reverting source counts as zero.
+     * @dev    Sources are trusted, so a source that cannot be reached makes the read revert rather
+     *         than count as zero.
      * @return revenueSumUSD Total revenue across all sources in USD.
      */
     function _revenueSumUSD() internal view returns (uint256 revenueSumUSD) {
         address[] memory sources = _revenueSources.values();
         for (uint256 i; i < sources.length; ++i) {
-            try IRevenueSource(sources[i]).getCumulativeRevenueUSD() returns (uint256 revenue) {
-                revenueSumUSD += revenue;
-            } catch {}
+            revenueSumUSD += IRevenueSource(sources[i]).getCumulativeRevenueUSD();
         }
     }
 
