@@ -18,6 +18,7 @@ import {ICurvePool} from "../interfaces/ICurvePool.sol";
 import {IStonks} from "../interfaces/IStonks.sol";
 import {IOwnable} from "../interfaces/IOwnable.sol";
 import {IOrder} from "../interfaces/IOrder.sol";
+import {IAssetRecoverer} from "../interfaces/IAssetRecoverer.sol";
 
 /**
  * @title BuybackExecutor
@@ -123,7 +124,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     ///         1,000,000 USD of pool TVL scaled to 1e18.
     uint256 public constant MAX_POOL_BOOTSTRAP_MIN_TVL_USD = 1_000_000 * 1e18;
 
-    /// @notice Minimum residual stETH on a swept order worth recovering.
+    /// @notice Minimum residual stETH that is possible to recover from a swept order or a replaced Stonks.
     uint256 public constant MIN_ORDER_RESIDUAL_TO_RECOVER = 10;
 
     /*//////////////////////////////////////////////////////////////
@@ -236,6 +237,8 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     event AllocationProcessed(address indexed stonks, uint256 freeStEth, uint256 forwardedToStonks);
     event StaleOrderCleared(address indexed order);
     event OrderAbandoned(address indexed order, uint256 validTo);
+    event LastOrderCancelled(address indexed order);
+    event PreviousStonksStEthRecovered(address indexed previousStonks, uint256 stEthAmount);
 
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
@@ -272,6 +275,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     error InvalidStonksReceiver(address stonks, address receiver);
     error InvalidStonksTokenPair(address tokenFrom, address tokenTo);
     error InvalidStonksManager(address manager);
+    error NoTrackedOrder();
 
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
@@ -353,13 +357,12 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     /**
      * @notice Deposits held LDO and stETH into the Curve pool, balanced to equal USD value.
      *         The stETH portion is wrapped to wstETH before deposit.
-     * @dev    Permissionless. `_evaluateAddLiquidityGates` enforces eligibility and the value bounds.
-     *         To avoid large deposits, at most `maxDepositValueUsd` can be  deposited in one call
-     *         and it reverts below `minDepositValueUsd` to prevent dust deposits.
-     *         So a large balance is split and added over several calls.
-     *         Asset that holds more USD value keeps its surplus for the deposit on the next call.
-     *         Pool to Market price divergence is enforced only when the pool TVL is at or above `poolBootstrapMinTvlUsd`.
-     *         This allows a shallow pool to bootstrap its EMA. Otherwise the first deposits into a shallow pool are deadlocked.
+     * @dev    Permissionless. `_evaluateAddLiquidityGates` enforces eligibility and the value
+     *         bounds. One call deposits at most `maxDepositValueUsd` and reverts below
+     *         `minDepositValueUsd`, so a large balance is split across several calls and the
+     *         heavier-USD asset carries its surplus to the next call. Pool-EMA vs oracle
+     *         divergence is enforced only once the pool TVL reaches `poolBootstrapMinTvlUsd`,
+     *         so a shallow pool can bootstrap its EMA out of the deposit deadlock.
      * @return lpTokensMinted LP tokens minted by the pool.
      */
     function addLiquidity() external nonReentrant whenNotPaused returns (uint256 lpTokensMinted) {
@@ -408,10 +411,12 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
      * @notice Burns LP tokens, unwraps the wstETH, and sends LDO and stETH to the treasury.
      * @dev    Callable while paused. Balanced removal returns both pool coins in proportion to
      *         reserves. The caller-supplied floors guard against an unfavorable mix when the pool
-     *         is imbalanced or sandwiched, set by the committee from the current pool state.
+     *         is imbalanced or sandwiched, set by the committee from the current pool state. The
+     *         pool enforces the floors on partial withdrawals only. A withdrawal of the entire LP
+     *         supply returns the full reserves and skips the floor checks.
      * @param  lpAmount_ LP tokens to burn. Non-zero and at most the held balance.
-     * @param  minLdoAmount_ Minimum LDO to withdraw. The pool reverts below this floor.
-     * @param  minWstEthAmount_ Minimum wstETH to withdraw before unwrap. The pool reverts below this floor.
+     * @param  minLdoAmount_ Minimum LDO to withdraw. Pool-enforced on partial withdrawals only.
+     * @param  minWstEthAmount_ Minimum wstETH to withdraw before unwrap. Pool-enforced on partial withdrawals only.
      * @return ldoAmount LDO withdrawn from the pool.
      * @return stEthAmount stETH withdrawn after unwrap.
      */
@@ -512,8 +517,21 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
 
     /**
      * @notice Sets the active Stonks and derives the operating mode from its receiver.
+     * @dev    The new Stonks must sell stETH for LDO with this contract as its manager. Governance
+     *         confirms the deployed contract at `stonks_` before this call, on top of the receiver,
+     *         token pair, and manager checks enforced here. Switching disconnects this contract from
+     *         the previous Stonks. An expired tracked order is swept
+     *         and its residual recovered to the previous Stonks. A live order survives the sweep and
+     *         is abandoned, recorded by `OrderAbandoned`. Anyone can call its `recoverTokenFrom`
+     *         after expiry to return the stETH to the previous Stonks. In LP mode an abandoned order
+     *         no longer reserves stETH against new allocations, so pause allocations and recover it
+     *         before switching. Loose stETH on the previous Stonks, including the swept residual,
+     *         is recovered to its agent. The recovery is skipped when this contract is no longer
+     *         its manager, so a manager change does not block the switch. An LP to treasury switch
+     *         frees the pairing stETH reserved against held LDO for sale and leaves the LDO on
+     *         this contract, so recover the LDO before switching.
      * @param  stonks_ New Stonks address. LP mode when its receiver is this contract, treasury
-     *         mode when it is `TREASURY`.
+     *         mode when it is `TREASURY`. Any other receiver reverts.
      */
     function setStonks(address stonks_) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
         _setStonks(stonks_);
@@ -563,6 +581,26 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
      */
     function unpauseStonksSignatures() external onlyRole(EMERGENCY_ROLE) {
         stonks.unpauseSignatures();
+    }
+
+    /**
+     * @notice Cancels the tracked order as its manager, revoking the relayer allowance and
+     *         returning its stETH to the active Stonks, then clears the order slot so a
+     *         replacement can be placed immediately.
+     * @dev    Callable while paused. Restores placement liveness when the tracked order turns
+     *         unfillable before `lastOrderValidTo`.
+     */
+    function cancelLastOrder() external nonReentrant onlyRole(EMERGENCY_ROLE) {
+        address trackedOrderAddress = lastOrderAddress;
+        if (trackedOrderAddress == address(0)) {
+            revert NoTrackedOrder();
+        }
+
+        _setLastOrderTrackingData(address(0), 0);
+
+        emit LastOrderCancelled(trackedOrderAddress);
+
+        IOrder(trackedOrderAddress).emergencyCancelAndReturn();
     }
 
     /**
@@ -841,17 +879,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     }
 
     /**
-     * @notice Internal mode swap shared by the constructor and the external setter. Derives the
-     *         operating mode from the new Stonks's receiver.
-     * @dev    The new Stonks must sell stETH for LDO with this contract as its manager. Switching
-     *         disconnects this contract from the previous Stonks. An expired tracked order is swept
-     *         and its residual recovered to the previous Stonks. A live order survives the sweep and
-     *         is abandoned, recorded by `OrderAbandoned`; anyone can call its `recoverTokenFrom`
-     *         after expiry to return the stETH to the previous Stonks. In LP mode an abandoned order
-     *         no longer reserves stETH against new allocations, so pause allocations and recover it
-     *         before switching.
-     * @param  stonks_ New Stonks address. LP mode when its receiver is this contract, treasury
-     *         mode when it is `TREASURY`. Any other receiver reverts.
+     * @notice Mode swap shared by the constructor and `setStonks`. See `setStonks` for the
+     *         switch semantics.
+     * @param  stonks_ New Stonks address.
      */
     function _setStonks(address stonks_) internal {
         if (stonks_ == address(0)) {
@@ -896,6 +926,24 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         }
 
         _setLastOrderTrackingData(address(0), 0);
+
+        // Loose stETH on the previous Stonks, including the residual returned by the sweep above,
+        // drops out of the automated flow after the switch. Recover it to the Stonks agent. Skip
+        // when this contract is no longer its manager, so a manager change does not block the switch.
+        if (previousStonks != address(0)) {
+            uint256 previousStonksStEthBalance = STETH.balanceOf(previousStonks);
+            if (
+                previousStonksStEthBalance >= MIN_ORDER_RESIDUAL_TO_RECOVER &&
+                IOwnable(previousStonks).manager() == address(this)
+            ) {
+                emit PreviousStonksStEthRecovered(previousStonks, previousStonksStEthBalance);
+
+                IAssetRecoverer(previousStonks).recoverERC20(
+                    address(STETH),
+                    previousStonksStEthBalance
+                );
+            }
+        }
 
         emit StonksAndOperatingModeSet(
             previousStonks,
@@ -1092,7 +1140,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
 
         // The gate blocks only a deep pool past tolerance. Within tolerance the deposit is eligible
         // at any depth, and short-circuiting skips the pool TVL reads. A shallow pool bypasses the
-        // gate, since a stale EMA cannot converge without the deposits it would otherwise block.
+        // gate so its stale EMA can converge as deposits arrive.
         status = divergenceBps > poolPriceDivergenceToleranceBps &&
             _poolTvlUsd(ldoUsdPrice, stEthUsdPrice) >= poolBootstrapMinTvlUsd
             ? AddLiquidityStatus.PoolPriceDivergenceTooHigh

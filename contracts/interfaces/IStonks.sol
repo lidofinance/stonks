@@ -32,6 +32,7 @@ interface IStonks {
         uint256 sellAmount_,
         uint256 minBuyAmount_
     ) external returns (address);
+
     function pauseCreation() external;
 
     function unpauseCreation() external;

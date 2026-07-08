@@ -255,7 +255,9 @@ contract BuybackAllocator is IBuybackAllocator, AssetRecovererACL {
     /**
      * @notice Activates the contract once. Records current total revenue as the baseline, so only
      *         later revenue funds the budget, and starts the daily reserve accruing.
-     * @dev    Reverts if any registered source cannot be reached.
+     * @dev    Reverts if any registered source cannot be reached. The baseline captures each
+     *         source's cumulative now, so pending unconverted revenue settled after activation
+     *         surfaces as new surplus above the baseline. Settle each source before activating.
      */
     function activate() external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (activationTS != 0) {
@@ -280,7 +282,7 @@ contract BuybackAllocator is IBuybackAllocator, AssetRecovererACL {
 
     /**
      * @notice Updates the budget, then sends the amount available now to the receiver. When nothing
-     *         is eligible it emits a skip event and returns; the budget update still applies, so any
+     *         is eligible it emits a skip event and returns. The budget update still applies, so any
      *         caller advances the accounting even when no transfer happens.
      */
     function allocate() external nonReentrant whenActivated {
@@ -335,6 +337,10 @@ contract BuybackAllocator is IBuybackAllocator, AssetRecovererACL {
 
     /**
      * @notice Sets the per-day spending cap. Applies to the window in progress.
+     * @dev    The cap limits spend per window, so a release near one boundary plus a release just
+     *         after the reset lets a rolling day exceed a single cap. The yearly cap bounds the
+     *         total, and the executor paces actual sales through one live order limited to
+     *         `maxAllowedOrderAmount`.
      * @param  dailyCapUSD_ New per-day spending cap in USD.
      */
     function setDailyCapUSD(uint256 dailyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -379,9 +385,11 @@ contract BuybackAllocator is IBuybackAllocator, AssetRecovererACL {
      * @notice Registers a revenue source. Its current total is added to the baseline, so only its
      *         later earnings fund the budget.
      * @dev    Updates the budget first, banking revenue earned up to now, then adds the source's
-     *         current total to the baseline. Sources are trusted to report accurate USD totals (18
-     *         decimals) that only go up. Reverts if the source does not support the required
-     *         interface, or if it or any registered source cannot be reached.
+     *         current total to the baseline. The baseline captures only converted cumulative revenue,
+     *         so settle the source's pending revenue before registering, or that pre-baseline amount
+     *         later banks as surplus. Sources are trusted to report accurate USD totals (18 decimals)
+     *         that only go up. Reverts if the source does not support the required interface, or if it
+     *         or any registered source cannot be reached.
      * @param  source_ Revenue source to register.
      */
     function addRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
@@ -693,8 +701,8 @@ contract BuybackAllocator is IBuybackAllocator, AssetRecovererACL {
      * @notice The signed budget change applied now, and the revenue total recorded as the new
      *         baseline. Change is (total revenue - baseline - reserve) * surplus share, and can be
      *         negative since the signed budget absorbs it.
-     * @dev    The reserve sits inside the share-weighted term on purpose, so only the surplus share
-     *         of revenue net of reserve is taken. This is intended, not a missing full subtraction.
+     * @dev    The reserve sits inside the share-weighted term, so only the surplus share of revenue
+     *         net of reserve is taken.
      * @return budgetDeltaUSD Signed budget change in USD.
      * @return totalRevenueUSD New revenue baseline in USD.
      * @return reserveUSD Reserve accrued since the last update in USD.
