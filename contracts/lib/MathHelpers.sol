@@ -11,10 +11,10 @@ library MathHelpers {
     /**
      * @dev Unsigned saturating subtraction, bounds to zero on underflow.
      */
-    function saturatingSub(uint256 a, uint256 b) internal pure returns (uint256) {
+    function saturatingSub(uint256 a_, uint256 b_) internal pure returns (uint256) {
         unchecked {
-            uint256 c = a - b;
-            bool success = c <= a;
+            uint256 c = a_ - b_;
+            bool success = c <= a_;
             uint256 result = c * _toUint(success);
 
             return result;
@@ -24,9 +24,9 @@ library MathHelpers {
     /**
      * @dev Cast a boolean (false or true) to a uint256 (0 or 1) with no jump.
      */
-    function _toUint(bool b) internal pure returns (uint256 u) {
+    function _toUint(bool b_) internal pure returns (uint256 u) {
         assembly ("memory-safe") {
-            u := iszero(iszero(b))
+            u := iszero(iszero(b_))
         }
     }
 }

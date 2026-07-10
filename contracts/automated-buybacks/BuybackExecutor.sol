@@ -526,7 +526,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
      *         after expiry to return the stETH to the previous Stonks. In LP mode an abandoned order
      *         no longer reserves stETH against new allocations, so pause allocations and recover it
      *         before switching. Loose stETH on the previous Stonks, including the swept residual,
-     *         is recovered to its agent. The recovery is skipped when this contract is no longer
+     *         is recovered to treasury. The recovery is skipped when this contract is no longer
      *         its manager, so a manager change does not block the switch. An LP to treasury switch
      *         frees the pairing stETH reserved against held LDO for sale and leaves the LDO on
      *         this contract, so recover the LDO before switching.
@@ -928,7 +928,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         _setLastOrderTrackingData(address(0), 0);
 
         // Loose stETH on the previous Stonks, including the residual returned by the sweep above,
-        // drops out of the automated flow after the switch. Recover it to the Stonks agent. Skip
+        // drops out of the automated flow after the switch. Recover it to the Stonks AGENT (TREASURY). Skip
         // when this contract is no longer its manager, so a manager change does not block the switch.
         if (previousStonks != address(0)) {
             uint256 previousStonksStEthBalance = STETH.balanceOf(previousStonks);
