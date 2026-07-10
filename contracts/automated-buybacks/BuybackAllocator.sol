@@ -337,10 +337,10 @@ contract BuybackAllocator is IBuybackAllocator, AssetRecovererACL {
 
     /**
      * @notice Sets the per-day spending cap. Applies to the window in progress.
-     * @dev    The cap limits spend per window, so a release near one boundary plus a release just
-     *         after the reset lets a rolling day exceed a single cap. The yearly cap bounds the
-     *         total, and the executor paces actual sales through one live order limited to
-     *         `maxAllowedOrderAmount`.
+     * @dev    The daily cap is enforced over a fixed window from midnight to midnight UTC. The window
+     *         resets at midnight, so a caller can spend the full cap just before midnight and the full
+     *         cap again in the next block, close to twice the daily cap within seconds. The yearly cap
+     *         and the remaining budget still bound the total.
      * @param  dailyCapUSD_ New per-day spending cap in USD.
      */
     function setDailyCapUSD(uint256 dailyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {

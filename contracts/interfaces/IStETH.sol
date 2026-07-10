@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
+// SPDX-FileCopyrightText: 2025 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 

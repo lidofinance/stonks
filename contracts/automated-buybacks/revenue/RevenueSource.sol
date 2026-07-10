@@ -14,8 +14,7 @@ import {IRevenueSource} from "../../interfaces/IRevenueSource.sol";
  *         registrable by consumers (e.g. `BuybackAllocator`) without re-declaring it. Children
  *         that expose extra interfaces override `supportsInterface` and chain through `super`.
  * @dev    Every source must stay monotonic, always-live, and fully settled: the cumulative only
- *         grows, `getCumulativeRevenueUSD` never reverts.
- *.        `BuybackAllocator` budget integrity rests on these properties.
+ *         grows, `getCumulativeRevenueUSD` never reverts. `BuybackAllocator` budget integrity rests on these properties.
  */
 abstract contract RevenueSource is IRevenueSource {
     /*//////////////////////////////////////////////////////////////
