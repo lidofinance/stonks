@@ -12,7 +12,7 @@ import { AssetRecovererACLHarness, AssetRecovererACLHarness__factory } from '../
 
 const contracts = getContracts()
 
-const MANAGER_ROLE = ethers.id('NEST.MANAGER_ROLE')
+const MANAGER_ROLE = ethers.id('Buybacks.MANAGER_ROLE')
 const RECOVERY_AMOUNT = parseEther('10')
 
 // stETH transfers move shares and lose up to 1 wei each. Funding then recovery is two transfers.

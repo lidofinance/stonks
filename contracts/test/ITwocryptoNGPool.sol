@@ -17,6 +17,11 @@ interface ITwocryptoNGPool is IERC20 {
         uint256 min_mint_amount
     ) external returns (uint256);
 
+    function remove_liquidity(
+        uint256 amount,
+        uint256[2] calldata min_amounts
+    ) external returns (uint256[2] memory withdrawn);
+
     function exchange(
         uint256 i,
         uint256 j,

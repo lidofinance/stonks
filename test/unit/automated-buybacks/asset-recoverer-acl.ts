@@ -9,7 +9,7 @@ import {
   ERC_20__factory,
 } from '../../../typechain-types'
 
-const MANAGER_ROLE = ethers.id('NEST.MANAGER_ROLE')
+const MANAGER_ROLE = ethers.id('Buybacks.MANAGER_ROLE')
 const DEFAULT_ADMIN_ROLE = ethers.ZeroHash
 
 const ONE_ETHER = 10n ** 18n
@@ -100,7 +100,7 @@ describe('AssetRecovererACL', function () {
       ).to.be.revertedWithCustomError(assetRecovererACL, 'InvalidTreasuryAddress')
     })
 
-    it('should expose MANAGER_ROLE as keccak256("NEST.MANAGER_ROLE") with no members at deploy', async function () {
+    it('should expose MANAGER_ROLE as keccak256("BuybacksMANAGER_ROLE") with no members at deploy', async function () {
       const { assetRecovererACL } = await loadFixture(deployFixture)
 
       expect(await assetRecovererACL.MANAGER_ROLE()).to.equal(MANAGER_ROLE)

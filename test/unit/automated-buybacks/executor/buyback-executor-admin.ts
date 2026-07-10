@@ -12,6 +12,7 @@ import {
   placeTrackedOrder,
   expireOrder,
   recoverTokenFromCalls,
+  emergencyCancelAndReturnCalls,
   PRICE_UNIT,
   DEFAULT_BOUNDS,
   DEFAULT_ORDER_DURATION,
@@ -50,6 +51,11 @@ const SWAPPED_ORDER_DURATION = 7200n
 // Residual stETH left on a swept order, above the 10 wei recovery threshold.
 const ORDER_RESIDUAL = 1000n
 
+// MIN_ORDER_RESIDUAL_TO_RECOVER, mirrored from BuybackExecutor: the drain threshold.
+const MIN_RESIDUAL = 10n
+// Loose stETH stranded on a replaced Stonks, well above the recovery threshold.
+const LOOSE_STETH = 5n * PRICE_UNIT
+
 async function deployStonks(
   ctx: BuybackContext,
   receiver: string,
@@ -61,14 +67,14 @@ async function deployStonks(
 }
 
 describe('BuybackExecutor — admin, mode, setters', function () {
-  describe('#setStonksAndOperatingMode', function () {
+  describe('#setStonks', function () {
     it('should revert for a non-DEFAULT_ADMIN_ROLE caller', async function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
       const strangerAddress = await ctx.signers.stranger.getAddress()
       const newStonks = await deployStonks(ctx, await ctx.buybackExecutor.getAddress())
 
       await expect(
-        ctx.buybackExecutor.connect(ctx.signers.stranger).setStonksAndOperatingMode(newStonks)
+        ctx.buybackExecutor.connect(ctx.signers.stranger).setStonks(newStonks)
       ).to.be.revertedWith(missingRoleMessage(strangerAddress, DEFAULT_ADMIN_ROLE))
     })
 
@@ -76,7 +82,7 @@ describe('BuybackExecutor — admin, mode, setters', function () {
       const ctx = await loadFixture(deployBuybackExecutorWithStubs)
 
       await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(ZERO_ADDRESS)
+        ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(ZERO_ADDRESS)
       ).to.be.revertedWithCustomError(ctx.buybackExecutor, 'InvalidStonksAddress')
     })
 
@@ -85,9 +91,7 @@ describe('BuybackExecutor — admin, mode, setters', function () {
       const strangerAddress = await ctx.signers.stranger.getAddress()
       const newStonks = await deployStonks(ctx, strangerAddress)
 
-      await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
-      )
+      await expect(ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks))
         .to.be.revertedWithCustomError(ctx.buybackExecutor, 'InvalidStonksReceiver')
         .withArgs(newStonks, strangerAddress)
     })
@@ -101,9 +105,7 @@ describe('BuybackExecutor — admin, mode, setters', function () {
         tokenFrom: strangerAddress,
       })
 
-      await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
-      )
+      await expect(ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks))
         .to.be.revertedWithCustomError(ctx.buybackExecutor, 'InvalidStonksTokenPair')
         .withArgs(strangerAddress, ldoAddress)
     })
@@ -117,9 +119,7 @@ describe('BuybackExecutor — admin, mode, setters', function () {
         tokenTo: strangerAddress,
       })
 
-      await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
-      )
+      await expect(ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks))
         .to.be.revertedWithCustomError(ctx.buybackExecutor, 'InvalidStonksTokenPair')
         .withArgs(stEthAddress, strangerAddress)
     })
@@ -132,9 +132,7 @@ describe('BuybackExecutor — admin, mode, setters', function () {
         manager: strangerAddress,
       })
 
-      await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
-      )
+      await expect(ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks))
         .to.be.revertedWithCustomError(ctx.buybackExecutor, 'InvalidStonksManager')
         .withArgs(strangerAddress)
     })
@@ -144,7 +142,7 @@ describe('BuybackExecutor — admin, mode, setters', function () {
       const executorAddress = await ctx.buybackExecutor.getAddress()
       const newStonks = await deployStonks(ctx, executorAddress, SWAPPED_ORDER_DURATION)
 
-      await ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
+      await ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks)
 
       expect(await ctx.buybackExecutor.lpModeEnabled()).to.equal(true)
       expect(await ctx.buybackExecutor.stonks()).to.equal(newStonks)
@@ -158,7 +156,7 @@ describe('BuybackExecutor — admin, mode, setters', function () {
       const treasuryAddress = await ctx.signers.treasury.getAddress()
       const newStonks = await deployStonks(ctx, treasuryAddress)
 
-      await ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
+      await ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks)
 
       expect(await ctx.buybackExecutor.lpModeEnabled()).to.equal(false)
       expect(await ctx.buybackExecutor.stonks()).to.equal(newStonks)
@@ -171,9 +169,7 @@ describe('BuybackExecutor — admin, mode, setters', function () {
       await expireOrder(ctx)
       const newStonks = await deployStonks(ctx, await ctx.buybackExecutor.getAddress())
 
-      await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
-      )
+      await expect(ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks))
         .to.emit(ctx.buybackExecutor, 'StaleOrderCleared')
         .withArgs(orderAddress)
 
@@ -187,9 +183,7 @@ describe('BuybackExecutor — admin, mode, setters', function () {
       const validTo = await ctx.buybackExecutor.lastOrderValidTo()
       const newStonks = await deployStonks(ctx, await ctx.buybackExecutor.getAddress())
 
-      await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
-      )
+      await expect(ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks))
         .to.emit(ctx.buybackExecutor, 'OrderAbandoned')
         .withArgs(orderAddress, validTo)
 
@@ -206,9 +200,7 @@ describe('BuybackExecutor — admin, mode, setters', function () {
 
       // Passing the current Stonks hits the address(stonks) short-circuit, so the sweep never runs
       // and the expired order survives untouched.
-      const tx = await ctx.buybackExecutor
-        .connect(ctx.signers.admin)
-        .setStonksAndOperatingMode(sameStonks)
+      const tx = await ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(sameStonks)
       await expect(tx).to.not.emit(ctx.buybackExecutor, 'StonksAndOperatingModeSet')
       await expect(tx).to.not.emit(ctx.buybackExecutor, 'StaleOrderCleared')
 
@@ -223,11 +215,127 @@ describe('BuybackExecutor — admin, mode, setters', function () {
       const treasuryAddress = await ctx.signers.treasury.getAddress()
       const newStonks = await deployStonks(ctx, treasuryAddress)
 
-      await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonks)
-      )
+      await expect(ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks))
         .to.emit(ctx.buybackExecutor, 'StonksAndOperatingModeSet')
         .withArgs(previousStonks, newStonks, true, false)
+    })
+
+    it('should drain loose stETH from the previous Stonks to its agent on the switch', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const previousStonks = await ctx.stubs.stonks.getAddress()
+      const agentAddress = await ctx.signers.treasury.getAddress()
+      // Loose stETH stranded on the previous Stonks, well above the recovery threshold.
+      await ctx.stubs.stEth.connect(ctx.signers.admin).mint(previousStonks, LOOSE_STETH)
+      const newStonks = await deployStonks(ctx, await ctx.buybackExecutor.getAddress())
+
+      await expect(ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks))
+        .to.emit(ctx.buybackExecutor, 'PreviousStonksStEthRecovered')
+        .withArgs(previousStonks, LOOSE_STETH)
+
+      // The StonksStub forwards its recovered balance to the configured agent.
+      expect(await ctx.stubs.stEth.balanceOf(previousStonks)).to.equal(0n)
+      expect(await ctx.stubs.stEth.balanceOf(agentAddress)).to.equal(LOOSE_STETH)
+    })
+
+    it('should recover at the minimum residual boundary', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const previousStonks = await ctx.stubs.stonks.getAddress()
+      await ctx.stubs.stEth.connect(ctx.signers.admin).mint(previousStonks, MIN_RESIDUAL)
+      const newStonks = await deployStonks(ctx, await ctx.buybackExecutor.getAddress())
+
+      await expect(ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks))
+        .to.emit(ctx.buybackExecutor, 'PreviousStonksStEthRecovered')
+        .withArgs(previousStonks, MIN_RESIDUAL)
+    })
+
+    it('should skip the drain when the previous Stonks balance is one wei below the threshold', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const previousStonks = await ctx.stubs.stonks.getAddress()
+      const belowThreshold = MIN_RESIDUAL - 1n
+      await ctx.stubs.stEth.connect(ctx.signers.admin).mint(previousStonks, belowThreshold)
+      const newStonks = await deployStonks(ctx, await ctx.buybackExecutor.getAddress())
+
+      await expect(
+        ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks)
+      ).to.not.emit(ctx.buybackExecutor, 'PreviousStonksStEthRecovered')
+
+      // The dust stays on the previous Stonks, untouched by the switch.
+      expect(await ctx.stubs.stEth.balanceOf(previousStonks)).to.equal(belowThreshold)
+    })
+
+    it('should skip the drain and still switch when this contract is no longer the previous manager', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const previousStonks = await ctx.stubs.stonks.getAddress()
+      const strangerAddress = await ctx.signers.stranger.getAddress()
+      await ctx.stubs.stEth.connect(ctx.signers.admin).mint(previousStonks, LOOSE_STETH)
+      // A manager change on the previous Stonks strips this contract's recovery rights.
+      await ctx.stubs.stonks.connect(ctx.signers.admin).setManager(strangerAddress)
+      const newStonks = await deployStonks(ctx, await ctx.buybackExecutor.getAddress())
+
+      const tx = await ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks)
+      await expect(tx).to.not.emit(ctx.buybackExecutor, 'PreviousStonksStEthRecovered')
+      // The switch itself still completes.
+      await expect(tx).to.emit(ctx.buybackExecutor, 'StonksAndOperatingModeSet')
+
+      expect(await ctx.stubs.stEth.balanceOf(previousStonks)).to.equal(LOOSE_STETH)
+      expect(await ctx.buybackExecutor.stonks()).to.equal(newStonks)
+    })
+  })
+
+  describe('#cancelLastOrder', function () {
+    it('should revert for a non-EMERGENCY_ROLE caller', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const strangerAddress = await ctx.signers.stranger.getAddress()
+
+      await expect(
+        ctx.buybackExecutor.connect(ctx.signers.stranger).cancelLastOrder()
+      ).to.be.revertedWith(missingRoleMessage(strangerAddress, EMERGENCY_ROLE))
+    })
+
+    it('should revert NoTrackedOrder when no order is tracked', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+
+      await expect(
+        ctx.buybackExecutor.connect(ctx.signers.emergency).cancelLastOrder()
+      ).to.be.revertedWithCustomError(ctx.buybackExecutor, 'NoTrackedOrder')
+    })
+
+    it('should cancel the tracked order, clear tracking, and emit LastOrderCancelled', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const orderAddress = await placeTrackedOrder(ctx)
+
+      await expect(ctx.buybackExecutor.connect(ctx.signers.emergency).cancelLastOrder())
+        .to.emit(ctx.buybackExecutor, 'LastOrderCancelled')
+        .withArgs(orderAddress)
+
+      expect(await ctx.buybackExecutor.lastOrderAddress()).to.equal(ZERO_ADDRESS)
+      expect(await ctx.buybackExecutor.lastOrderValidTo()).to.equal(0n)
+      expect(await emergencyCancelAndReturnCalls(orderAddress)).to.equal(1n)
+    })
+
+    it('should stay callable while paused', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const orderAddress = await placeTrackedOrder(ctx)
+      await ctx.buybackExecutor.connect(ctx.signers.emergency).pause()
+
+      await expect(ctx.buybackExecutor.connect(ctx.signers.emergency).cancelLastOrder())
+        .to.emit(ctx.buybackExecutor, 'LastOrderCancelled')
+        .withArgs(orderAddress)
+
+      expect(await emergencyCancelAndReturnCalls(orderAddress)).to.equal(1n)
+    })
+
+    it('should restore placement liveness so a replacement order can be placed', async function () {
+      const ctx = await loadFixture(deployBuybackExecutorWithStubs)
+      const cancelledOrder = await placeTrackedOrder(ctx)
+      await ctx.buybackExecutor.connect(ctx.signers.emergency).cancelLastOrder()
+
+      // The cleared slot lets a new order be placed immediately, without waiting for expiry.
+      await ctx.buybackExecutor.connect(ctx.signers.stranger).placeOrder()
+
+      const replacementOrder = await ctx.buybackExecutor.lastOrderAddress()
+      expect(replacementOrder).to.not.equal(ZERO_ADDRESS)
+      expect(replacementOrder).to.not.equal(cancelledOrder)
     })
   })
 
