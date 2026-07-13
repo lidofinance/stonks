@@ -17,15 +17,15 @@ const ORACLE_ROUTER = '0x79ef3a538200Fe4981D67E7e886bfb36D4Cb5a31'
 const CURVE_POOL_AND_TOKEN = '0xD7f1dA0a28E39dd0dB70E6Acdc2B49846AD22760'
 
 // Max pool-EMA vs oracle divergence, in (0, 1000]
-const POOL_PRICE_DIVERGENCE_TOLERANCE_BPS = 0n
+const POOL_PRICE_DIVERGENCE_TOLERANCE_BPS = 200n // 2%
 // stETH order bounds. minAllowedOrderAmount in (0, maxAllowedOrderAmount)
-const MIN_ALLOWED_ORDER_AMOUNT = 0n
-const MAX_ALLOWED_ORDER_AMOUNT = 0n
+const MIN_ALLOWED_ORDER_AMOUNT = ethers.parseEther('1') // 1 stETH
+const MAX_ALLOWED_ORDER_AMOUNT = ethers.parseEther('3') // 3 stETH
 // Per-call deposit value bounds, in 1e18-scaled USD. minDepositValueUsd in (0, maxDepositValueUsd)
-const MIN_DEPOSIT_VALUE_USD = 0n
-const MAX_DEPOSIT_VALUE_USD = 0n
+const MIN_DEPOSIT_VALUE_USD = ethers.parseEther('1000') // $1,000
+const MAX_DEPOSIT_VALUE_USD = ethers.parseEther('50000') // $50,000
 // Pool TVL (1e18-scaled USD) at/above which the divergence gate is enforced, in (0, 1_000_000e18]
-const POOL_BOOTSTRAP_MIN_TVL_USD = 0n
+const POOL_BOOTSTRAP_MIN_TVL_USD = ethers.parseEther('250000') // $250,000
 
 assert(ethers.isAddress(ADMIN), 'ADMIN is not a valid address')
 assert(ethers.isAddress(TREASURY), 'TREASURY is not a valid address')

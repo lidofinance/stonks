@@ -19,12 +19,40 @@ interface StonksConfig {
   receiver: string
 }
 
-const ADMIN = ''
-const AGENT = ''
-const STONKS_FACTORY = ''
-const AMOUNT_CONVERTER = ''
-const MANAGER_ADDRESS = ''
-const STONKS_CONFIGS: Record<string, StonksConfig> = {}
+const ADMIN = '0x2e59A20f205bB85a89C53f1936454680651E618e' // Aragon Voting
+const AGENT = '0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c' // Aragon Agent
+const STONKS_FACTORY = '' // TODO: deployed StonksFactory
+// ETH-anchored AmountConverter from Stonks V2 deploy
+const AMOUNT_CONVERTER = '0x70dA04C5D0f325F5AF1426dE6672BF2424B4593d'
+const MANAGER_ADDRESS = '' // TODO: deployed BuybackExecutor
+
+const STETH = '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84'
+const LDO = '0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32'
+
+const STONKS_CONFIGS: Record<string, StonksConfig> = {
+  // receiver == manager (the executor) => LP mode
+  buybackStonksLp: {
+    tokenFrom: STETH,
+    tokenTo: LDO,
+    orderDurationInSeconds: 1800n, // 30 min
+    marginBasisPoints: 110n, // 1.10%
+    priceToleranceInBasisPoints: 550n, // 5.50%
+    maxImprovementInBasisPoints: 1000n, // 10.00%
+    allowPartialFill: true,
+    receiver: MANAGER_ADDRESS,
+  },
+  // receiver == Aragon Agent => treasury mode, the launch instance
+  buybackStonksTreasury: {
+    tokenFrom: STETH,
+    tokenTo: LDO,
+    orderDurationInSeconds: 1800n, // 30 min
+    marginBasisPoints: 110n, // 1.10%
+    priceToleranceInBasisPoints: 550n, // 5.50%
+    maxImprovementInBasisPoints: 1000n, // 10.00%
+    allowPartialFill: true,
+    receiver: AGENT,
+  },
+}
 
 assert(ethers.isAddress(ADMIN), 'ADMIN is not a valid address')
 assert(ethers.isAddress(AGENT), 'AGENT is not a valid address')

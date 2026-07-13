@@ -18,12 +18,12 @@ const EXECUTOR = '' // TODO
 // USD limits are 1e18-scaled. Make sure that values below are consistent to deploy plan
 const DAILY_CAP_USD = ethers.parseEther('50000') // $50,000
 const YEARLY_CAP_USD = ethers.parseEther('10000000') // $10,000,000
-const RESERVE_DAILY_RATE_USD = ethers.parseEther('109589') // ~$109,589/day, TODO: confirm exact figure
+const RESERVE_DAILY_RATE_USD = ethers.parseEther('109589') // $109,589/day, $40M/yr baseline
 const SURPLUS_SHARE_BP = 5000n // 50%
 // Governance lever: 0 disables the stETH price floor
 const MIN_STETH_PRICE_USD = 0n
 // Dust floor per allocation
-const MIN_SPEND_PER_CALL_USD = 0n
+const MIN_SPEND_PER_CALL_USD = ethers.parseEther('1000') // $1,000
 
 const STAKING_REVENUE_SOURCE = '' // TODO
 // Sources registered at deployment. NEST launches with StakingRevenueSource as the only source
