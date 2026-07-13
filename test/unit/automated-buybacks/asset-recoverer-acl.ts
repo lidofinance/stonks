@@ -100,7 +100,7 @@ describe('AssetRecovererACL', function () {
       ).to.be.revertedWithCustomError(assetRecovererACL, 'InvalidTreasuryAddress')
     })
 
-    it('should expose MANAGER_ROLE as keccak256("BuybacksMANAGER_ROLE") with no members at deploy', async function () {
+    it('should expose MANAGER_ROLE as keccak256("Buybacks.MANAGER_ROLE") with no members at deploy', async function () {
       const { assetRecovererACL } = await loadFixture(deployFixture)
 
       expect(await assetRecovererACL.MANAGER_ROLE()).to.equal(MANAGER_ROLE)
