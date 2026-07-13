@@ -207,7 +207,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         address indexed caller,
         uint256 lpAmount,
         uint256 ldoAmount,
-        uint256 stEthAmount
+        uint256 wstEthAmount
     );
     event PoolPriceDivergenceToleranceBpsSet(
         uint256 previousPoolPriceDivergenceToleranceBps,
@@ -447,9 +447,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         ldoAmount = withdrawn[0];
         uint256 wstEthReceived = withdrawn[1];
 
-        stEthAmount = WSTETH.unwrap(wstEthReceived);
+        emit LiquidityRemoved(msg.sender, lpAmount_, ldoAmount, wstEthReceived);
 
-        emit LiquidityRemoved(msg.sender, lpAmount_, ldoAmount, stEthAmount);
+        stEthAmount = WSTETH.unwrap(wstEthReceived);
 
         LDO.safeTransfer(TREASURY, ldoAmount);
         IERC20(address(STETH)).safeTransfer(TREASURY, stEthAmount);

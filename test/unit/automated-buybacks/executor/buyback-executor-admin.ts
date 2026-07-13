@@ -255,9 +255,10 @@ describe('BuybackExecutor — admin, mode, setters', function () {
       await ctx.stubs.stEth.connect(ctx.signers.admin).mint(previousStonks, belowThreshold)
       const newStonks = await deployStonks(ctx, await ctx.buybackExecutor.getAddress())
 
-      await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks)
-      ).to.not.emit(ctx.buybackExecutor, 'PreviousStonksStEthRecovered')
+      await expect(ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonks)).to.not.emit(
+        ctx.buybackExecutor,
+        'PreviousStonksStEthRecovered'
+      )
 
       // The dust stays on the previous Stonks, untouched by the switch.
       expect(await ctx.stubs.stEth.balanceOf(previousStonks)).to.equal(belowThreshold)
