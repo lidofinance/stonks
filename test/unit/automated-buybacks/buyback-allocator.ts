@@ -824,6 +824,47 @@ describe('BuybackAllocator — accumulated budget', function () {
     })
   })
 
+  describe('revenueSources getter:', function () {
+    it('returns the sources registered at construction', async function () {
+      await deployAllocator()
+
+      expect(await allocator.revenueSources()).to.deep.equal([await source.getAddress()])
+    })
+
+    it('returns an empty array when constructed with no sources', async function () {
+      await deployAllocator()
+      const empty = await new BuybackAllocator__factory(admin).deploy(
+        await deployParams({ revenueSources: [] })
+      )
+
+      expect(await empty.revenueSources()).to.deep.equal([])
+    })
+
+    it('reflects a source added after construction', async function () {
+      await deployAllocator()
+      await activateWith(0n)
+      const extra = await new RevenueSourceStub__factory(admin).deploy()
+      const extraAddr = await extra.getAddress()
+      await allocator.addRevenueSource(extraAddr)
+
+      expect(await allocator.revenueSources()).to.deep.equal([await source.getAddress(), extraAddr])
+    })
+
+    it('omits a source removed after construction', async function () {
+      await deployAllocator()
+      await activateWith(0n)
+      const extra = await new RevenueSourceStub__factory(admin).deploy()
+      const extraAddr = await extra.getAddress()
+      await allocator.addRevenueSource(extraAddr)
+
+      // EnumerableSet.remove swaps the last element into the removed slot, so removing the first
+      // source leaves the later one in its place.
+      await allocator.removeRevenueSource(await source.getAddress())
+
+      expect(await allocator.revenueSources()).to.deep.equal([extraAddr])
+    })
+  })
+
   describe('price floor:', function () {
     it('skips the allocation when the stETH price is below the minimum', async function () {
       await deployAllocator({ share: SHARE_100 })

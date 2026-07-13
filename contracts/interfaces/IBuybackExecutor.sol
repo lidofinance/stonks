@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.23;
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity ^0.8.0;
 
 /**
  * @title IBuybackExecutor
@@ -22,7 +22,7 @@ interface IBuybackExecutor {
 
     function onStEthAllocated() external;
 
-    function setStonksAndOperatingMode(address stonks_) external;
+    function setStonks(address stonks_) external;
 
     function placeOrder() external returns (address newOrder);
 

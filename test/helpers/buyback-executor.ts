@@ -1,5 +1,5 @@
 import { ethers, network } from 'hardhat'
-import { Contract, Signer } from 'ethers'
+import { Contract, Signer, Log } from 'ethers'
 import { impersonateAccount, setBalance, time } from '@nomicfoundation/hardhat-network-helpers'
 
 import {
@@ -21,8 +21,8 @@ import {
   IERC20__factory,
   IWstETH,
   IWstETH__factory,
-  ICurvePool,
-  ICurvePool__factory,
+  ITwocryptoNGPool,
+  ITwocryptoNGPool__factory,
   IStETH__factory,
 } from '../../typechain-types'
 import { getContracts } from '../../utils/contracts'
@@ -31,9 +31,9 @@ import { deployAndConfigureOracleRouter } from '../../utils/oracle-router'
 // --- Scales and roles ---
 
 export const PRICE_UNIT = 10n ** 18n
-export const ALLOCATOR_ROLE = ethers.id('NEST.BuybackExecutor.ALLOCATOR_ROLE')
-export const EMERGENCY_ROLE = ethers.id('NEST.BuybackExecutor.EMERGENCY_ROLE')
-export const MANAGER_ROLE = ethers.id('NEST.MANAGER_ROLE')
+export const ALLOCATOR_ROLE = ethers.id('Buybacks.BuybackExecutor.ALLOCATOR_ROLE')
+export const EMERGENCY_ROLE = ethers.id('Buybacks.BuybackExecutor.EMERGENCY_ROLE')
+export const MANAGER_ROLE = ethers.id('Buybacks.MANAGER_ROLE')
 export const DEFAULT_ADMIN_ROLE = ethers.ZeroHash
 
 // OZ v4.9.3 `onlyRole` reverts with this exact string; addresses and roles render lowercase.
@@ -160,7 +160,6 @@ export interface InitParams {
   minDepositValueUsd: bigint
   maxDepositValueUsd: bigint
   poolBootstrapMinTvlUsd: bigint
-  stonks: string
 }
 
 interface CoreOverrides {
@@ -205,7 +204,6 @@ export async function buildInitParams(
     ldo: await stubs.ldo.getAddress(),
     oracleRouter: await stubs.oracle.getAddress(),
     curvePoolAndToken: await stubs.pool.getAddress(),
-    stonks: await stubs.stonks.getAddress(),
     ...DEFAULT_BOUNDS,
     ...overrides,
   }
@@ -242,6 +240,8 @@ async function deployBuybackExecutorCore(overrides: CoreOverrides = {}): Promise
   await stubs.stonks.connect(admin).setReceiver(receiver)
   // The constructor requires the executor to be the Stonks manager, in both modes.
   await stubs.stonks.connect(admin).setManager(predictedExecutorAddress)
+  // Mirrors the real Stonks agent, the sink for stETH recovered when the executor replaces it.
+  await stubs.stonks.connect(admin).setAgent(await treasury.getAddress())
 
   const params = await buildInitParams(stubs, signers, overrides.initParams)
   const buybackExecutor = await new BuybackExecutorHarness__factory(deployer).deploy(params)
@@ -250,6 +250,10 @@ async function deployBuybackExecutorCore(overrides: CoreOverrides = {}): Promise
   if ((await buybackExecutor.getAddress()) !== predictedExecutorAddress) {
     throw new Error('executor address prediction missed; a deployer tx slipped in before deploy')
   }
+
+  // The constructor leaves Stonks unset; `setStonks` wires it and derives the operating mode from
+  // the receiver configured above.
+  await buybackExecutor.connect(admin).setStonks(await stubs.stonks.getAddress())
 
   if (grantRoles) {
     await buybackExecutor.connect(admin).grantRole(ALLOCATOR_ROLE, await allocator.getAddress())
@@ -356,6 +360,11 @@ export function recoverTokenFromCalls(orderAddress: string): Promise<bigint> {
   return OrderStub__factory.connect(orderAddress, ethers.provider).recoverTokenFromCalls()
 }
 
+// Number of emergencyCancelAndReturn calls an OrderStub recorded.
+export function emergencyCancelAndReturnCalls(orderAddress: string): Promise<bigint> {
+  return OrderStub__factory.connect(orderAddress, ethers.provider).emergencyCancelAndReturnCalls()
+}
+
 // Deploys a fresh StonksStub for the swap-in tests. Defaults to the stETH/LDO pair, this executor
 // as manager, and the default order duration, the wiring the executor's validation requires.
 // Each field is overridable so a test can drive a single validation revert.
@@ -383,6 +392,7 @@ export async function deployStonksStub(
   await stonks
     .connect(ctx.signers.admin)
     .setManager(options.manager ?? (await ctx.buybackExecutor.getAddress()))
+  await stonks.connect(ctx.signers.admin).setAgent(await ctx.signers.treasury.getAddress())
   return stonks
 }
 
@@ -453,7 +463,7 @@ export interface ForkBuybackContext {
   buybackExecutor: BuybackExecutorHarness
   harness: BuybackExecutorHarness
   oracle: OracleRouter
-  pool: ICurvePool
+  pool: ITwocryptoNGPool
   ldo: IERC20
   stEth: Contract
   wstEth: IWstETH
@@ -464,10 +474,14 @@ export interface ForkBuybackContext {
 }
 
 export interface ForkSetupOptions {
+  // wstETH-denominated depth of the initial balanced seed. Zero leaves the pool empty so a test can
+  // drive the first deposit.
   seedWstEth?: bigint
   // Pool initial_price relative to the oracle ratio, in basis points. 10000 sits on the oracle.
   priceSkewBps?: bigint
   bounds?: InitParamOverrides
+  // Points the StonksStub receiver at the treasury so the executor runs in treasury mode.
+  treasuryMode?: boolean
 }
 
 function buildDeployPoolArgs(ldo: string, wstEth: string, initialPrice: bigint) {
@@ -561,11 +575,14 @@ export async function setupForkBuyback(
   const poolArgs = buildDeployPoolArgs(contracts.LDO, contracts.WSTETH, initialPrice)
   const poolAddress: string = await factory.deploy_pool.staticCall(...poolArgs)
   await (await factory.deploy_pool(...poolArgs)).wait()
-  const pool = ICurvePool__factory.connect(poolAddress, deployer)
+  const pool = ITwocryptoNGPool__factory.connect(poolAddress, deployer)
 
-  await ldo.approve(poolAddress, ldoForSeed)
-  await wstEth.approve(poolAddress, seedWstEth)
-  await (await pool.add_liquidity([ldoForSeed, seedWstEth], 1n)).wait()
+  // An empty seed leaves the pool unseeded so a test can drive the first deposit itself.
+  if (seedWstEth > 0n) {
+    await ldo.approve(poolAddress, ldoForSeed)
+    await wstEth.approve(poolAddress, seedWstEth)
+    await (await pool.add_liquidity([ldoForSeed, seedWstEth], 1n)).wait()
+  }
 
   // Predict the executor address now that every deployer-funded tx is done, then wire the StonksStub
   // receiver and manager to it before the executor deploys.
@@ -575,7 +592,9 @@ export async function setupForkBuyback(
   })
 
   const stonks = await new StonksStub__factory(admin).deploy()
-  await stonks.connect(admin).setReceiver(predictedExecutorAddress)
+  // Treasury mode points the receiver at the treasury; LP mode points it at the executor itself.
+  const receiver = options.treasuryMode ? await treasury.getAddress() : predictedExecutorAddress
+  await stonks.connect(admin).setReceiver(receiver)
   await stonks.connect(admin).setManager(predictedExecutorAddress)
   await stonks.connect(admin).setTokenPair(contracts.STETH, contracts.LDO)
   await stonks.connect(admin).setOrderDuration(DEFAULT_ORDER_DURATION)
@@ -587,7 +606,6 @@ export async function setupForkBuyback(
     ldo: contracts.LDO,
     oracleRouter: await oracle.getAddress(),
     curvePoolAndToken: poolAddress,
-    stonks: await stonks.getAddress(),
     ...FORK_BOUNDS,
     ...options.bounds,
   }
@@ -602,6 +620,8 @@ export async function setupForkBuyback(
   await buybackExecutor.connect(admin).grantRole(ALLOCATOR_ROLE, await allocator.getAddress())
   await buybackExecutor.connect(admin).grantRole(EMERGENCY_ROLE, await emergency.getAddress())
   await buybackExecutor.connect(admin).grantRole(MANAGER_ROLE, await manager.getAddress())
+
+  await buybackExecutor.connect(admin).setStonks(await stonks.getAddress())
 
   return {
     buybackExecutor,
@@ -630,5 +650,44 @@ export async function fundForkExecutor(
   }
   if (amounts.stEth !== undefined) {
     await ctx.stEth.transfer(executorAddress, amounts.stEth)
+  }
+}
+
+/// USD value of an LDO amount at the fixture's oracle price, scaled to 1e18.
+export function usdOfLdo(ctx: ForkBuybackContext, ldoAmount: bigint): bigint {
+  return (ldoAmount * ctx.prices.ldoUsd) / PRICE_UNIT
+}
+
+/// USD value of a stETH amount at the fixture's oracle price, scaled to 1e18.
+export function usdOfStEth(ctx: ForkBuybackContext, stEthAmount: bigint): bigint {
+  return (stEthAmount * ctx.prices.stEthUsd) / PRICE_UNIT
+}
+
+/// USD value of a wstETH amount, unwrapped at the fixture's share rate then priced at the oracle.
+export function usdOfWstEth(ctx: ForkBuybackContext, wstEthAmount: bigint): bigint {
+  return usdOfStEth(ctx, (wstEthAmount * ctx.prices.shareRate) / PRICE_UNIT)
+}
+
+/// Balanced LDO to pair with `stEthAmount` at the oracle, padded 5% so stETH is the smaller-USD side
+/// and the whole stETH leg deposits.
+export function balancedLdoFor(ctx: ForkBuybackContext, stEthAmount: bigint): bigint {
+  return (stEthAmount * ctx.prices.stEthUsd * 105n) / (ctx.prices.ldoUsd * 100n)
+}
+
+/// Parses the `LiquidityAdded` event out of a receipt's logs into its deposited amounts.
+export function liquidityAddedArgs(
+  ctx: ForkBuybackContext,
+  logs: readonly Log[]
+): { ldoAmount: bigint; wstEthAmount: bigint; lpTokensMinted: bigint } {
+  const topic = ctx.buybackExecutor.interface.getEvent('LiquidityAdded')!.topicHash
+  const log = logs.find((entry) => entry.topics[0] === topic)!
+  const parsed = ctx.buybackExecutor.interface.parseLog({
+    topics: [...log.topics],
+    data: log.data,
+  })!
+  return {
+    ldoAmount: parsed.args.ldoAmount,
+    wstEthAmount: parsed.args.wstEthAmount,
+    lpTokensMinted: parsed.args.lpTokensMinted,
   }
 }

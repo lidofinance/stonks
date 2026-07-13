@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 
 import {BuybackAllocator} from "contracts/automated-buybacks/BuybackAllocator.sol";
+import {IBuybackAllocator} from "contracts/interfaces/IBuybackAllocator.sol";
 import {
     StEthTokenStub,
     RevenueSourceStub,
@@ -141,13 +142,13 @@ contract AllocatorHandler is Test {
     ///      revert (only skip via event), its effect must match the spendable() preview taken in
     ///      the same block, and we bank the spent USD.
     function allocate() external {
-        (BuybackAllocator.AllocationStatus status, uint256 predUSD, uint256 predStEth) = allocator
+        (IBuybackAllocator.AllocationStatus status, uint256 predUSD, uint256 predStEth) = allocator
             .spendable();
         uint256 executorBefore = stEth.balanceOf(address(executor));
 
         try allocator.allocate() {
             uint256 moved = stEth.balanceOf(address(executor)) - executorBefore;
-            bool eligible = status == BuybackAllocator.AllocationStatus.Eligible;
+            bool eligible = status == IBuybackAllocator.AllocationStatus.Eligible;
             if (moved != (eligible ? predStEth : 0)) ghostSpendableMismatch = true;
             if (eligible) {
                 ghostSpentUSD += predUSD;

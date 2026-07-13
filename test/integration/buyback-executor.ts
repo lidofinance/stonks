@@ -233,9 +233,7 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       })
       const newStonksAddress = await newStonks.getAddress()
 
-      await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonksAddress)
-      )
+      await expect(ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonksAddress))
         .to.emit(ctx.buybackExecutor, 'StaleOrderCleared')
         .withArgs(orderAddress)
         .and.to.emit(ctx.buybackExecutor, 'StonksAndOperatingModeSet')
@@ -260,9 +258,7 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       })
       const newStonksAddress = await newStonks.getAddress()
 
-      const tx = ctx.buybackExecutor
-        .connect(ctx.signers.admin)
-        .setStonksAndOperatingMode(newStonksAddress)
+      const tx = ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonksAddress)
       await expect(tx)
         .to.emit(ctx.buybackExecutor, 'OrderAbandoned')
         .withArgs(orderAddress, validTo)
