@@ -205,7 +205,9 @@ describe('BuybackExecutor.addLiquidity', function () {
     // --- Fund deployer (executor funding + seeds) and attacker (EMA-driving swap inventory).
     await setBalance(deployerAddr, parseEther('1000000'))
     const attackerWstEth = await wsteth.getStETHByWstETH(parseEther('20'))
-    const deployerWstEth = await wsteth.getStETHByWstETH(parseEther('20'))
+    // getStETHByWstETH and wrap() each round down, so an exact 20 wstETH target comes up short
+    // of the 20 the seeds transfer. Two extra wei cover both floors.
+    const deployerWstEth = await wsteth.getStETHByWstETH(parseEther('20') + 2n)
     const executorReserveStEth = await wsteth.getStETHByWstETH(parseEther('30'))
     const lido = new ethers.Contract(
       stEthAddress,
