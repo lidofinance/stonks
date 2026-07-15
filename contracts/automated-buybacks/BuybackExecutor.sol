@@ -111,7 +111,7 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
     /// @notice Gates `onStEthAllocated`. Held by the BuybackAllocator.
     bytes32 public constant ALLOCATOR_ROLE = keccak256("Buybacks.BuybackExecutor.ALLOCATOR_ROLE");
 
-    /// @notice Gates pausing and unpausing this contract and the active Stonks.
+    /// @notice Gates order cancellation, pausing and unpausing this contract and the active Stonks.
     bytes32 public constant EMERGENCY_ROLE = keccak256("Buybacks.BuybackExecutor.EMERGENCY_ROLE");
 
     /// @notice 100% in basis points.
@@ -447,9 +447,9 @@ contract BuybackExecutor is IBuybackExecutor, AssetRecovererACL, Pausable {
         ldoAmount = withdrawn[0];
         uint256 wstEthReceived = withdrawn[1];
 
-        stEthAmount = WSTETH.unwrap(wstEthReceived);
-
         emit LiquidityRemoved(msg.sender, lpAmount_, ldoAmount, wstEthReceived);
+
+        stEthAmount = WSTETH.unwrap(wstEthReceived);
 
         LDO.safeTransfer(TREASURY, ldoAmount);
         IERC20(address(STETH)).safeTransfer(TREASURY, stEthAmount);
