@@ -313,67 +313,9 @@ describe('BuybackExecutor — deployment', function () {
         .to.be.revertedWithCustomError(buybackExecutor, 'InvalidPoolBootstrapMinTvlUsd')
         .withArgs(POOL_BOOTSTRAP_ABOVE_MAX)
     })
-
-    it('should revert InvalidStonksAddress when stonks is zero', async function () {
-      const { buybackExecutor, signers, params } = await loadFixture(
-        deployBuybackExecutorTreasuryMode
-      )
-      await expect(
-        deployHarness(signers, params, { stonks: ZERO_ADDRESS })
-      ).to.be.revertedWithCustomError(buybackExecutor, 'InvalidStonksAddress')
-    })
-
-    it('should revert InvalidStonksReceiver(stonks, receiver) when the receiver is neither this contract nor TREASURY', async function () {
-      const { buybackExecutor, stubs, signers, params } = await loadFixture(
-        deployBuybackExecutorTreasuryMode
-      )
-      const strangerAddress = await signers.stranger.getAddress()
-      await stubs.stonks.connect(signers.admin).setReceiver(strangerAddress)
-
-      await expect(deployHarness(signers, params))
-        .to.be.revertedWithCustomError(buybackExecutor, 'InvalidStonksReceiver')
-        .withArgs(params.stonks, strangerAddress)
-    })
-
-    it('should revert InvalidStonksTokenPair when stonks sells a token other than stETH', async function () {
-      const { buybackExecutor, stubs, signers, params } = await loadFixture(
-        deployBuybackExecutorTreasuryMode
-      )
-      const strangerAddress = await signers.stranger.getAddress()
-      await stubs.stonks.connect(signers.admin).setTokenPair(strangerAddress, params.ldo)
-
-      await expect(deployHarness(signers, params))
-        .to.be.revertedWithCustomError(buybackExecutor, 'InvalidStonksTokenPair')
-        .withArgs(strangerAddress, params.ldo)
-    })
-
-    it('should revert InvalidStonksTokenPair when stonks buys a token other than LDO', async function () {
-      const { buybackExecutor, stubs, signers, params } = await loadFixture(
-        deployBuybackExecutorTreasuryMode
-      )
-      const strangerAddress = await signers.stranger.getAddress()
-      const stEthAddress = await stubs.stEth.getAddress()
-      await stubs.stonks.connect(signers.admin).setTokenPair(stEthAddress, strangerAddress)
-
-      await expect(deployHarness(signers, params))
-        .to.be.revertedWithCustomError(buybackExecutor, 'InvalidStonksTokenPair')
-        .withArgs(stEthAddress, strangerAddress)
-    })
-
-    it('should revert InvalidStonksManager when the stonks manager is not the executor', async function () {
-      const { buybackExecutor, stubs, signers, params } = await loadFixture(
-        deployBuybackExecutorTreasuryMode
-      )
-      const strangerAddress = await signers.stranger.getAddress()
-      await stubs.stonks.connect(signers.admin).setManager(strangerAddress)
-
-      await expect(deployHarness(signers, params))
-        .to.be.revertedWithCustomError(buybackExecutor, 'InvalidStonksManager')
-        .withArgs(strangerAddress)
-    })
   })
 
-  describe('operating mode, approvals, roles, constants, initial state:', function () {
+  describe('approvals, roles, constants, initial state:', function () {
     it('should set lpModeEnabled true when stonks.RECEIVER() equals this contract', async function () {
       const { buybackExecutor } = await loadFixture(deployBuybackExecutorWithStubs)
       expect(await buybackExecutor.lpModeEnabled()).to.equal(true)
@@ -382,13 +324,6 @@ describe('BuybackExecutor — deployment', function () {
     it('should set lpModeEnabled false when stonks.RECEIVER() equals TREASURY', async function () {
       const { buybackExecutor } = await loadFixture(deployBuybackExecutorTreasuryMode)
       expect(await buybackExecutor.lpModeEnabled()).to.equal(false)
-    })
-
-    it('should emit StonksAndOperatingModeSet(address(0), stonks, false, true) at construction', async function () {
-      const { buybackExecutor, stubs } = await loadFixture(deployBuybackExecutorWithStubs)
-      await expect(buybackExecutor.deploymentTransaction())
-        .to.emit(buybackExecutor, 'StonksAndOperatingModeSet')
-        .withArgs(ZERO_ADDRESS, await stubs.stonks.getAddress(), false, true)
     })
 
     it('should emit PoolBootstrapMinTvlUsdSet(0, poolBootstrapMinTvlUsd) at construction', async function () {
@@ -416,19 +351,19 @@ describe('BuybackExecutor — deployment', function () {
       expect(await buybackExecutor.getRoleMemberCount(DEFAULT_ADMIN_ROLE)).to.equal(1n)
     })
 
-    it('should expose ALLOCATOR_ROLE as keccak256("NEST.BuybackExecutor.ALLOCATOR_ROLE") with no members at deploy', async function () {
+    it('should expose ALLOCATOR_ROLE as keccak256("Buybacks.BuybackExecutor.ALLOCATOR_ROLE") with no members at deploy', async function () {
       const { buybackExecutor } = await loadFixture(deployWithoutRoles)
       expect(await buybackExecutor.ALLOCATOR_ROLE()).to.equal(ALLOCATOR_ROLE)
       expect(await buybackExecutor.getRoleMemberCount(ALLOCATOR_ROLE)).to.equal(0n)
     })
 
-    it('should expose EMERGENCY_ROLE as keccak256("NEST.BuybackExecutor.EMERGENCY_ROLE") with no members at deploy', async function () {
+    it('should expose EMERGENCY_ROLE as keccak256("Buybacks.BuybackExecutor.EMERGENCY_ROLE") with no members at deploy', async function () {
       const { buybackExecutor } = await loadFixture(deployWithoutRoles)
       expect(await buybackExecutor.EMERGENCY_ROLE()).to.equal(EMERGENCY_ROLE)
       expect(await buybackExecutor.getRoleMemberCount(EMERGENCY_ROLE)).to.equal(0n)
     })
 
-    it('should expose MANAGER_ROLE as keccak256("NEST.MANAGER_ROLE") with no members at deploy', async function () {
+    it('should expose MANAGER_ROLE as keccak256("Buybacks.MANAGER_ROLE") with no members at deploy', async function () {
       const { buybackExecutor } = await loadFixture(deployWithoutRoles)
       expect(await buybackExecutor.MANAGER_ROLE()).to.equal(MANAGER_ROLE)
       expect(await buybackExecutor.getRoleMemberCount(MANAGER_ROLE)).to.equal(0n)

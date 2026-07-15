@@ -1,10 +1,11 @@
 import { expect } from 'chai'
-import { Log } from 'ethers'
 import { loadFixture } from '@nomicfoundation/hardhat-toolbox/network-helpers'
 
 import {
   setupForkBuyback,
   fundForkExecutor,
+  balancedLdoFor,
+  liquidityAddedArgs,
   ForkBuybackContext,
   ADD_LIQUIDITY_STATUS,
   PRICE_UNIT,
@@ -44,12 +45,6 @@ function extremeSkewGateOpenFixture(): Promise<ForkBuybackContext | undefined> {
   })
 }
 
-// Balanced LDO to pair with a given stETH leg at the oracle, padded so stETH is the smaller-USD side
-// and the whole stETH leg deposits.
-function balancedLdoFor(ctx: ForkBuybackContext, stEthAmount: bigint): bigint {
-  return (stEthAmount * ctx.prices.stEthUsd * 105n) / (ctx.prices.ldoUsd * 100n)
-}
-
 // USD value of each pool leg, valued at the oracle, as an [ldoUsd, stEthUsd] pair scaled to 1e18.
 async function poolLegUsdValues(ctx: ForkBuybackContext): Promise<[bigint, bigint]> {
   const ldoReserve: bigint = await ctx.pool.balances(0)
@@ -58,23 +53,6 @@ async function poolLegUsdValues(ctx: ForkBuybackContext): Promise<[bigint, bigin
   const ldoUsd = (ldoReserve * ctx.prices.ldoUsd) / PRICE_UNIT
   const stEthUsd = (stEthReserve * ctx.prices.stEthUsd) / PRICE_UNIT
   return [ldoUsd, stEthUsd]
-}
-
-function liquidityAddedArgs(
-  ctx: ForkBuybackContext,
-  logs: readonly Log[]
-): { ldoAmount: bigint; wstEthAmount: bigint; lpTokensMinted: bigint } {
-  const topic = ctx.buybackExecutor.interface.getEvent('LiquidityAdded')!.topicHash
-  const log = logs.find((entry) => entry.topics[0] === topic)!
-  const parsed = ctx.buybackExecutor.interface.parseLog({
-    topics: [...log.topics],
-    data: log.data,
-  })!
-  return {
-    ldoAmount: parsed.args.ldoAmount,
-    wstEthAmount: parsed.args.wstEthAmount,
-    lpTokensMinted: parsed.args.lpTokensMinted,
-  }
 }
 
 describe('BuybackExecutor — forked Curve pool', function () {

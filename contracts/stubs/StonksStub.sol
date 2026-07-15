@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity 0.8.23;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 import {OrderStub} from "./OrderStub.sol";
 
 /**
  * @notice Stonks stub. The receiver drives the executor's operating mode. `placeOrderWithAmount`
  *         deploys a fresh `OrderStub` and records the sizing. Estimate and the pause forwards carry
- *         revert modes for the failure-path tests.
+ *         revert modes for the failure-path tests. `recoverERC20` mirrors the real Stonks by sending
+ *         the recovered balance to `agent`, exercised when the executor replaces this Stonks.
  */
 contract StonksStub {
     error EstimateReverted();
@@ -15,6 +18,7 @@ contract StonksStub {
 
     address public receiver;
     address public manager;
+    address public agent;
     address public tokenFrom;
     address public tokenTo;
     uint256 public orderDurationSeconds;
@@ -38,6 +42,10 @@ contract StonksStub {
 
     function setManager(address manager_) external {
         manager = manager_;
+    }
+
+    function setAgent(address agent_) external {
+        agent = agent_;
     }
 
     function setTokenPair(address tokenFrom_, address tokenTo_) external {
@@ -135,5 +143,9 @@ contract StonksStub {
             revert MissingStonksRights();
         }
         unpauseSignaturesCalls += 1;
+    }
+
+    function recoverERC20(address token_, uint256 amount_) external {
+        IERC20(token_).transfer(agent, amount_);
     }
 }

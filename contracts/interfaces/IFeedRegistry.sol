@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.23;
+pragma solidity ^0.8.0;
 
 interface IFeedRegistry {
     function getFeed(address base, address quote) external view returns (address aggregator);

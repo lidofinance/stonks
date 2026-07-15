@@ -1,6 +1,6 @@
-// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.23;
+// SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity ^0.8.0;
 
 import {IStETH} from "./IStETH.sol";
 import {IOracleRouter} from "./IOracleRouter.sol";
@@ -10,17 +10,20 @@ import {IOracleRouter} from "./IOracleRouter.sol";
  * @notice Public surface of the BuybackAllocator.
  */
 interface IBuybackAllocator {
+    /// @notice Whether a release can proceed, or why it is skipped. Reported in the skip event.
     enum AllocationStatus {
+        // The release can proceed
         Eligible,
+        // No budget available to spend
         NoAvailableBudget,
+        // The oracle returned no price
         QuoteUnavailable,
+        // The price is below the floor
         StEthPriceBelowMin,
-        AllocationBelowMin
-    }
-
-    struct SpendWindow {
-        uint64 endTS;
-        uint192 spentUSD;
+        // The spendable amount is below the smallest allowed
+        AllocationBelowMin,
+        // The daily or yearly cap leaves no room
+        WindowCapReached
     }
 
     function MAX_BASIS_POINTS() external view returns (uint256);
@@ -62,21 +65,23 @@ interface IBuybackAllocator {
         view
         returns (AllocationStatus status, uint256 spendableUSD, uint256 spendableStEth);
 
+    function revenueSources() external view returns (address[] memory);
+
     function activate() external;
 
     function allocate() external;
 
-    function setSurplusShareBP(uint16 surplusShareBP_) external;
+    function setSurplusShareBP(uint256 surplusShareBP_) external;
 
-    function setReserveDailyRateUSD(uint128 reserveDailyRateUSD_) external;
+    function setReserveDailyRateUSD(uint256 reserveDailyRateUSD_) external;
 
-    function setDailyCapUSD(uint128 dailyCapUSD_) external;
+    function setDailyCapUSD(uint256 dailyCapUSD_) external;
 
-    function setYearlyCapUSD(uint128 yearlyCapUSD_) external;
+    function setYearlyCapUSD(uint256 yearlyCapUSD_) external;
 
-    function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external;
+    function setMinStEthPriceUSD(uint256 minStEthPriceUSD_) external;
 
-    function setMinSpendPerCallUSD(uint128 minSpendPerCallUSD_) external;
+    function setMinSpendPerCallUSD(uint256 minSpendPerCallUSD_) external;
 
     function setExecutor(address newExecutor_) external;
 

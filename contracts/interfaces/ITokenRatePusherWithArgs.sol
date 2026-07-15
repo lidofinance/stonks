@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
 // SPDX-License-Identifier: GPL-3.0
 
-pragma solidity 0.8.23;
+pragma solidity ^0.8.0;
 
 /// @notice An interface for an entity that pushes token rate and consumes the full per-rebase
 ///         payload forwarded from `Accounting.handleOracleReport` via the `TokenRateNotifier`.

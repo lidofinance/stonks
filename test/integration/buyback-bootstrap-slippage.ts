@@ -1,13 +1,8 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { Signer, parseEther, ZeroAddress } from 'ethers'
-import {
-  impersonateAccount,
-  setBalance,
-  takeSnapshot,
-  time,
-  SnapshotRestorer,
-} from '@nomicfoundation/hardhat-network-helpers'
+import { loadFixture } from '@nomicfoundation/hardhat-toolbox/network-helpers'
+import { impersonateAccount, setBalance, time } from '@nomicfoundation/hardhat-network-helpers'
 
 import {
   BuybackExecutor,
@@ -23,11 +18,11 @@ import { getContracts } from '../../utils/contracts'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
 import { deployLdoWstEthPool } from '../../utils/curve-twocrypto'
 import { deployStonks } from '../../scripts/deployments/stonks'
+import { PRICE_UNIT } from '../helpers/buyback-executor'
 
 const contracts = getContracts()
 
 const LIDO_LOCATOR = '0xC1d0b3DE6792Bf6b4b37EccdcC24e45978Cfd2Eb'
-const PRICE_UNIT = 10n ** 18n
 const FUND = parseEther('10000')
 
 const LDO_INDEX = 0n
@@ -82,9 +77,6 @@ describe('BuybackExecutor — bootstrap-phase deposit robustness', function () {
   let executor: BuybackExecutor
   let executorAddr: string
 
-  let baseSnapshot: SnapshotRestorer
-  let snapshot: SnapshotRestorer
-
   /*//////////////////////////////////////////////////////////////
                         ORACLE-PRICED VALUATION
   //////////////////////////////////////////////////////////////*/
@@ -95,7 +87,9 @@ describe('BuybackExecutor — bootstrap-phase deposit robustness', function () {
 
   // Pool net asset value at the oracle, read from internal `balances` (donation-resistant).
   async function poolNavUsd(p: ITwocryptoNGPool): Promise<bigint> {
-    return usdOfLdo(await p.balances(LDO_INDEX)) + (await usdOfWstEth(await p.balances(WSTETH_INDEX)))
+    return (
+      usdOfLdo(await p.balances(LDO_INDEX)) + (await usdOfWstEth(await p.balances(WSTETH_INDEX)))
+    )
   }
 
   // Oracle value of an address's whole position on a pool: its LP share (at oracle NAV) plus any
@@ -104,7 +98,9 @@ describe('BuybackExecutor — bootstrap-phase deposit robustness', function () {
     const lp = await p.balanceOf(holder)
     const supply = await p.totalSupply()
     const lpVal = supply === 0n ? 0n : (lp * (await poolNavUsd(p))) / supply
-    return lpVal + usdOfLdo(await ldo.balanceOf(holder)) + usdOfStEth(await stEthErc20.balanceOf(holder))
+    return (
+      lpVal + usdOfLdo(await ldo.balanceOf(holder)) + usdOfStEth(await stEthErc20.balanceOf(holder))
+    )
   }
 
   async function assetsUsd(holder: string): Promise<bigint> {
@@ -180,7 +176,7 @@ describe('BuybackExecutor — bootstrap-phase deposit robustness', function () {
       skipRouterConfiguration: true,
     })) as { stonks: Stonks }
 
-    await exec.setStonksAndOperatingMode(await stonks.getAddress())
+    await exec.setStonks(await stonks.getAddress())
     expect(await exec.lpModeEnabled()).to.equal(true)
     return exec
   }
@@ -218,7 +214,10 @@ describe('BuybackExecutor — bootstrap-phase deposit robustness', function () {
                                SETUP
   //////////////////////////////////////////////////////////////*/
 
-  before(async function () {
+  // Builds the suite state declared above: funded actors, an empty pool at the fair price, and a
+  // funded bootstrap-mode executor in LP mode. Runs once under `loadFixture`, which restores its
+  // snapshot before every test.
+  async function setupBootstrapSlippageEnvironment(): Promise<void> {
     ;[deployer, attacker] = await ethers.getSigners()
     deployerAddr = await deployer.getAddress()
     attackerAddr = await attacker.getAddress()
@@ -267,20 +266,13 @@ describe('BuybackExecutor — bootstrap-phase deposit robustness', function () {
     executor = await deployExecutorFor(await pool.getAddress(), BOOTSTRAP_MIN_TVL_USD)
     executorAddr = await executor.getAddress()
     await fundExecutor(executorAddr, DEPOSIT_WST_PER_SIDE)
-
-    baseSnapshot = await takeSnapshot()
-  })
+  }
 
   beforeEach(async function () {
-    snapshot = await takeSnapshot()
+    await loadFixture(setupBootstrapSlippageEnvironment)
   })
 
-  afterEach(async function () {
-    await snapshot.restore()
-  })
-
-  after(async function () {
-    if (baseSnapshot) await baseSnapshot.restore()
+  after(function () {
     resetTestOracleRouter()
   })
 
@@ -336,8 +328,7 @@ describe('BuybackExecutor — bootstrap-phase deposit robustness', function () {
 
       // Sanity: the EMA the gate reads is now well past tolerance.
       const ema = await pool.price_oracle()
-      const emaDivBps =
-        ((ema > fairPrice ? ema - fairPrice : fairPrice - ema) * 10000n) / fairPrice
+      const emaDivBps = ((ema > fairPrice ? ema - fairPrice : fairPrice - ema) * 10000n) / fairPrice
       expect(emaDivBps).to.be.gt(TOLERANCE_BPS)
 
       // Lower the bootstrap threshold below the seeded TVL so the gate is enforced, and it blocks.
@@ -370,7 +361,9 @@ describe('BuybackExecutor — bootstrap-phase deposit robustness', function () {
     // addLiquidity is permissionless, so the attacker triggers the victim deposit itself, wrapped in
     // a frontrun/backrun swap. The balanced-at-oracle deposit is corrective, so the executor never
     // ends up worse than the honest fee and the attacker never profits.
-    async function runSandwich(sellIndex: bigint): Promise<{ execLossBps: bigint; attackerPnl: bigint }> {
+    async function runSandwich(
+      sellIndex: bigint
+    ): Promise<{ execLossBps: bigint; attackerPnl: bigint }> {
       await seedBalanced(pool, deployer, parseEther('5'), fairPrice)
 
       const depositUsd = await positionUsd(executorAddr, pool)
@@ -381,7 +374,8 @@ describe('BuybackExecutor — bootstrap-phase deposit robustness', function () {
           : await wstethErc20.balanceOf(attackerAddr)
 
       const buyIndex = sellIndex === WSTETH_INDEX ? LDO_INDEX : WSTETH_INDEX
-      const frontrun = sellIndex === WSTETH_INDEX ? parseEther('3') : (parseEther('3') * fairPrice) / PRICE_UNIT
+      const frontrun =
+        sellIndex === WSTETH_INDEX ? parseEther('3') : (parseEther('3') * fairPrice) / PRICE_UNIT
 
       await pool.connect(attacker).exchange(sellIndex, buyIndex, frontrun, 0n)
       await executor.connect(attacker).addLiquidity()
@@ -424,7 +418,8 @@ describe('BuybackExecutor — bootstrap-phase deposit robustness', function () {
         await seedBalanced(pool, attacker, parseEther('30'), wrongPrice)
 
         const depositUsd = await positionUsd(executorAddr, pool)
-        const attackerClaimBefore = (await pool.balanceOf(attackerAddr)) === 0n ? 0n : await positionUsd(attackerAddr, pool)
+        const attackerClaimBefore =
+          (await pool.balanceOf(attackerAddr)) === 0n ? 0n : await positionUsd(attackerAddr, pool)
 
         await expect(executor.connect(attacker).addLiquidity()).to.emit(executor, 'LiquidityAdded')
 

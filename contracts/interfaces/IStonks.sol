@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.23;
+pragma solidity ^0.8.0;
 
 interface IStonks {
     function getOrderParameters()
@@ -32,6 +32,7 @@ interface IStonks {
         uint256 sellAmount_,
         uint256 minBuyAmount_
     ) external returns (address);
+
     function pauseCreation() external;
 
     function unpauseCreation() external;

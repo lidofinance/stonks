@@ -201,7 +201,7 @@ describe('NEST buyback — fork happy path (rebase -> Curve liquidity)', functio
       skipRouterConfiguration: true,
     })
     stonks = deployedStonks
-    await executor.setStonksAndOperatingMode(await stonks.getAddress())
+    await executor.setStonks(await stonks.getAddress())
     expect(await executor.lpModeEnabled()).to.equal(true)
 
     // --- Allocator wired to the source and the executor; grant it the executor's allocator role.

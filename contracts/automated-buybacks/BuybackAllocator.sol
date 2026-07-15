@@ -6,12 +6,14 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ERC165Checker} from "@openzeppelin/contracts/utils/introspection/ERC165Checker.sol";
 
 import {AssetRecovererACL} from "./AssetRecovererACL.sol";
 import {IStETH} from "../interfaces/IStETH.sol";
 import {IOracleRouter} from "../interfaces/IOracleRouter.sol";
 import {IRevenueSource} from "../interfaces/IRevenueSource.sol";
+import {IBuybackAllocator} from "../interfaces/IBuybackAllocator.sol";
 import {IBuybackExecutor} from "../interfaces/IBuybackExecutor.sol";
 import {MathHelpers} from "../lib/MathHelpers.sol";
 
@@ -20,30 +22,15 @@ import {MathHelpers} from "../lib/MathHelpers.sol";
  * @notice Holds stETH and releases it to a receiver for buybacks, funded by a share of the
  *         protocol revenue that registered sources report. Anyone can trigger a release.
  */
-contract BuybackAllocator is AssetRecovererACL {
+contract BuybackAllocator is IBuybackAllocator, AssetRecovererACL {
     using SafeERC20 for IERC20;
+    using SafeCast for uint256;
     using MathHelpers for uint256;
     using EnumerableSet for EnumerableSet.AddressSet;
 
     /*//////////////////////////////////////////////////////////////
                                  TYPES
     //////////////////////////////////////////////////////////////*/
-
-    /// @notice Whether a release can proceed, or why it is skipped. Reported in the skip event.
-    enum AllocationStatus {
-        // The release can proceed
-        Eligible,
-        // No budget available to spend
-        NoAvailableBudget,
-        // The oracle returned no price
-        QuoteUnavailable,
-        // The price is below the floor
-        StEthPriceBelowMin,
-        // The spendable amount is below the smallest allowed
-        AllocationBelowMin,
-        // The daily or yearly cap leaves no room
-        WindowCapReached
-    }
 
     /// @notice Daily or yearly spend window.
     struct SpendWindow {
@@ -176,12 +163,12 @@ contract BuybackAllocator is AssetRecovererACL {
     event WindowRolled(uint256 windowDurationSeconds, uint256 newEndTS, uint256 previousSpentUSD);
     event ReserveAnchored(uint256 anchorTS);
     event ExecutorSet(address indexed executor);
-    event DailyCapUSDSet(uint128 dailyCapUSD);
-    event YearlyCapUSDSet(uint128 yearlyCapUSD);
-    event ReserveDailyRateUSDSet(uint128 reserveDailyRateUSD);
-    event MinStEthPriceUSDSet(uint128 minStEthPriceUSD);
-    event MinSpendPerCallUSDSet(uint128 minSpendPerCallUSD);
-    event SurplusShareBPSet(uint16 surplusShareBP);
+    event DailyCapUSDSet(uint256 dailyCapUSD);
+    event YearlyCapUSDSet(uint256 yearlyCapUSD);
+    event ReserveDailyRateUSDSet(uint256 reserveDailyRateUSD);
+    event MinStEthPriceUSDSet(uint256 minStEthPriceUSD);
+    event MinSpendPerCallUSDSet(uint256 minSpendPerCallUSD);
+    event SurplusShareBPSet(uint256 surplusShareBP);
     event RevenueSourceAdded(address indexed source);
     event RevenueSourceRemoved(address indexed source);
 
@@ -212,6 +199,8 @@ contract BuybackAllocator is AssetRecovererACL {
 
     /**
      * @notice Reverts until the contract is activated.
+     * @dev    Guards every function that runs `_checkpoint`, whose math reads activation-derived
+     *         state. Plain setters stay callable before activation.
      */
     modifier whenActivated() {
         if (activationTS == 0) {
@@ -266,7 +255,9 @@ contract BuybackAllocator is AssetRecovererACL {
     /**
      * @notice Activates the contract once. Records current total revenue as the baseline, so only
      *         later revenue funds the budget, and starts the daily reserve accruing.
-     * @dev    Reverts if any registered source cannot be reached.
+     * @dev    Reverts if any registered source cannot be reached. The baseline captures each
+     *         source's cumulative now, so pending unconverted revenue settled after activation
+     *         surfaces as new surplus above the baseline. Settle each source before activating.
      */
     function activate() external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (activationTS != 0) {
@@ -280,7 +271,7 @@ contract BuybackAllocator is AssetRecovererACL {
 
         // Anchor the reserve to the activation day itself, so the activation day's reserve is charged
         // rather than forgiven (unlike the post-checkpoint re-anchor to the next day).
-        reserveAnchorTS = activationTS;
+        reserveAnchorTS = alignedTS;
         emit ReserveAnchored(reserveAnchorTS);
 
         _rollWindow(daily, ONE_DAY, 0);
@@ -291,7 +282,7 @@ contract BuybackAllocator is AssetRecovererACL {
 
     /**
      * @notice Updates the budget, then sends the amount available now to the receiver. When nothing
-     *         is eligible it emits a skip event and returns; the budget update still applies, so any
+     *         is eligible it emits a skip event and returns. The budget update still applies, so any
      *         caller advances the accounting even when no transfer happens.
      */
     function allocate() external nonReentrant whenActivated {
@@ -325,10 +316,10 @@ contract BuybackAllocator is AssetRecovererACL {
      * @param  surplusShareBP_ New surplus share in basis points.
      */
     function setSurplusShareBP(
-        uint16 surplusShareBP_
+        uint256 surplusShareBP_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
         _checkpoint();
-        _setSurplusShareBP(surplusShareBP_);
+        _setSurplusShareBP(surplusShareBP_.toUint16());
     }
 
     /**
@@ -338,34 +329,38 @@ contract BuybackAllocator is AssetRecovererACL {
      * @param  reserveDailyRateUSD_ New daily reserve rate in USD.
      */
     function setReserveDailyRateUSD(
-        uint128 reserveDailyRateUSD_
+        uint256 reserveDailyRateUSD_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
         _checkpoint();
-        _setReserveDailyRateUSD(reserveDailyRateUSD_);
+        _setReserveDailyRateUSD(reserveDailyRateUSD_.toUint128());
     }
 
     /**
      * @notice Sets the per-day spending cap. Applies to the window in progress.
+     * @dev    The daily cap is enforced over a fixed window from midnight to midnight UTC. The window
+     *         resets at midnight, so a caller can spend the full cap just before midnight and the full
+     *         cap again in the next block, close to twice the daily cap within seconds. The yearly cap
+     *         and the remaining budget still bound the total.
      * @param  dailyCapUSD_ New per-day spending cap in USD.
      */
-    function setDailyCapUSD(uint128 dailyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setDailyCapUSD(dailyCapUSD_);
+    function setDailyCapUSD(uint256 dailyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setDailyCapUSD(dailyCapUSD_.toUint128());
     }
 
     /**
      * @notice Sets the per-year spending cap. Applies to the window in progress.
      * @param  yearlyCapUSD_ New per-year spending cap in USD.
      */
-    function setYearlyCapUSD(uint128 yearlyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setYearlyCapUSD(yearlyCapUSD_);
+    function setYearlyCapUSD(uint256 yearlyCapUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setYearlyCapUSD(yearlyCapUSD_.toUint128());
     }
 
     /**
      * @notice Sets the minimum stETH price. A lower price skips the release.
      * @param  minStEthPriceUSD_ New minimum stETH price in USD.
      */
-    function setMinStEthPriceUSD(uint128 minStEthPriceUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setMinStEthPriceUSD(minStEthPriceUSD_);
+    function setMinStEthPriceUSD(uint256 minStEthPriceUSD_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setMinStEthPriceUSD(minStEthPriceUSD_.toUint128());
     }
 
     /**
@@ -373,9 +368,9 @@ contract BuybackAllocator is AssetRecovererACL {
      * @param  minSpendPerCallUSD_ New smallest allocation in USD.
      */
     function setMinSpendPerCallUSD(
-        uint128 minSpendPerCallUSD_
+        uint256 minSpendPerCallUSD_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setMinSpendPerCallUSD(minSpendPerCallUSD_);
+        _setMinSpendPerCallUSD(minSpendPerCallUSD_.toUint128());
     }
 
     /**
@@ -390,9 +385,11 @@ contract BuybackAllocator is AssetRecovererACL {
      * @notice Registers a revenue source. Its current total is added to the baseline, so only its
      *         later earnings fund the budget.
      * @dev    Updates the budget first, banking revenue earned up to now, then adds the source's
-     *         current total to the baseline. Sources are trusted to report accurate USD totals (18
-     *         decimals) that only go up. Reverts if the source does not support the required
-     *         interface, or if it or any registered source cannot be reached.
+     *         current total to the baseline. The baseline captures only converted cumulative revenue,
+     *         so settle the source's pending revenue before registering, or that pre-baseline amount
+     *         later banks as surplus. Sources are trusted to report accurate USD totals (18 decimals)
+     *         that only go up. Reverts if the source does not support the required interface, or if it
+     *         or any registered source cannot be reached.
      * @param  source_ Revenue source to register.
      */
     function addRevenueSource(address source_) external onlyRole(DEFAULT_ADMIN_ROLE) whenActivated {
@@ -441,6 +438,13 @@ contract BuybackAllocator is AssetRecovererACL {
         return _spendable(_clampBudget(budgetUSD + budgetDeltaUSD));
     }
 
+    /**
+     * @notice Registered revenue sources.
+     */
+    function revenueSources() external view returns (address[] memory) {
+        return _revenueSources.values();
+    }
+
     /*//////////////////////////////////////////////////////////////
                            INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -482,9 +486,10 @@ contract BuybackAllocator is AssetRecovererACL {
                     windowDuration_
             );
 
+            window_.endTS = newEndTS;
+
             emit WindowRolled(windowDuration_, newEndTS, spent);
 
-            window_.endTS = newEndTS;
             spent = 0;
         }
         window_.spentUSD = spent + uint192(spendUSD_);
@@ -696,8 +701,8 @@ contract BuybackAllocator is AssetRecovererACL {
      * @notice The signed budget change applied now, and the revenue total recorded as the new
      *         baseline. Change is (total revenue - baseline - reserve) * surplus share, and can be
      *         negative since the signed budget absorbs it.
-     * @dev    The reserve sits inside the share-weighted term on purpose, so only the surplus share
-     *         of revenue net of reserve is taken. This is intended, not a missing full subtraction.
+     * @dev    The reserve sits inside the share-weighted term, so only the surplus share of revenue
+     *         net of reserve is taken.
      * @return budgetDeltaUSD Signed budget change in USD.
      * @return totalRevenueUSD New revenue baseline in USD.
      * @return reserveUSD Reserve accrued since the last update in USD.
@@ -745,7 +750,7 @@ contract BuybackAllocator is AssetRecovererACL {
         SpendWindow storage window_,
         uint256 cap_
     ) internal view returns (uint256 unspent) {
-        unspent = cap_.saturatedSub(_windowSpent(window_));
+        unspent = cap_.saturatingSub(_windowSpent(window_));
     }
 
     /**

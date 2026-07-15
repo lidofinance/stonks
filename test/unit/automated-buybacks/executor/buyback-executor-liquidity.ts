@@ -512,7 +512,7 @@ describe('BuybackExecutor — liquidity', function () {
             .removeLiquidityAndRecoverToTreasury(LP_BALANCE, 0n, 0n)
         )
           .to.emit(ctx.buybackExecutor, 'LiquidityRemoved')
-          .withArgs(managerAddress, LP_BALANCE, WITHDRAWN_LDO, expectedStEth)
+          .withArgs(managerAddress, LP_BALANCE, WITHDRAWN_LDO, WITHDRAWN_WSTETH)
 
         expect(await ctx.stubs.ldo.balanceOf(treasuryAddress)).to.equal(WITHDRAWN_LDO)
         expect(await ctx.stubs.stEth.balanceOf(treasuryAddress)).to.equal(expectedStEth)

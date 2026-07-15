@@ -92,13 +92,14 @@ jobs:
           docker logs ${{ job.services.fork-node.id }} || true
           exit 1
 
-      - name: Apply mock-upgrade (deploy new TokenRateNotifier + rewire LidoLocator)
+      - name: Apply mock-upgrade (deploy new TokenRateNotifier + rewire LidoLocator on the fork node)
         working-directory: core
         shell: bash
         run: |
-          MODE=forking NETWORK=mainnet RPC_URL="$RPC_URL" \
+          MODE=forking NETWORK=mainnet RUN_NETWORK=local \
+            LOCAL_RPC_URL=http://localhost:8545 \
             STEPS_FILE=upgrade/steps-mock-upgrade-token-rate-notifier-nest.json \
-            yarn upgrade:helper:run
+            yarn deploy:upgrade
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
 

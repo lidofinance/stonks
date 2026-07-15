@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
 // SPDX-License-Identifier: GPL-3.0
 
-pragma solidity 0.8.23;
+pragma solidity ^0.8.0;
 
 /// @notice Public surface of Lido core's `TokenRateNotifier`, mirrored here so tests bind to a
 ///         typed contract.

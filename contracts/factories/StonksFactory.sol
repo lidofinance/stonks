@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
+// SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
@@ -74,16 +74,10 @@ contract StonksFactory {
             revert InvalidSettlementAddress(settlement_);
         }
 
-
         ADMIN = admin_;
         AGENT = agent_;
         ORDER_SAMPLE = address(
-            new Order(
-                admin_,
-                agent_,
-                relayer_,
-                ICoWSwapSettlement(settlement_).domainSeparator()
-            )
+            new Order(admin_, agent_, relayer_, ICoWSwapSettlement(settlement_).domainSeparator())
         );
 
         emit AdminSet(admin_);
@@ -105,7 +99,8 @@ contract StonksFactory {
      * @param maxImprovementInBasisPoints_ Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode)
      * @param allowPartialFill_ Whether orders should allow partial fills (useful for rebasable tokens)
      * @param receiver_ Settlement destination for orders created by the new Stonks instance.
-     *                  Pass `address(0)` to default to `AGENT` (non-NEST deployments).
+     *                  Passing `address(0)` maps to `AGENT`, which serves buyback treasury mode and keeps legacy behavior
+     *                  for non-buyback deployments.
      * @return stonks The address of the newly deployed Stonks contract
      */
     function deployStonks(

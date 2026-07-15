@@ -139,7 +139,7 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
           .removeLiquidityAndRecoverToTreasury(lpMinted, 0n, 0n)
       )
         .to.emit(ctx.buybackExecutor, 'LiquidityRemoved')
-        .withArgs(managerAddress, lpMinted, WITHDRAWN_LDO, recoveredStEth)
+        .withArgs(managerAddress, lpMinted, WITHDRAWN_LDO, WITHDRAWN_WSTETH)
 
       expect(await ctx.stubs.ldo.balanceOf(treasuryAddress)).to.equal(WITHDRAWN_LDO)
       expect(await ctx.stubs.stEth.balanceOf(treasuryAddress)).to.equal(recoveredStEth)
@@ -233,9 +233,7 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       })
       const newStonksAddress = await newStonks.getAddress()
 
-      await expect(
-        ctx.buybackExecutor.connect(ctx.signers.admin).setStonksAndOperatingMode(newStonksAddress)
-      )
+      await expect(ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonksAddress))
         .to.emit(ctx.buybackExecutor, 'StaleOrderCleared')
         .withArgs(orderAddress)
         .and.to.emit(ctx.buybackExecutor, 'StonksAndOperatingModeSet')
@@ -260,9 +258,7 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
       })
       const newStonksAddress = await newStonks.getAddress()
 
-      const tx = ctx.buybackExecutor
-        .connect(ctx.signers.admin)
-        .setStonksAndOperatingMode(newStonksAddress)
+      const tx = ctx.buybackExecutor.connect(ctx.signers.admin).setStonks(newStonksAddress)
       await expect(tx)
         .to.emit(ctx.buybackExecutor, 'OrderAbandoned')
         .withArgs(orderAddress, validTo)
@@ -313,7 +309,7 @@ describe('BuybackExecutor — end-to-end lifecycles', function () {
           .removeLiquidityAndRecoverToTreasury(SEEDED_LP, 0n, 0n)
       )
         .to.emit(ctx.buybackExecutor, 'LiquidityRemoved')
-        .withArgs(managerAddress, SEEDED_LP, WITHDRAWN_LDO, recoveredStEth)
+        .withArgs(managerAddress, SEEDED_LP, WITHDRAWN_LDO, WITHDRAWN_WSTETH)
       expect(await ctx.stubs.ldo.balanceOf(treasuryAddress)).to.equal(WITHDRAWN_LDO)
       expect(await ctx.stubs.stEth.balanceOf(treasuryAddress)).to.equal(recoveredStEth)
 

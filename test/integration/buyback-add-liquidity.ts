@@ -1,13 +1,8 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { Signer, parseEther, ZeroAddress } from 'ethers'
-import {
-  impersonateAccount,
-  setBalance,
-  takeSnapshot,
-  time,
-  SnapshotRestorer,
-} from '@nomicfoundation/hardhat-network-helpers'
+import { loadFixture } from '@nomicfoundation/hardhat-toolbox/network-helpers'
+import { impersonateAccount, setBalance, time } from '@nomicfoundation/hardhat-network-helpers'
 
 import {
   BuybackExecutor,
@@ -23,11 +18,11 @@ import { getContracts } from '../../utils/contracts'
 import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
 import { deployLdoWstEthPool } from '../../utils/curve-twocrypto'
 import { deployStonks } from '../../scripts/deployments/stonks'
+import { PRICE_UNIT, MANAGER_ROLE, EMERGENCY_ROLE } from '../helpers/buyback-executor'
 
 const contracts = getContracts()
 
 const LIDO_LOCATOR = '0xC1d0b3DE6792Bf6b4b37EccdcC24e45978Cfd2Eb'
-const PRICE_UNIT = 10n ** 18n
 const FUND = parseEther('10000')
 
 const LDO_INDEX = 0n
@@ -66,9 +61,6 @@ describe('BuybackExecutor.addLiquidity', function () {
   let pool: ITwocryptoNGPool
   let executor: BuybackExecutor
   let executorAddr: string
-
-  let baseSnapshot: SnapshotRestorer
-  let snapshot: SnapshotRestorer
 
   /*//////////////////////////////////////////////////////////////
                         ORACLE-PRICED VALUATION
@@ -150,7 +142,7 @@ describe('BuybackExecutor.addLiquidity', function () {
       skipRouterConfiguration: true,
     })) as { stonks: Stonks }
 
-    await exec.setStonksAndOperatingMode(await stonks.getAddress())
+    await exec.setStonks(await stonks.getAddress())
     return exec
   }
 
@@ -158,7 +150,9 @@ describe('BuybackExecutor.addLiquidity', function () {
     await ldo.connect(agent).transfer(executorAddr, (wstEquiv * fairPrice) / PRICE_UNIT)
   }
   async function giveExecutorStEth(wstEquiv: bigint): Promise<void> {
-    await stEthErc20.connect(deployer).transfer(executorAddr, await wsteth.getStETHByWstETH(wstEquiv))
+    await stEthErc20
+      .connect(deployer)
+      .transfer(executorAddr, await wsteth.getStETHByWstETH(wstEquiv))
   }
   async function fundExecutorBalanced(wstPerSide: bigint): Promise<void> {
     await giveExecutorLdo(wstPerSide)
@@ -186,7 +180,10 @@ describe('BuybackExecutor.addLiquidity', function () {
                                SETUP
   //////////////////////////////////////////////////////////////*/
 
-  before(async function () {
+  // Builds the suite state declared above: funded actors, an empty pool at the fair price, and a
+  // funded bootstrap-mode executor in LP mode. Runs once under `loadFixture`, which restores its
+  // snapshot before every test.
+  async function setupAddLiquidityEnvironment(): Promise<void> {
     ;[deployer, attacker] = await ethers.getSigners()
     deployerAddr = await deployer.getAddress()
     attackerAddr = await attacker.getAddress()
@@ -237,23 +234,16 @@ describe('BuybackExecutor.addLiquidity', function () {
     expect(await executor.lpModeEnabled()).to.equal(true)
     await fundExecutorBalanced(DEPOSIT_WST_PER_SIDE)
 
-    // Roles the tests exercise (drain balances / pause), granted once so snapshots preserve them.
-    await executor.grantRole(await executor.MANAGER_ROLE(), deployerAddr)
-    await executor.grantRole(await executor.EMERGENCY_ROLE(), deployerAddr)
-
-    baseSnapshot = await takeSnapshot()
-  })
+    // Roles the tests exercise (drain balances / pause).
+    await executor.grantRole(MANAGER_ROLE, deployerAddr)
+    await executor.grantRole(EMERGENCY_ROLE, deployerAddr)
+  }
 
   beforeEach(async function () {
-    snapshot = await takeSnapshot()
+    await loadFixture(setupAddLiquidityEnvironment)
   })
 
-  afterEach(async function () {
-    await snapshot.restore()
-  })
-
-  after(async function () {
-    if (baseSnapshot) await baseSnapshot.restore()
+  after(function () {
     resetTestOracleRouter()
   })
 
@@ -441,7 +431,7 @@ describe('BuybackExecutor.addLiquidity', function () {
         },
         skipRouterConfiguration: true,
       })) as { stonks: Stonks }
-      await executor.setStonksAndOperatingMode(await stonks.getAddress())
+      await executor.setStonks(await stonks.getAddress())
       expect(await executor.lpModeEnabled()).to.equal(false)
 
       expect(await executor.canAddLiquidity()).to.equal(false)
@@ -453,7 +443,10 @@ describe('BuybackExecutor.addLiquidity', function () {
       expect(await ldo.balanceOf(executorAddr)).to.equal(0n)
 
       expect(await executor.canAddLiquidity()).to.equal(false)
-      await expect(executor.addLiquidity()).to.be.revertedWithCustomError(executor, 'ZeroLdoBalance')
+      await expect(executor.addLiquidity()).to.be.revertedWithCustomError(
+        executor,
+        'ZeroLdoBalance'
+      )
     })
 
     it('reverts ZeroStEthBalance when the executor holds LDO but no stETH', async function () {
