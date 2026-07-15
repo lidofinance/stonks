@@ -5,11 +5,10 @@ import fmt from '../utils/format'
 import { confirmOrAbort } from '../utils/prompt'
 import { getDeployer, saveDeployment, verify, waitForDeployment } from '../utils/deployment'
 import { StakingRevenueSource__factory } from '../typechain-types'
+import { LIDO_LOCATOR_ADDRESS, ORACLE_ROUTER_ADDRESS } from './nest-parameters'
 
-// OracleRouter from Stonks v2 deploy
-const ORACLE_ROUTER = '0x79ef3a538200Fe4981D67E7e886bfb36D4Cb5a31'
-
-const LIDO_LOCATOR = '0xC1d0b3DE6792Bf6b4b37EccdcC24e45978Cfd2Eb'
+const ORACLE_ROUTER = ORACLE_ROUTER_ADDRESS
+const LIDO_LOCATOR = LIDO_LOCATOR_ADDRESS
 
 assert(ethers.isAddress(ORACLE_ROUTER), 'ORACLE_ROUTER is not a valid address')
 assert(ethers.isAddress(LIDO_LOCATOR), 'LIDO_LOCATOR is not a valid address')
