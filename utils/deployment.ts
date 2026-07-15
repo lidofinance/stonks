@@ -1,6 +1,37 @@
+import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { join } from 'path'
+
 import fmt from './format'
 import { ContractTransactionResponse, ContractTransactionReceipt, TransactionReceipt } from 'ethers'
 import { ethers, run, network } from 'hardhat'
+
+type DeploymentEntry = {
+  contract: string
+  address: string
+  deployTx?: string
+  constructorArgs?: unknown[]
+}
+
+// Records a deployment in deployed-<network>.json
+export function saveDeployment(name: string, entry: DeploymentEntry) {
+  const file = join(__dirname, '..', `deployed-${network.name}.json`)
+  const current = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {}
+
+  current[name] = {
+    implementation: {
+      contract: entry.contract,
+      address: entry.address,
+      ...(entry.deployTx ? { deployTx: entry.deployTx } : {}),
+      constructorArgs: entry.constructorArgs ?? [],
+    },
+  }
+  // store bigint as a decimal string since it's not JSON-serializable
+  const replacer = (_: string, value: unknown) =>
+    typeof value === 'bigint' ? value.toString() : value
+
+  writeFileSync(file, JSON.stringify(current, replacer, 2) + '\n')
+  console.log(`Recorded ${fmt.name(name)} in ${fmt.value(`deployed-${network.name}.json`)}`)
+}
 
 export async function getDeployer() {
   // the first address is the deployer account. See the hardhat.config.ts
