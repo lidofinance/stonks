@@ -20,7 +20,7 @@ const CURVE_POOL_AND_TOKEN = '0xD7f1dA0a28E39dd0dB70E6Acdc2B49846AD22760'
 const POOL_PRICE_DIVERGENCE_TOLERANCE_BPS = 200n // 2%
 // stETH order bounds. minAllowedOrderAmount in (0, maxAllowedOrderAmount)
 const MIN_ALLOWED_ORDER_AMOUNT = ethers.parseEther('1') // 1 stETH
-const MAX_ALLOWED_ORDER_AMOUNT = ethers.parseEther('3') // 3 stETH
+const MAX_ALLOWED_ORDER_AMOUNT = ethers.parseEther('20') // 20 stETH
 // Per-call deposit value bounds, in 1e18-scaled USD. minDepositValueUsd in (0, maxDepositValueUsd)
 const MIN_DEPOSIT_VALUE_USD = ethers.parseEther('1000') // $1,000
 const MAX_DEPOSIT_VALUE_USD = ethers.parseEther('50000') // $50,000
