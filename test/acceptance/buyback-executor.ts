@@ -1,19 +1,15 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
 import { getContracts } from '../../utils/contracts'
-import {
-  ALLOCATOR_ROLE,
-  EMERGENCY_ROLE,
-  MANAGER_ROLE,
-  DEFAULT_ADMIN_ROLE,
-} from '../helpers/buyback-executor'
+import { CURVE_POOL_ABI } from '../../utils/curve-twocrypto'
+import { ALLOCATOR_ROLE, EMERGENCY_ROLE, MANAGER_ROLE } from '../helpers/buyback-executor'
+import { ORACLE_ROUTER_ADDRESS } from '../helpers/buyback-scenario'
 
 // Fill these from the deployment under review before running. An empty executor address skips the
 // whole suite; the other fields are guarded so a half-filled template fails loudly.
 const BUYBACK_EXECUTOR_ADDRESS: string = ''
 const CURVE_POOL_AND_TOKEN_ADDRESS: string = ''
 const STONKS_ADDRESS: string = ''
-const TREASURY_ADDRESS: string = ''
 
 // Operational roles are granted by the admin after construction, not in the constructor. Fill the
 // holders the deployment grants them to; the constructor only grants DEFAULT_ADMIN_ROLE.
@@ -37,7 +33,6 @@ describe('BuybackExecutor: acceptance', function () {
 
     expect(CURVE_POOL_AND_TOKEN_ADDRESS).to.not.equal('')
     expect(STONKS_ADDRESS).to.not.equal('')
-    expect(TREASURY_ADDRESS).to.not.equal('')
 
     const contracts = getContracts()
     const executor = await getExecutor()
@@ -45,13 +40,13 @@ describe('BuybackExecutor: acceptance', function () {
     expect(await executor.WSTETH()).to.hexEqual(contracts.WSTETH)
     expect(await executor.STETH()).to.hexEqual(contracts.STETH)
     expect(await executor.LDO()).to.hexEqual(contracts.LDO)
-    expect(await executor.ORACLE_ROUTER()).to.hexEqual(contracts.ORACLE_ROUTER)
+    expect(await executor.ORACLE_ROUTER()).to.hexEqual(ORACLE_ROUTER_ADDRESS)
     expect(await executor.CURVE_POOL_AND_TOKEN()).to.hexEqual(CURVE_POOL_AND_TOKEN_ADDRESS)
     expect(await executor.stonks()).to.hexEqual(STONKS_ADDRESS)
-    expect(await executor.TREASURY()).to.hexEqual(TREASURY_ADDRESS)
+    expect(await executor.TREASURY()).to.hexEqual(contracts.AGENT)
 
     // PRICE_UNIT is cached from the oracle's PRICE_UNIT at construction.
-    const oracle = await ethers.getContractAt('IOracleRouter', contracts.ORACLE_ROUTER)
+    const oracle = await ethers.getContractAt('IOracleRouter', ORACLE_ROUTER_ADDRESS)
     expect(await executor.PRICE_UNIT()).to.equal(await oracle.PRICE_UNIT())
   })
 
@@ -113,5 +108,22 @@ describe('BuybackExecutor: acceptance', function () {
 
     const stonksOwnable = await ethers.getContractAt('IOwnable', STONKS_ADDRESS)
     expect(await stonksOwnable.manager()).to.hexEqual(BUYBACK_EXECUTOR_ADDRESS)
+  })
+
+  it('should stage the Curve pool empty for the LP bootstrap deposit', async function () {
+    if (BUYBACK_EXECUTOR_ADDRESS === '') this.skip()
+
+    expect(CURVE_POOL_AND_TOKEN_ADDRESS).to.not.equal('')
+
+    // Launch-window precondition: the pool ships unseeded so the executor's first deposit
+    // bootstraps its EMA. Drop this check once the bootstrap deposit has run on-chain.
+    const curvePool = new ethers.Contract(
+      CURVE_POOL_AND_TOKEN_ADDRESS,
+      CURVE_POOL_ABI,
+      ethers.provider
+    )
+    expect(await curvePool.totalSupply()).to.equal(0n)
+    expect(await curvePool.balances(0)).to.equal(0n)
+    expect(await curvePool.balances(1)).to.equal(0n)
   })
 })

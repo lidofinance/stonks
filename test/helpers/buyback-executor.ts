@@ -45,6 +45,16 @@ export const PAUSED_REVERT = 'Pausable: paused'
 export const NOT_PAUSED_REVERT = 'Pausable: not paused'
 export const REENTRANCY_REVERT = 'ReentrancyGuard: reentrant call'
 
+// AllocationStatus enum in declaration order (IBuybackAllocator). ethers returns the value as a bigint.
+export const ALLOCATION_STATUS = {
+  Eligible: 0n,
+  NoAvailableBudget: 1n,
+  QuoteUnavailable: 2n,
+  StEthPriceBelowMin: 3n,
+  AllocationBelowMin: 4n,
+  WindowCapReached: 5n,
+} as const
+
 // AddLiquidityStatus enum in declaration order. ethers returns the value as a bigint.
 export const ADD_LIQUIDITY_STATUS = {
   ZeroLdoBalance: 0n,
@@ -420,12 +430,36 @@ export async function expireOrder(ctx: BuybackContext): Promise<void> {
 
 const FORK_NETWORKS = ['hardhat', 'mainnet', 'localhost']
 
+/// True when the current network is a mainnet-fork target. Named fork nodes are trusted by name;
+/// the in-process hardhat network only counts when forking is actually configured, so fork suites
+/// skip instead of failing on the first mainnet call.
+export function isForkNetwork(): boolean {
+  if (!FORK_NETWORKS.includes(network.name)) {
+    return false
+  }
+  if (network.name === 'hardhat') {
+    const { forking } = network.config as { forking?: { enabled?: boolean; url?: string } }
+    return forking?.enabled === true && Boolean(forking.url)
+  }
+  return true
+}
+
+/// Impersonates `address` and tops up its ETH balance so it can send transactions.
+export async function impersonateWithBalance(address: string): Promise<Signer> {
+  await impersonateAccount(address)
+  await setBalance(address, 100n * PRICE_UNIT)
+  return ethers.getSigner(address)
+}
+
 // Curve TwoCrypto-NG factory deploy_pool, the one method the harness calls on the factory.
 const CURVE_FACTORY_ABI = [
   'function deploy_pool(string,string,address[2],uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256) returns (address)',
 ]
 // IStETH does not declare submit. Add it to stake ETH for the wstETH seed.
-const STETH_ABI = [...IStETH__factory.abi, 'function submit(address) payable returns (uint256)']
+export const STETH_ABI = [
+  ...IStETH__factory.abi,
+  'function submit(address) payable returns (uint256)',
+]
 
 // TwoCrypto-NG pool parameters for the intended LDO/wstETH deployment. A is the geometric midpoint of
 // the allowed 2-coin range, the rest are Curve volatile-pair defaults, and ma_exp_time gives a ~10 min
@@ -508,7 +542,7 @@ function buildDeployPoolArgs(ldo: string, wstEth: string, initialPrice: bigint) 
 export async function setupForkBuyback(
   options: ForkSetupOptions = {}
 ): Promise<ForkBuybackContext | undefined> {
-  if (!FORK_NETWORKS.includes(network.name)) {
+  if (!isForkNetwork()) {
     return undefined
   }
 
@@ -562,9 +596,7 @@ export async function setupForkBuyback(
 
   // Acquire LDO from the Aragon Agent treasury.
   const ldoForSeed = (seedWstEth * initialPrice) / PRICE_UNIT
-  await impersonateAccount(contracts.AGENT)
-  await setBalance(contracts.AGENT, 10n * PRICE_UNIT)
-  const agent = await ethers.getSigner(contracts.AGENT)
+  const agent = await impersonateWithBalance(contracts.AGENT)
   await IERC20__factory.connect(contracts.LDO, agent).transfer(
     deployerAddress,
     ldoForSeed + 3_000_000n * PRICE_UNIT
@@ -680,7 +712,10 @@ export function liquidityAddedArgs(
   logs: readonly Log[]
 ): { ldoAmount: bigint; wstEthAmount: bigint; lpTokensMinted: bigint } {
   const topic = ctx.buybackExecutor.interface.getEvent('LiquidityAdded')!.topicHash
-  const log = logs.find((entry) => entry.topics[0] === topic)!
+  const log = logs.find((entry) => entry.topics[0] === topic)
+  if (log === undefined) {
+    throw new Error('LiquidityAdded event not found in the receipt logs')
+  }
   const parsed = ctx.buybackExecutor.interface.parseLog({
     topics: [...log.topics],
     data: log.data,

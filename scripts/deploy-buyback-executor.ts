@@ -6,26 +6,26 @@ import { confirmOrAbort } from '../utils/prompt'
 import { getDeployer, saveDeployment, verify, waitForDeployment } from '../utils/deployment'
 import { BuybackExecutor__factory } from '../typechain-types'
 import { BuybackExecutor } from '../typechain-types/contracts/automated-buybacks/BuybackExecutor'
+import { CURVE_POOL_AND_TOKEN_ADDRESS, EXECUTOR_PARAMS, ORACLE_ROUTER_ADDRESS } from './nest-parameters'
 
 const ADMIN = '0x2e59A20f205bB85a89C53f1936454680651E618e' // Aragon Voting
 const TREASURY = '0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c' // Aragon Agent
 const WSTETH = '0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0'
 const LDO = '0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32'
-// OracleRouter from Stonks v2 deploy
-const ORACLE_ROUTER = '0x79ef3a538200Fe4981D67E7e886bfb36D4Cb5a31'
-// Pre-existing Curve LDO/wstETH TwoCrypto-NG pool (also the LP token)
-const CURVE_POOL_AND_TOKEN = '0xD7f1dA0a28E39dd0dB70E6Acdc2B49846AD22760'
+const ORACLE_ROUTER = ORACLE_ROUTER_ADDRESS
+const CURVE_POOL_AND_TOKEN = CURVE_POOL_AND_TOKEN_ADDRESS
 
+// Bounds sourced from the shared deploy plan in nest-parameters.ts.
 // Max pool-EMA vs oracle divergence, in (0, 1000]
-const POOL_PRICE_DIVERGENCE_TOLERANCE_BPS = 200n // 2%
+const POOL_PRICE_DIVERGENCE_TOLERANCE_BPS = EXECUTOR_PARAMS.poolPriceDivergenceToleranceBps
 // stETH order bounds. minAllowedOrderAmount in (0, maxAllowedOrderAmount)
-const MIN_ALLOWED_ORDER_AMOUNT = ethers.parseEther('1') // 1 stETH
-const MAX_ALLOWED_ORDER_AMOUNT = ethers.parseEther('20') // 20 stETH
+const MIN_ALLOWED_ORDER_AMOUNT = EXECUTOR_PARAMS.minAllowedOrderAmount
+const MAX_ALLOWED_ORDER_AMOUNT = EXECUTOR_PARAMS.maxAllowedOrderAmount
 // Per-call deposit value bounds, in 1e18-scaled USD. minDepositValueUsd in (0, maxDepositValueUsd)
-const MIN_DEPOSIT_VALUE_USD = ethers.parseEther('1000') // $1,000
-const MAX_DEPOSIT_VALUE_USD = ethers.parseEther('50000') // $50,000
+const MIN_DEPOSIT_VALUE_USD = EXECUTOR_PARAMS.minDepositValueUsd
+const MAX_DEPOSIT_VALUE_USD = EXECUTOR_PARAMS.maxDepositValueUsd
 // Pool TVL (1e18-scaled USD) at/above which the divergence gate is enforced, in (0, 1_000_000e18]
-const POOL_BOOTSTRAP_MIN_TVL_USD = ethers.parseEther('250000') // $250,000
+const POOL_BOOTSTRAP_MIN_TVL_USD = EXECUTOR_PARAMS.poolBootstrapMinTvlUsd
 
 assert(ethers.isAddress(ADMIN), 'ADMIN is not a valid address')
 assert(ethers.isAddress(TREASURY), 'TREASURY is not a valid address')

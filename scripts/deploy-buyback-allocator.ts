@@ -6,24 +6,22 @@ import { confirmOrAbort } from '../utils/prompt'
 import { getDeployer, saveDeployment, verify, waitForDeployment } from '../utils/deployment'
 import { BuybackAllocator__factory } from '../typechain-types'
 import { BuybackAllocator } from '../typechain-types/contracts/automated-buybacks/BuybackAllocator'
+import { ALLOCATOR_PARAMS, ORACLE_ROUTER_ADDRESS } from './nest-parameters'
 
 const ADMIN = '0x2e59A20f205bB85a89C53f1936454680651E618e' // Aragon Voting
 const TREASURY = '0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c' // Aragon Agent
 const STETH = '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84'
-// OracleRouter from Stonks v2 deploy
-const ORACLE_ROUTER = '0x79ef3a538200Fe4981D67E7e886bfb36D4Cb5a31'
+const ORACLE_ROUTER = ORACLE_ROUTER_ADDRESS
 // Receives allocations: the deployed BuybackExecutor
 const EXECUTOR = '' // TODO
 
-// USD limits are 1e18-scaled. Make sure that values below are consistent to deploy plan
-const DAILY_CAP_USD = ethers.parseEther('50000') // $50,000
-const YEARLY_CAP_USD = ethers.parseEther('10000000') // $10,000,000
-const RESERVE_DAILY_RATE_USD = ethers.parseEther('109589') // $109,589/day, $40M/yr baseline
-const SURPLUS_SHARE_BP = 5000n // 50%
-// Governance lever: 0 disables the stETH price floor
-const MIN_STETH_PRICE_USD = 0n
-// Dust floor per allocation
-const MIN_SPEND_PER_CALL_USD = ethers.parseEther('1000') // $1,000
+// USD limits are 1e18-scaled, sourced from the shared deploy plan in nest-parameters.ts.
+const DAILY_CAP_USD = ALLOCATOR_PARAMS.dailyCapUSD
+const YEARLY_CAP_USD = ALLOCATOR_PARAMS.yearlyCapUSD
+const RESERVE_DAILY_RATE_USD = ALLOCATOR_PARAMS.reserveDailyRateUSD
+const SURPLUS_SHARE_BP = ALLOCATOR_PARAMS.surplusShareBP
+const MIN_STETH_PRICE_USD = ALLOCATOR_PARAMS.minStEthPriceUSD
+const MIN_SPEND_PER_CALL_USD = ALLOCATOR_PARAMS.minSpendPerCallUSD
 
 const STAKING_REVENUE_SOURCE = '' // TODO
 // Sources registered at deployment. NEST launches with StakingRevenueSource as the only source
