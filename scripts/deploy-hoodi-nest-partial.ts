@@ -10,7 +10,9 @@ import {
   AmountConverterFactory__factory,
   BuybackAllocator__factory,
   BuybackExecutor__factory,
+  ChainlinkFeedRegistryStub__factory,
   CurvePoolStub__factory,
+  OracleRouter__factory,
   StakingRevenueSource__factory,
   StonksFactory__factory,
 } from '../typechain-types'
@@ -23,7 +25,7 @@ import { STONKS_PARAMS } from './nest-parameters'
  * BuybackAllocator. Curve is a configurable stub (LP mode is out of scope on Hoodi), CoW is the
  * settlement/relayer stub pair already deployed on Hoodi. Mirrors test/hoodi/HoodiNestPartialFork.t.sol.
  *
- * Post-deploy wiring (a single vote, see the fork test):
+ * The script also pushes the registry feeds (permissionless, pre-vote). Remaining wiring is a vote:
  *  - Voting: oracleRouter.setEthUsdBridge, setTokenFeed(stETH), setTokenFeed(LDO),
  *    executor.grantRole(ALLOCATOR_ROLE, allocator), executor.setStonks(stonks), allocator.activate()
  *  - Agent: tokenRateNotifier.addObserver(revenueSource, WithArgs), fund the allocator with stETH
@@ -31,6 +33,14 @@ import { STONKS_PARAMS } from './nest-parameters'
 
 // https://docs.lido.fi/deployed-contracts/hoodi
 const LIDO_LOCATOR = '0xe2EF9536DAAAEBFf5b1c130957AB3E80056b06D8'
+
+const ETH = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
+const USD = '0x0000000000000000000000000000000000000348'
+
+// Dummy aggregator addresses; the stub stores them but reads prices from the stub itself.
+const ETH_USD_AGGREGATOR = '0xbeEfCAFE00000000000000000000000000000000'
+const STETH_ETH_AGGREGATOR = '0xcafE000000000000000000000000000000000001'
+const LDO_ETH_AGGREGATOR = '0xCAFE000000000000000000000000000000000002'
 
 /**
  * Curve `price_oracle`: LDO per wstETH. Only read by the LP-mode divergence gate, dormant in
@@ -274,6 +284,36 @@ async function main() {
     deployTx: allocatorReceipt.hash,
     constructorArgs: [allocatorParams],
   })
+
+  // 7. Pre-vote oracle config (permissionless, not a governance step). Push feeds to the registry
+  // the router actually reads, resolved live from OracleRouter.FEED_REGISTRY() rather than the
+  // (stale) address in utils/contracts.ts. Timestamps stamped now so the feeds are fresh.
+  const router = OracleRouter__factory.connect(contracts.ORACLE_ROUTER, deployer)
+  const feedRegistryAddress = await router.FEED_REGISTRY()
+  const feedRegistry = ChainlinkFeedRegistryStub__factory.connect(feedRegistryAddress, deployer)
+  const now = BigInt((await deployer.provider!.getBlock('latest'))!.timestamp)
+  console.log(`${fmt.name('FeedRegistry')}: ${fmt.address(feedRegistryAddress)}`)
+
+  const feeds = [
+    { base: ETH, quote: USD, aggregator: ETH_USD_AGGREGATOR, decimals: 8, answer: 192_326_070_000n },
+    { base: contracts.STETH, quote: ETH, aggregator: STETH_ETH_AGGREGATOR, decimals: 18, answer: 999_805_027_725_356_100n },
+    { base: contracts.LDO, quote: ETH, aggregator: LDO_ETH_AGGREGATOR, decimals: 18, answer: 375_000_000_000_000n },
+  ]
+  for (const f of feeds) {
+    await (
+      await feedRegistry.setFeed(f.base, f.quote, {
+        aggregator: f.aggregator,
+        roundId: 1n,
+        answeredInRound: 1n,
+        decimals: f.decimals,
+        startedAt: now,
+        updatedAt: now,
+        answer: f.answer,
+      })
+    ).wait(1)
+    console.log(`  * feed ${fmt.value(f.base)}/${fmt.value(f.quote)} set`)
+  }
+  console.log()
 
   await verify(revenueSourceAddress, [contracts.ORACLE_ROUTER, LIDO_LOCATOR], revenueSourceReceipt)
   await verify(curvePoolAddress, [contracts.LDO, contracts.WSTETH], curvePoolReceipt)
