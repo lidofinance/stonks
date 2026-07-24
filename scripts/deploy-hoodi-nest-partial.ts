@@ -1,6 +1,6 @@
 import { assert } from 'chai'
-import { network } from 'hardhat'
-import { parseEther } from 'ethers'
+import { network, ethers } from 'hardhat'
+import { isAddress, parseEther } from 'ethers'
 
 import fmt from '../utils/format'
 import { confirmOrAbort } from '../utils/prompt'
@@ -23,7 +23,7 @@ import { STONKS_PARAMS } from './nest-parameters'
 /**
  * Treasury-mode NEST deployment for Hoodi: real StakingRevenueSource, BuybackExecutor, Stonks and
  * BuybackAllocator. Curve is a configurable stub (LP mode is out of scope on Hoodi), CoW is the
- * settlement/relayer stub pair already deployed on Hoodi. Mirrors test/hoodi/HoodiNestPartialFork.t.sol.
+ * settlement/relayer stub pair already deployed on Hoodi.
  *
  * The script also pushes the registry feeds (permissionless, pre-vote). Remaining wiring is a vote:
  *  - Voting: oracleRouter.setEthUsdBridge, setTokenFeed(stETH), setTokenFeed(LDO),
@@ -77,9 +77,23 @@ const HOODI_EXECUTOR_PARAMS = {
 } as const
 
 assert(network.name === 'hoodi', 'This script is Hoodi-only')
+assert(isAddress(LIDO_LOCATOR), 'LIDO_LOCATOR is not a valid address')
 
 async function main() {
   const contracts = getContracts()
+
+  for (const [name, address] of Object.entries({
+    ADMIN: contracts.ADMIN,
+    AGENT: contracts.AGENT,
+    STETH: contracts.STETH,
+    WSTETH: contracts.WSTETH,
+    LDO: contracts.LDO,
+    ORACLE_ROUTER: contracts.ORACLE_ROUTER,
+    SETTLEMENT: contracts.SETTLEMENT,
+    VAULT_RELAYER: contracts.VAULT_RELAYER,
+  })) {
+    assert(isAddress(address), `${name} is not a valid address`)
+  }
 
   console.log(
     `Preparing for the treasury-mode ${fmt.name('NEST')} deployment on "${fmt.network(
@@ -211,6 +225,20 @@ async function main() {
     address: stonksFactoryAddress,
     deployTx: stonksFactoryReceipt.hash,
     constructorArgs: [contracts.ADMIN, contracts.AGENT, contracts.SETTLEMENT, contracts.VAULT_RELAYER],
+  })
+
+  const settlement = new ethers.Contract(
+    contracts.SETTLEMENT,
+    ['function domainSeparator() view returns (bytes32)'],
+    deployer
+  )
+  const domainSeparator = await settlement.domainSeparator()
+
+  saveDeployment('orderSample', {
+    contract: 'contracts/Order.sol',
+    address: orderSample,
+    deployTx: stonksFactoryReceipt.hash,
+    constructorArgs: [contracts.ADMIN, contracts.AGENT, contracts.VAULT_RELAYER, domainSeparator],
   })
 
   const stonksTx = await stonksFactory.deployStonks(
