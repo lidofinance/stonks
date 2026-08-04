@@ -196,15 +196,9 @@ describe('OracleRouter integration', function () {
       const amount = parseEther('1.123456789123456789')
       const result = await converter.getExpectedOut(contracts.STETH, contracts.DAI, amount)
 
-      const result1 = await converter.getExpectedOut(
-        contracts.STETH,
-        contracts.DAI,
-        parseEther('1')
-      )
+      const expected = await getExpectedConversion(contracts.STETH, contracts.DAI, amount)
 
-      const expected = (result1 * 1123456789123456789n) / parseEther('1')
-
-      expect(result).to.be.closeTo(expected, 1n)
+      expect(result).to.equal(expected)
     })
 
     it('should produce consistent results for repeated queries', async () => {
