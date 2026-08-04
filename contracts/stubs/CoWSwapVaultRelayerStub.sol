@@ -22,19 +22,33 @@ interface IOrder {
         returns (bytes32, address, address, uint256, uint256, uint32);
 }
 
-/// @title Stub for the CoWSwap's VaultRelayer contract
-/// @notice Contract is supposed to be used as the stub for the relayer address in the StonksFactory
-///     and Order contracts to fill the order, returning tokenFrom from the order instance to the
-///     agent instead of performing a swap.
+error InvalidSignature();
+
+/**
+ * @title Stub for the CoWSwap's VaultRelayer contract
+ * @notice Contract is supposed to be used as the stub for the relayer address in the StonksFactory
+ *     and Order contracts to fill the order, returning tokenFrom from the order instance to the
+ *     agent instead of performing a swap.
+ */
 contract CoWSwapVaultRelayerStub is ManageableStub {
     using SafeERC20 for IERC20;
 
+    // ==================== Constants ====================
+
     bytes4 private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
+
+    // ==================== Constructor ====================
 
     constructor(address owner_, address manager_) ManageableStub(owner_, manager_) {
         owner = owner_;
     }
 
+    // ==================== External Functions ====================
+
+    /**
+     * @notice Fills an order by transferring tokens from the order to the agent.
+     * @param order The order contract to fill.
+     */
     function fill(IOrder order) external onlyManager {
         (bytes32 hash, address tokenFrom, , uint256 sellAmount, , ) = order.getOrderDetails();
 
@@ -45,7 +59,3 @@ contract CoWSwapVaultRelayerStub is ManageableStub {
         IERC20(tokenFrom).safeTransferFrom(address(order), order.AGENT(), sellAmount);
     }
 }
-
-error NotOwner(address sender, address owner);
-error NotManager(address sender, address manager);
-error InvalidSignature();

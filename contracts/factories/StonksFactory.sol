@@ -12,14 +12,24 @@ import {Order} from "../Order.sol";
  * @dev Deploys new instances of the Stonks contract.
  */
 contract StonksFactory {
+    // ==================== Immutables ====================
+
+    /// @notice Address of the Order contract implementation used as a template for cloning.
     address public immutable ORDER_SAMPLE;
+    /// @notice Address of the admin.
+    address public immutable ADMIN;
+    /// @notice Address of the Lido DAO agent.
     address public immutable AGENT;
 
+    // ==================== Events ====================
+
+    event AdminSet(address admin);
     event AgentSet(address agent);
-    event OrderSampleDeployed(address orderAddress);
+    event OrderSampleDeployed(address order);
     event StonksDeployed(
         address indexed stonksAddress,
         address agent,
+        address admin,
         address manager,
         address tokenFrom,
         address tokenTo,
@@ -27,29 +37,60 @@ contract StonksFactory {
         address order,
         uint256 orderDurationInSeconds,
         uint256 marginInBasisPoints,
-        uint256 priceToleranceInBasisPoints
+        uint256 priceToleranceInBasisPoints,
+        uint256 maxImprovementInBasisPoints,
+        bool allowPartialFill
     );
 
+    // ==================== Errors ====================
+
+    error InvalidAdminAddress(address admin);
     error InvalidAgentAddress(address agent);
     error InvalidSettlementAddress(address settlement);
     error InvalidRelayerAddress(address relayer);
 
+    // ==================== Constructor ====================
+
     /**
+     * @param admin_ Address of the admin
      * @param agent_ Address of the Lido DAO agent
      * @param settlement_ Address of the Cow Protocol settlement contract
      * @param relayer_ Address of the Cow Protocol relayer contract
      */
-    constructor(address agent_, address settlement_, address relayer_) {
-        if (agent_ == address(0)) revert InvalidAgentAddress(agent_);
-        if (relayer_ == address(0)) revert InvalidRelayerAddress(relayer_);
-        if (settlement_ == address(0)) revert InvalidSettlementAddress(settlement_);
+    constructor(address admin_, address agent_, address settlement_, address relayer_) {
+        if (admin_ == address(0)) {
+            revert InvalidAdminAddress(admin_);
+        }
+        if (agent_ == address(0)) {
+            revert InvalidAgentAddress(agent_);
+        }
 
+        if (relayer_ == address(0)) {
+            revert InvalidRelayerAddress(relayer_);
+        }
+
+        if (settlement_ == address(0)) {
+            revert InvalidSettlementAddress(settlement_);
+        }
+
+
+        ADMIN = admin_;
         AGENT = agent_;
-        ORDER_SAMPLE = address(new Order(agent_, relayer_, ICoWSwapSettlement(settlement_).domainSeparator()));
+        ORDER_SAMPLE = address(
+            new Order(
+                admin_,
+                agent_,
+                relayer_,
+                ICoWSwapSettlement(settlement_).domainSeparator()
+            )
+        );
 
+        emit AdminSet(admin_);
         emit AgentSet(agent_);
         emit OrderSampleDeployed(ORDER_SAMPLE);
     }
+
+    // ==================== External Functions ====================
 
     /**
      * @notice Deploys a new Stonks contract with specified parameters
@@ -60,6 +101,8 @@ contract StonksFactory {
      * @param orderDurationInSeconds_ Duration of the order in seconds
      * @param marginInBasisPoints_ Margin represented in basis points
      * @param priceToleranceInBasisPoints_ Price tolerance in basis points
+     * @param maxImprovementInBasisPoints_ Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode)
+     * @param allowPartialFill_ Whether orders should allow partial fills (useful for rebasable tokens)
      * @return stonks The address of the newly deployed Stonks contract
      */
     function deployStonks(
@@ -69,24 +112,33 @@ contract StonksFactory {
         address amountConverter_,
         uint256 orderDurationInSeconds_,
         uint256 marginInBasisPoints_,
-        uint256 priceToleranceInBasisPoints_
-    ) public returns (address stonks) {
+        uint256 priceToleranceInBasisPoints_,
+        uint256 maxImprovementInBasisPoints_,
+        bool allowPartialFill_
+    ) external returns (address stonks) {
         stonks = address(
             new Stonks(
-                AGENT,
-                manager_,
-                tokenFrom_, 
-                tokenTo_,
-                amountConverter_,
-                ORDER_SAMPLE,
-                orderDurationInSeconds_,
-                marginInBasisPoints_,
-                priceToleranceInBasisPoints_
+                Stonks.InitParams(
+                    ADMIN,
+                    AGENT,
+                    manager_,
+                    tokenFrom_,
+                    tokenTo_,
+                    amountConverter_,
+                    ORDER_SAMPLE,
+                    orderDurationInSeconds_,
+                    marginInBasisPoints_,
+                    priceToleranceInBasisPoints_,
+                    maxImprovementInBasisPoints_,
+                    allowPartialFill_
+                )
             )
         );
+
         emit StonksDeployed(
             stonks,
             AGENT,
+            ADMIN,
             manager_,
             tokenFrom_,
             tokenTo_,
@@ -94,7 +146,9 @@ contract StonksFactory {
             ORDER_SAMPLE,
             orderDurationInSeconds_,
             marginInBasisPoints_,
-            priceToleranceInBasisPoints_
+            priceToleranceInBasisPoints_,
+            maxImprovementInBasisPoints_,
+            allowPartialFill_
         );
     }
 }

@@ -1,12 +1,12 @@
 import { network } from 'hardhat'
-import { mainnet, holesky } from '../../utils/contracts'
+import { mainnet, hoodi } from '../../utils/contracts'
 
 export const getTokensToSell = async () => {
   if (['hardhat', 'mainnet', 'localhost'].includes(network.name)) {
     return [mainnet.STETH, mainnet.DAI, mainnet.USDT, mainnet.USDC]
   }
-  if (network.name === 'holesky') {
-    return [holesky.STETH, holesky.DAI, holesky.USDT, holesky.USDC]
+  if (network.name === 'hoodi') {
+    return [hoodi.STETH, hoodi.DAI, hoodi.USDT, hoodi.USDC]
   }
 
   throw new Error('Unknown Network')
@@ -16,8 +16,8 @@ export const getTokensToBuy = async () => {
   if (['hardhat', 'mainnet', 'localhost'].includes(network.name)) {
     return [mainnet.DAI, mainnet.USDT, mainnet.USDC]
   }
-  if (network.name === 'holesky') {
-    return [holesky.DAI, holesky.USDT, holesky.USDC]
+  if (network.name === 'hoodi') {
+    return [hoodi.DAI, hoodi.USDT, hoodi.USDC]
   }
 
   throw new Error('Unknown Network')
@@ -25,7 +25,7 @@ export const getTokensToBuy = async () => {
 
 // https://docs.chain.link/data-feeds/price-feeds/addresses?network=ethereum&page=1
 export const getPriceFeedTimeouts = async () => {
-  if (network.name === 'holesky') {
+  if (network.name === 'hoodi') {
     const year = 60 * 60 * 24 * 365
     return [year, year, year, year] // 1 year for stub
   }

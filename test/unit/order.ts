@@ -7,13 +7,18 @@ import {
   time,
   mine,
 } from '@nomicfoundation/hardhat-network-helpers'
-import { Order, Stonks, HashHelper, AmountConverterTest } from '../../typechain-types'
+import { Order, Stonks, HashHelper, AmountConverterTest, OracleRouter } from '../../typechain-types'
+import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
+import {
+  getAllTestTokens,
+  refreshTestFeedData,
+  resetTestFeedRegistryStub,
+} from '../../utils/test-feed-registry'
 import { deployStonks } from '../../scripts/deployments/stonks'
 import { getContracts } from '../../utils/contracts'
 import { MAGIC_VALUE, formOrderHashFromTxReceipt } from '../../utils/gpv2-helpers'
 import { fillUpERC20FromTreasury } from '../../utils/fill-up-balance'
 import { getPlaceOrderData } from '../../utils/get-events'
-import { isClose } from '../../utils/assert'
 import { PlaceOrderDataEvent } from '../../utils/types'
 
 const PRICE_TOLERANCE_IN_BP = 1000
@@ -25,53 +30,60 @@ describe('Order', async function () {
   let stonks: Stonks
   let hashHelper: HashHelper
   let amountConverterTest: AmountConverterTest
+  let oracleRouter: OracleRouter
   let snapshot: SnapshotRestorer
   let subject: Order
   let orderHash: string
   let orderData: PlaceOrderDataEvent
   let expectedBuyAmount: bigint
 
-  this.beforeAll(async function () {
+  before(async function () {
     snapshot = await takeSnapshot()
     manager = (await ethers.getSigners())[0]
 
     const amountConverterTestFactory = await ethers.getContractFactory('AmountConverterTest')
+
+    oracleRouter = await getTestOracleRouter({
+      tokens: getAllTestTokens(),
+      useRealPrices: true,
+    })
+
+    await refreshTestFeedData(getAllTestTokens())
+
     amountConverterTest = await amountConverterTestFactory.deploy(
-      contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-      contracts.CHAINLINK_USD_QUOTE,
+      await oracleRouter.getAddress(),
       [contracts.STETH],
       [contracts.DAI],
-      [3600]
+      false
     )
     await amountConverterTest.waitForDeployment()
 
-    const { stonks: stonksInstance, amountConverter: amountConverterInstance } = await deployStonks(
-      {
-        factoryParams: {
-          agent: contracts.AGENT,
-          relayer: contracts.VAULT_RELAYER,
-          settlement: contracts.SETTLEMENT,
-          priceFeedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-        },
-        stonksParams: {
-          tokenFrom: contracts.STETH,
-          tokenTo: contracts.DAI,
-          manager: await manager.getAddress(),
-          marginInBps: marginInBps,
-          orderDuration: 3600,
-          priceToleranceInBps: PRICE_TOLERANCE_IN_BP,
-          amountConverterAddress: await amountConverterTest.getAddress(),
-        },
-        amountConverterParams: {
-          conversionTarget: contracts.CHAINLINK_USD_QUOTE, // USD
-          allowedTokensToSell: [contracts.STETH],
-          allowedStableTokensToBuy: [contracts.DAI],
-          priceFeedsHeartbeatTimeouts: [3600],
-        },
-      }
-    )
-    const HashHelperFactory = await ethers.getContractFactory('HashHelper')
+    const { stonks: stonksInstance } = await deployStonks({
+      factoryParams: {
+        admin: contracts.ADMIN,
+        agent: contracts.AGENT,
+        relayer: contracts.VAULT_RELAYER,
+        settlement: contracts.SETTLEMENT,
+        priceFeedRegistry: contracts.CHAINLINK_PRICE_FEED_REGISTRY,
+        oracleRouterAddress: await oracleRouter.getAddress(),
+      },
+      stonksParams: {
+        tokenFrom: contracts.STETH,
+        tokenTo: contracts.DAI,
+        manager: await manager.getAddress(),
+        marginInBps: marginInBps,
+        orderDuration: 3600,
+        priceToleranceInBps: PRICE_TOLERANCE_IN_BP,
+        amountConverterAddress: await amountConverterTest.getAddress(),
+      },
+      amountConverterParams: {
+        oracleRouter: await oracleRouter.getAddress(),
+        allowedTokensToSell: [contracts.STETH],
+        allowedTokensToBuy: [contracts.DAI],
+      },
+    })
 
+    const HashHelperFactory = await ethers.getContractFactory('HashHelper')
     hashHelper = await HashHelperFactory.deploy()
     await hashHelper.waitForDeployment()
 
@@ -83,10 +95,34 @@ describe('Order', async function () {
       address: await stonks.getAddress(),
     })
 
+    // Ensure router-bound registry feeds are fresh to avoid staleness/answeredInRound issues
+    const latest = await ethers.provider.getBlock('latest')
+    const nowTs = BigInt(latest!.timestamp)
+
+    const registryAddr = await oracleRouter.FEED_REGISTRY()
+    const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
+
+    const seed = async (base: string, quote: string) => {
+      const cur = await stub.feeds(base, quote)
+      await stub.setFeed(base, quote, {
+        aggregator:
+          cur.aggregator !== ethers.ZeroAddress ? cur.aggregator : await stub.getAddress(),
+        answer: cur.answer !== 0n ? cur.answer : 1n,
+        updatedAt: nowTs,
+        startedAt: nowTs,
+        answeredInRound: 1n,
+        roundId: 1n,
+        decimals: cur.decimals !== 0n ? cur.decimals : 8n,
+      })
+    }
+    await seed(contracts.CHAINLINK_ETH_QUOTE, contracts.CHAINLINK_USD_QUOTE)
+    await seed(contracts.STETH, contracts.CHAINLINK_USD_QUOTE)
+    await seed(contracts.DAI, contracts.CHAINLINK_USD_QUOTE)
+
     expectedBuyAmount = await stonks.estimateTradeOutputFromCurrentBalance()
+
     const placeOrderTx = await stonks.placeOrder(expectedBuyAmount)
     const placeOrderTxReceipt = await placeOrderTx.wait()
-
     if (!placeOrderTxReceipt) throw Error('placeOrderTxReceipt is null')
 
     const decodedOrderTx = await getPlaceOrderData(placeOrderTxReceipt)
@@ -94,19 +130,15 @@ describe('Order', async function () {
     orderData = decodedOrderTx
     subject = await ethers.getContractAt('Order', orderData.address, manager)
 
-    orderHash = await formOrderHashFromTxReceipt(
-      placeOrderTxReceipt,
-      stonks,
-      expectedBuyAmount,
-      BigInt(marginInBps)
-    )
+    orderHash = await formOrderHashFromTxReceipt(placeOrderTxReceipt)
   })
 
   describe('initialization (direct):', function () {
-    it('sample deployment should emit RelayerSet and DomainSeparatorSet events', async () => {
+    it('sample deployment should emit RelayerSet and DomainSeparatorSet events', async function () {
       const contractFactory = await ethers.getContractFactory('Order')
 
       const contract = await contractFactory.deploy(
+        contracts.ADMIN,
         contracts.AGENT,
         contracts.VAULT_RELAYER,
         contracts.DOMAIN_SEPARATOR
@@ -118,7 +150,12 @@ describe('Order', async function () {
         .to.emit(contract, 'DomainSeparatorSet')
         .withArgs(contracts.DOMAIN_SEPARATOR)
     })
-    it('sample instance should be initialized by default', async () => {
+    it('sample instance should have correct admin and agent addresses', async function () {
+      const orderSample = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
+      expect(await orderSample.ADMIN()).to.equal(contracts.ADMIN)
+      expect(await orderSample.AGENT()).to.equal(contracts.AGENT)
+    })
+    it('sample instance should be initialized by default', async function () {
       const subject = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
       await expect(
         subject.initialize(expectedBuyAmount, ethers.ZeroAddress)
@@ -127,7 +164,11 @@ describe('Order', async function () {
   })
 
   describe('initialization (from Stonks):', function () {
-    it('should have correct order parameters', async () => {
+    it('should have correct admin and agent addresses', async function () {
+      expect(await subject.ADMIN()).to.equal(contracts.ADMIN)
+      expect(await subject.AGENT()).to.equal(contracts.AGENT)
+    })
+    it('should have correct order parameters', async function () {
       const [tokenFrom, tokenTo, orderDurationInSeconds] = await stonks.getOrderParameters()
       const token = await ethers.getContractAt('IERC20', tokenFrom)
 
@@ -144,8 +185,10 @@ describe('Order', async function () {
       expect(BigInt(orderData.order.validTo)).to.be.equal(
         BigInt(orderData.timestamp) + orderDurationInSeconds
       )
+      expect(await subject.allowPartialFill()).to.equal(false)
+      expect(await subject.cancelled()).to.equal(false)
     })
-    it('should return correct params from getOrderDetails', async () => {
+    it('should return correct params from getOrderDetails', async function () {
       const [tokenFromParam, tokenToParam, orderDurationInSeconds] =
         await stonks.getOrderParameters()
       const [orderHash, tokenFrom, tokenTo, sellAmount, buyAmount, validTo] =
@@ -163,20 +206,20 @@ describe('Order', async function () {
   describe('isValidSignature:', function () {
     let localSnapshot: SnapshotRestorer
 
-    this.beforeEach(async function () {
+    beforeEach(async function () {
       localSnapshot = await takeSnapshot()
     })
 
-    it('should return magic value if order hash is valid', async () => {
+    it('should return magic value if order hash is valid', async function () {
       expect(await subject.isValidSignature(orderHash, '0x')).to.equal(MAGIC_VALUE)
     })
-    it('should revert if order hash is invalid', async () => {
+    it('should revert if order hash is invalid', async function () {
       await expect(subject.isValidSignature(ethers.ZeroHash, '0x')).to.be.revertedWithCustomError(
         subject,
         'InvalidOrderHash'
       )
     })
-    it('should revert if order is expired', async () => {
+    it('should revert if order is expired', async function () {
       await time.increase(60 * 60 + 1)
       await mine()
 
@@ -185,23 +228,31 @@ describe('Order', async function () {
         'OrderExpired'
       )
     })
-    it('should not revert if there was a price spike less than price tolerance allows', async () => {
-      await amountConverterTest.multiplyAnswer(10000 + PRICE_TOLERANCE_IN_BP)
-      expect(await subject.isValidSignature(orderHash, '0x')).to.equal(MAGIC_VALUE)
+    it('should not revert if there was a price deterioration within tolerance', async function () {
+      await amountConverterTest.multiplyAnswer(10000 - PRICE_TOLERANCE_IN_BP + 1)
+
+      const [currentHash] = await subject.getOrderDetails()
+      expect(await subject.isValidSignature(currentHash, '0x')).to.equal(MAGIC_VALUE)
     })
-    it('should revert if there was a price spike', async () => {
+    it('should revert if there was a price spike', async function () {
       const orderDetails = await subject.getOrderDetails()
       const sellAmount = orderDetails[3]
       const buyAmount = orderDetails[4]
-      const maxToleratedAmount = buyAmount + (buyAmount * BigInt(PRICE_TOLERANCE_IN_BP)) / 10000n
+      const toleratedShortfall = (buyAmount * BigInt(PRICE_TOLERANCE_IN_BP)) / 10000n
+      const minAcceptable = buyAmount - toleratedShortfall
 
-      await amountConverterTest.multiplyAnswer(10000 + PRICE_TOLERANCE_IN_BP + 1)
-      await expect(subject.isValidSignature(orderHash, '0x'))
-        .to.be.revertedWithCustomError(subject, 'PriceConditionChanged')
-        .withArgs(maxToleratedAmount, await stonks.estimateTradeOutput(sellAmount))
+      // Create a downside move beyond tolerance
+      await amountConverterTest.multiplyAnswer(10000 - PRICE_TOLERANCE_IN_BP - 1)
+
+      const currentCalculated = await stonks.estimateTradeOutput(sellAmount)
+      const [currentHash] = await subject.getOrderDetails()
+
+      await expect(subject.isValidSignature(currentHash, '0x'))
+        .to.be.revertedWithCustomError(subject, 'PriceShortfallExceedsTolerance')
+        .withArgs(minAcceptable, currentCalculated)
     })
 
-    this.afterEach(async function () {
+    afterEach(async function () {
       await localSnapshot.restore()
     })
   })
@@ -209,10 +260,10 @@ describe('Order', async function () {
   describe('recoverTokenFrom:', function () {
     let localSnapshot: SnapshotRestorer
 
-    this.beforeEach(async function () {
+    beforeEach(async function () {
       localSnapshot = await takeSnapshot()
     })
-    it('should succesfully recover token from', async () => {
+    it('should succesfully recover token from', async function () {
       const [tokenFrom] = await stonks.getOrderParameters()
       const subjectWithStranger = subject.connect((await ethers.getSigners())[4])
 
@@ -228,10 +279,10 @@ describe('Order', async function () {
       const stonksBalanceAfter = await token.balanceOf(stonks)
       const orderBalanceAfter = await token.balanceOf(subjectWithStranger)
 
-      expect(isClose(stonksBalanceBefore + orderBalanceBefore, stonksBalanceAfter, 1n)).to.be.true
-      expect(isClose(orderBalanceAfter, BigInt(0), 1n)).to.be.true
+      expect(stonksBalanceAfter).to.be.closeTo(stonksBalanceBefore + orderBalanceBefore, 1n)
+      expect(orderBalanceAfter).to.be.closeTo(BigInt(0), 1n)
     })
-    it('should revert if order is not expired', async () => {
+    it('should revert if order is not expired', async function () {
       const orderDetails = await subject.getOrderDetails()
       const block = await ethers.provider.getBlockNumber()
       const timestamp = (await ethers.provider.getBlock(block))?.timestamp!
@@ -240,7 +291,7 @@ describe('Order', async function () {
         .to.be.revertedWithCustomError(subject, 'OrderNotExpired')
         .withArgs(orderDetails[5], timestamp + 1)
     })
-    it('should revert if nothing to recover', async () => {
+    it('should revert if nothing to recover', async function () {
       await time.increase(60 * 60 + 1)
 
       await subject.recoverTokenFrom()
@@ -249,19 +300,19 @@ describe('Order', async function () {
         'InvalidAmountToRecover'
       )
     })
-    this.afterEach(async function () {
+    afterEach(async function () {
       await localSnapshot.restore()
     })
   })
 
   describe('recoverERC20:', async function () {
-    it('should revert if recover a token from', async () => {
+    it('should revert if recover a token from', async function () {
       const [tokenFrom] = await stonks.getOrderParameters()
       await expect(subject.recoverERC20(tokenFrom, BigInt(1)))
         .revertedWithCustomError(subject, 'CannotRecoverTokenFrom')
         .withArgs(tokenFrom)
     })
-    it('should revert if called by stranger', async () => {
+    it('should revert if called by stranger', async function () {
       const amount = ethers.parseEther('1')
       await fillUpERC20FromTreasury({
         token: contracts.DAI,
@@ -271,10 +322,10 @@ describe('Order', async function () {
       const signer = (await ethers.getSigners())[4]
       const localSubject = subject.connect(signer)
       await expect(localSubject.recoverERC20(contracts.DAI, BigInt(1)))
-        .revertedWithCustomError(subject, 'NotAgentOrManager')
+        .revertedWithCustomError(subject, 'NotAdminOrManager')
         .withArgs(await signer.getAddress())
     })
-    it('should successfully recover a token', async () => {
+    it('should successfully recover a token', async function () {
       const amount = ethers.parseEther('1')
       const token = await ethers.getContractAt('IERC20', contracts.DAI)
       const subjectAddress = await subject.getAddress()
@@ -297,7 +348,23 @@ describe('Order', async function () {
     })
   })
 
-  this.afterAll(async function () {
+  describe('negative cases:', function () {
+    it('should revert recoverEther when called by stranger', async function () {
+      const stranger = (await ethers.getSigners())[4]
+      await expect(subject.connect(stranger).recoverEther())
+        .to.be.revertedWithCustomError(subject, 'NotAdminOrManager')
+        .withArgs(await stranger.getAddress())
+    })
+
+    it('should handle isValidSignature with non-empty signature data', async function () {
+      const signature = '0x1234567890abcdef'
+      expect(await subject.isValidSignature(orderHash, signature)).to.equal(MAGIC_VALUE)
+    })
+  })
+
+  after(async function () {
     await snapshot.restore()
+    resetTestOracleRouter() // Clean up global state
+    resetTestFeedRegistryStub()
   })
 })

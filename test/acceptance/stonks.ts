@@ -43,27 +43,32 @@ describe('Stonks: acceptance', async function () {
       expect(orderDurationInSeconds).to.equal(params.orderDurationInSeconds)
 
       const managerSetFilter = stonks.filters['ManagerSet(address)']
-      const agentSetFilter = stonks.filters['AgentSet(address)']
+      const adminSetFilter = stonks.filters['AdminSet(address)']
       const orderSampleSetFilter = stonks.filters['OrderSampleSet(address)']
       const amountConverterSetFilter = stonks.filters['AmountConverterSet(address)']
       const tokenFromSetFilter = stonks.filters['TokenFromSet(address)']
       const tokenToSetFilter = stonks.filters['TokenToSet(address)']
       const orderDurationInSecondsSetFilter = stonks.filters['OrderDurationInSecondsSet(uint256)']
       const marginInBasisPointsSetFilter = stonks.filters['MarginInBasisPointsSet(uint256)']
-      const priceToleranceInBasisPointsSetFilter = stonks.filters['PriceToleranceInBasisPointsSet(uint256)']
+      const priceToleranceInBasisPointsSetFilter =
+        stonks.filters['PriceToleranceInBasisPointsSet(uint256)']
 
       const managerSetEvents = await stonks.queryFilter(managerSetFilter)
-      const agentSetEvents = await stonks.queryFilter(agentSetFilter)
+      const adminSetEvents = await stonks.queryFilter(adminSetFilter)
       const orderSampleSetEvents = await stonks.queryFilter(orderSampleSetFilter)
       const amountConverterSetEvents = await stonks.queryFilter(amountConverterSetFilter)
       const tokenFromSetEvents = await stonks.queryFilter(tokenFromSetFilter)
       const tokenToSetEvents = await stonks.queryFilter(tokenToSetFilter)
-      const orderDurationInSecondsSetEvents = await stonks.queryFilter(orderDurationInSecondsSetFilter)
+      const orderDurationInSecondsSetEvents = await stonks.queryFilter(
+        orderDurationInSecondsSetFilter
+      )
       const marginInBasisPointsSetEvents = await stonks.queryFilter(marginInBasisPointsSetFilter)
-      const priceToleranceInBasisPointsSetEvents = await stonks.queryFilter(priceToleranceInBasisPointsSetFilter)
+      const priceToleranceInBasisPointsSetEvents = await stonks.queryFilter(
+        priceToleranceInBasisPointsSetFilter
+      )
 
       expect(managerSetEvents.length).to.equal(1)
-      expect(agentSetEvents.length).to.equal(1)
+      expect(adminSetEvents.length).to.equal(1)
       expect(orderSampleSetEvents.length).to.equal(1)
       expect(amountConverterSetEvents.length).to.equal(1)
       expect(tokenFromSetEvents.length).to.equal(1)
@@ -71,16 +76,18 @@ describe('Stonks: acceptance', async function () {
       expect(orderDurationInSecondsSetEvents.length).to.equal(1)
       expect(marginInBasisPointsSetEvents.length).to.equal(1)
       expect(priceToleranceInBasisPointsSetEvents.length).to.equal(1)
-        
+
       expect(managerSetEvents[0].args[0]).to.hexEqual(contracts.MANAGER)
-      expect(agentSetEvents[0].args[0]).to.hexEqual(contracts.AGENT)
+      expect(adminSetEvents[0].args[0]).to.hexEqual(contracts.ADMIN)
       expect(orderSampleSetEvents[0].args[0]).to.hexEqual(params.orderSample)
       expect(amountConverterSetEvents[0].args[0]).to.hexEqual(params.amountConverter)
       expect(tokenFromSetEvents[0].args[0]).to.hexEqual(params.tokenFrom)
       expect(tokenToSetEvents[0].args[0]).to.hexEqual(params.tokenTo)
       expect(orderDurationInSecondsSetEvents[0].args[0]).to.equal(params.orderDurationInSeconds)
       expect(marginInBasisPointsSetEvents[0].args[0]).to.equal(params.marginInBasisPoints)
-      expect(priceToleranceInBasisPointsSetEvents[0].args[0]).to.equal(params.priceToleranceInBasisPoints)
+      expect(priceToleranceInBasisPointsSetEvents[0].args[0]).to.equal(
+        params.priceToleranceInBasisPoints
+      )
 
       const order = await ethers.getContractAt('Order', await stonks.ORDER_SAMPLE())
 
@@ -88,19 +95,19 @@ describe('Stonks: acceptance', async function () {
       expect(await order.RELAYER()).to.hexEqual(contracts.VAULT_RELAYER)
       expect(await order.DOMAIN_SEPARATOR()).to.equal(contracts.DOMAIN_SEPARATOR)
 
-      const agentSetFilterOrder = order.filters['AgentSet(address)']
+      const adminSetFilterOrder = order.filters['AdminSet(address)']
       const relayerSetFilterOrder = order.filters['RelayerSet(address)']
       const domainSeparatorSetFilterOrder = order.filters['DomainSeparatorSet(bytes32)']
 
-      const agentSetEventsOrder = await order.queryFilter(agentSetFilterOrder)
+      const adminSetEventsOrder = await order.queryFilter(adminSetFilterOrder)
       const relayerSetEventsOrder = await order.queryFilter(relayerSetFilterOrder)
       const domainSeparatorSetEventsOrder = await order.queryFilter(domainSeparatorSetFilterOrder)
 
-      expect(agentSetEventsOrder.length).to.equal(1)
+      expect(adminSetEventsOrder.length).to.equal(1)
       expect(relayerSetEventsOrder.length).to.equal(1)
       expect(domainSeparatorSetEventsOrder.length).to.equal(1)
 
-      expect(agentSetEventsOrder[0].args[0]).to.hexEqual(contracts.AGENT)
+      expect(adminSetEventsOrder[0].args[0]).to.hexEqual(contracts.ADMIN)
       expect(relayerSetEventsOrder[0].args[0]).to.hexEqual(contracts.VAULT_RELAYER)
       expect(domainSeparatorSetEventsOrder[0].args[0]).to.equal(contracts.DOMAIN_SEPARATOR)
     })

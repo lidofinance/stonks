@@ -6,64 +6,71 @@ import {AmountConverter} from "../AmountConverter.sol";
 
 /**
  * @title AmountConverterFactory
- * @notice Deploys new instances of the AmountConverter contract.
+ * @notice Deploys new instances of the AmountConverter contract with predefined configuration.
  */
-
 contract AmountConverterFactory {
-    address public immutable FEED_REGISTRY;
+    // ==================== Immutables ====================
 
-    event FeedRegistrySet(address feedRegistry);
+    /// @notice Address of the OracleRouter contract.
+    address public immutable ORACLE_ROUTER;
+
+    // ==================== Events ====================
+
     event AmountConverterDeployed(
         address indexed amountConverterAddress,
-        address feedRegistryAddress,
-        address conversionTarget,
+        address oracleRouter,
         address[] allowedTokensToSell,
-        address[] allowedStableTokensToBuy,
-        uint256[] priceFeedsHeartbeatTimeouts
+        address[] allowedTokensToBuy,
+        bool useEthAnchor
     );
 
-    error InvalidFeedRegistryAddress(address feedRegistry);
+    // ==================== Errors ====================
+
+    error InvalidOracleRouterAddress(address oracleRouter);
+
+    // ==================== Constructor ====================
 
     /**
-     *
-     * @param feedRegistry_ The address of the Chainlink Feed Registry (https://docs.chain.link/data-feeds/feed-registry)
+     * @param oracleRouter_ The address of the OracleRouter contract
      */
-    constructor(address feedRegistry_) {
-        if (feedRegistry_ == address(0)) revert InvalidFeedRegistryAddress(feedRegistry_);
-        FEED_REGISTRY = feedRegistry_;
-        emit FeedRegistrySet(feedRegistry_);
+    constructor(address oracleRouter_) {
+        if (oracleRouter_ == address(0)) {
+            revert InvalidOracleRouterAddress(oracleRouter_);
+        }
+
+        ORACLE_ROUTER = oracleRouter_;
     }
+
+    // ==================== External Functions ====================
 
     /**
      * @notice Deploys a new AmountConverter contract with specified parameters
-     * @param conversionTarget_ The target currency for conversions
      * @param allowedTokensToSell_ Array of addresses of tokens allowed to be sold
-     * @param allowedStableTokensToBuy_ Array of addresses of stable tokens allowed to be bought
-     * @param priceFeedsHeartbeatTimeouts_ Array of timeouts for the price feeds
+     * @param allowedTokensToBuy_ Array of addresses of tokens allowed to be bought
+     * @param useEthAnchor_ If true, uses ETH-anchored pricing (both tokens must be ETH-quoted).
+     *                      If false, uses USD pricing (supports any denomination mix).
      * @return tokenAmountConverter The address of the newly deployed AmountConverter contract
      */
     function deployAmountConverter(
-        address conversionTarget_,
         address[] memory allowedTokensToSell_,
-        address[] memory allowedStableTokensToBuy_,
-        uint256[] memory priceFeedsHeartbeatTimeouts_
-    ) public returns (address tokenAmountConverter) {
+        address[] memory allowedTokensToBuy_,
+        bool useEthAnchor_
+    ) external returns (address tokenAmountConverter) {
         tokenAmountConverter = address(
             new AmountConverter(
-                FEED_REGISTRY,
-                conversionTarget_,
+                ORACLE_ROUTER,
                 allowedTokensToSell_,
-                allowedStableTokensToBuy_,
-                priceFeedsHeartbeatTimeouts_
+                allowedTokensToBuy_,
+                useEthAnchor_
             )
         );
+
         emit AmountConverterDeployed(
             tokenAmountConverter,
-            FEED_REGISTRY,
-            conversionTarget_,
+            ORACLE_ROUTER,
             allowedTokensToSell_,
-            allowedStableTokensToBuy_,
-            priceFeedsHeartbeatTimeouts_
+            allowedTokensToBuy_,
+            useEthAnchor_
         );
     }
 }

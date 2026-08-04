@@ -4,31 +4,24 @@ pragma solidity 0.8.23;
 
 import {Stonks} from "../Stonks.sol";
 
+/**
+ * @title Test contract for Stonks functionality.
+ */
 contract StonksTest is Stonks {
-    constructor(
-        address agent_,
-        address manager_,
-        address tokenFrom_,
-        address tokenTo_,
-        address amountConverter_,
-        address orderSample_,
-        uint256 orderDurationInSeconds_,
-        uint256 marginInBasisPoints_,
-        uint256 priceToleranceInBasisPoints_
-    )
-        Stonks(
-            agent_,
-            manager_,
-            tokenFrom_,
-            tokenTo_,
-            amountConverter_,
-            orderSample_,
-            orderDurationInSeconds_,
-            marginInBasisPoints_,
-            priceToleranceInBasisPoints_
-        )
-    {}
+    // ==================== Constructor ====================
 
+    /**
+     * @notice Initializes the test contract with Stonks parameters.
+     * @param initParams_ Initialization parameters for the Stonks contract.
+     */
+    constructor(InitParams memory initParams_) Stonks(initParams_) {}
+
+    // ==================== External View Functions ====================
+
+    /**
+     * @notice Gets the margin value for testing.
+     * @return Margin in basis points.
+     */
     function getMargin() external view returns (uint256) {
         return MARGIN_IN_BASIS_POINTS;
     }

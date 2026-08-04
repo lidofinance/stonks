@@ -7,10 +7,11 @@ import { StonksFactory__factory } from '../typechain-types'
 import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
 import { OrderSampleDeployedEvent } from '../typechain-types/contracts/factories/StonksFactory'
 
+const ADMIN = ''
 const AGENT = ''
 const COWSWAP_SETTLEMENT = ''
 const COWSWAP_VAULT_RELAYER = ''
-
+assert(ethers.isAddress(ADMIN), 'ADMIN is not a valid address')
 assert(ethers.isAddress(AGENT), 'AGENT is not a valid address')
 assert(ethers.isAddress(COWSWAP_SETTLEMENT), 'COWSWAP_SETTLEMENT is not a valid address')
 assert(ethers.isAddress(COWSWAP_VAULT_RELAYER), 'COWSWAP_VAULT_RELAYER is not a valid address')
@@ -24,15 +25,16 @@ async function main() {
   const deployer = await getDeployer()
 
   console.log(`Deployment parameters:`)
+  console.log(`  * ${fmt.name('Admin')} address: ${fmt.value(ADMIN)}`)
   console.log(`  * ${fmt.name('Agent')} address: ${fmt.value(AGENT)}`)
   console.log(`  * ${fmt.name('CoWSwapSettlement')} address: ${fmt.value(COWSWAP_SETTLEMENT)}`)
-  console.log(
-    `  * ${fmt.name('CoWSwapVaultRelayer')} address: ${fmt.value(COWSWAP_VAULT_RELAYER)}\n`
-  )
+  console.log(`  * ${fmt.name('CoWSwapVaultRelayer')} address: ${fmt.value(COWSWAP_VAULT_RELAYER)}`)
+  console.log()
 
   await confirmOrAbort('Proceed?')
 
   const stonksFactory = await new StonksFactory__factory(deployer).deploy(
+    ADMIN,
     AGENT,
     COWSWAP_SETTLEMENT,
     COWSWAP_VAULT_RELAYER
@@ -56,18 +58,20 @@ async function main() {
     throw new Error('Failed to parse OrderSampleDeployed event')
   }
 
-  const { orderAddress } = orderSampleDeployedLogDescription.args
+  const { order } = orderSampleDeployedLogDescription.args
 
   const stonksFactoryAddress = await stonksFactory.getAddress()
   // prettier-ignore
   console.log(
     `The ${fmt.name('StonksFactory')} contract was deployed successfully: ${fmt.address(stonksFactoryAddress)}\n`
   )
-  console.log(
-    `Sample of the ${fmt.name('Order')} contract was deployed at ${fmt.address(orderAddress)}\n`
-  )
+  console.log(`Sample of the ${fmt.name('Order')} contract was deployed at ${fmt.address(order)}\n`)
   if (!['localhost', 'hardhat'].includes(network.name)) {
-    await verify(stonksFactoryAddress, [AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER], receipt)
+    await verify(
+      stonksFactoryAddress,
+      [ADMIN, AGENT, COWSWAP_SETTLEMENT, COWSWAP_VAULT_RELAYER],
+      receipt
+    )
   } else {
     console.log(`Deployed on the local hardhat network, verification is skipped.`)
   }

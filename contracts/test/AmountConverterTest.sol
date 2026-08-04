@@ -5,36 +5,83 @@ pragma solidity 0.8.23;
 import {AmountConverter} from "../AmountConverter.sol";
 
 contract AmountConverterTest {
-    AmountConverter public amountConverter;
+    // ==================== Constants ====================
 
+    /// @notice Maximum basis points (200%).
     uint256 public constant MAX_BASIS_POINTS = 20_000;
+    /// @notice Minimum basis points (0%).
     uint256 public constant MIN_BASIS_POINTS = 0;
-    uint256 public multiplierInBP = 10_000;
 
+    // ==================== Storage Variables ====================
+
+    /// @notice AmountConverter instance used for testing.
+    AmountConverter public amountConverter;
+    /// @notice Multiplier in basis points applied to converter output for testing.
+    uint256 public multiplierInBP = 1e4;
+
+    // ==================== Constructor ====================
+
+    /**
+     * @notice Initializes the test contract with an AmountConverter instance.
+     * @param oracleRouter_ Oracle router address.
+     * @param allowedTokensToSell_ Array of allowed sell tokens.
+     * @param allowedTokensToBuy_ Array of allowed buy tokens.
+     * @param useEthAnchor_ If true, uses ETH-anchored pricing.
+     */
     constructor(
-        address feedRegistry_,
-        address conversionTarget_,
+        address oracleRouter_,
         address[] memory allowedTokensToSell_,
         address[] memory allowedTokensToBuy_,
-        uint256[] memory priceFeedsHeartbeatTimeouts_
+        bool useEthAnchor_
     ) {
         amountConverter = new AmountConverter(
-            feedRegistry_,
-            conversionTarget_,
+            oracleRouter_,
             allowedTokensToSell_,
             allowedTokensToBuy_,
-            priceFeedsHeartbeatTimeouts_
+            useEthAnchor_
         );
     }
 
+    // ==================== Public Functions ====================
+
+    /**
+     * @notice Sets the multiplier for answer adjustments.
+     * @param multiplierInBP_ Multiplier in basis points.
+     */
     function multiplyAnswer(uint256 multiplierInBP_) public {
-        if (multiplierInBP_ > MAX_BASIS_POINTS) revert("Error");
-        if (multiplierInBP_ <= 0) revert("Error");
+        if (multiplierInBP_ > MAX_BASIS_POINTS) {
+            revert("Error");
+        }
+
+        if (multiplierInBP_ <= 0) {
+            revert("Error");
+        }
 
         multiplierInBP = multiplierInBP_;
     }
 
-    function getExpectedOut(address tokenFrom, address tokenTo, uint256 amount) external view returns (uint256) {
-        return amountConverter.getExpectedOut(tokenFrom, tokenTo, amount) * multiplierInBP / 10_000;
+    // ==================== External View Functions ====================
+
+    /**
+     * @notice Gets expected output with multiplier applied.
+     * @param tokenFrom Token to sell.
+     * @param tokenTo Token to buy.
+     * @param amount Amount to sell.
+     * @return Expected output amount.
+     */
+    function getExpectedOut(
+        address tokenFrom,
+        address tokenTo,
+        uint256 amount
+    ) external view returns (uint256) {
+        return (amountConverter.getExpectedOut(tokenFrom, tokenTo, amount) * multiplierInBP) / 1e4;
+    }
+
+    function allowedTokensToSell(address token) external view returns (bool) {
+        return amountConverter.allowedTokensToSell(token);
+    }
+
+    function allowedTokensToBuy(address token) external view returns (bool) {
+        return amountConverter.allowedTokensToBuy(token);
     }
 }

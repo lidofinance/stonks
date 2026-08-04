@@ -15,8 +15,7 @@ export const getPlaceOrderData = async (
     .map((log: Log) => orderInterface.parseLog(log as any))
     .find((log) => log?.name === 'OrderCreated')
   const blockNumber = receipt.blockNumber
-  const blockTimestamp = (await ethers.provider.getBlock(blockNumber))
-    ?.timestamp
+  const blockTimestamp = (await ethers.provider.getBlock(blockNumber))?.timestamp
   if (!blockTimestamp) throw Error('blockTimestamp is undefined')
   const data: any = orderEvent?.args
 
@@ -52,9 +51,11 @@ export const getStonksDeployment = (
   order: string
 } => {
   const stonksFactoryInterface = StonksFactory__factory.createInterface()
-  const deployEvent = stonksFactoryInterface.parseLog(
-    (receipt as any).logs[receipt.logs.length - 1]
-  )
+  const event = stonksFactoryInterface.getEvent('StonksDeployed')
+  const topic = event.topicHash
+  const raw = (receipt as any).logs.find((l: Log) => l.topics?.[0] === topic)
+  if (!raw) throw new Error('StonksDeployed event not found in receipt logs')
+  const deployEvent = stonksFactoryInterface.parseLog(raw)
   const data: any = deployEvent?.args
 
   return {
@@ -71,21 +72,26 @@ export const getTokenConverterDeployment = (
   receipt: TransactionReceipt
 ): {
   address: string
-  feedRegistryAddress: string
+  oracleRouter: string
   allowedTokensToSell: string[]
-  allowedStableTokensToBuy: string[]
+  allowedTokensToBuy: string[]
 } => {
-  const stonksFactoryInterface =
-    AmountConverterFactory__factory.createInterface()
-  const deployEvent = stonksFactoryInterface.parseLog(
-    (receipt as any).logs[receipt.logs.length - 1]
-  )
+  const amountConverterFactoryInterface = AmountConverterFactory__factory.createInterface()
+  const event = amountConverterFactoryInterface.getEvent('AmountConverterDeployed')
+  const topic = event.topicHash
+  const raw = (receipt as any).logs.find((l: Log) => l.topics?.[0] === topic)
+
+  if (!raw) {
+    throw new Error('AmountConverterDeployed event not found in receipt logs')
+  }
+
+  const deployEvent = amountConverterFactoryInterface.parseLog(raw)
   const data: any = deployEvent?.args
 
   return {
     address: data[0],
-    feedRegistryAddress: data[1],
+    oracleRouter: data[1],
     allowedTokensToSell: data[2],
-    allowedStableTokensToBuy: data[3],
+    allowedTokensToBuy: data[3],
   }
 }

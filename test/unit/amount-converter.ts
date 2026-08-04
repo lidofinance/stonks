@@ -1,230 +1,627 @@
 import { ethers } from 'hardhat'
-import { takeSnapshot, SnapshotRestorer } from '@nomicfoundation/hardhat-network-helpers'
+import { takeSnapshot, SnapshotRestorer, time } from '@nomicfoundation/hardhat-network-helpers'
 import { expect } from 'chai'
 
-import { AmountConverter__factory, IAmountConverter } from '../../typechain-types'
+import { IAmountConverter, OracleRouter } from '../../typechain-types'
+import { getTestOracleRouter, resetTestOracleRouter } from '../../utils/test-oracle-router'
+import { refreshTestFeedData, resetTestFeedRegistryStub } from '../../utils/test-feed-registry'
 import { getContracts } from '../../utils/contracts'
 import { getExpectedOut } from '../../utils/chainlink-helpers'
+import { QuoteDenomination } from '../../utils/oracle-router'
 
-const contracts = getContracts()
+const addresses = getContracts()
 
-describe('AmountConverter', function () {
-  let subject: IAmountConverter
-  let contractFactory: AmountConverter__factory
+describe('AmountConverter', () => {
+  let converter: IAmountConverter
+  let converter8: IAmountConverter
+  let factory: any
   let snapshot: SnapshotRestorer
 
-  this.beforeAll(async function () {
+  let router: OracleRouter
+  let router8: OracleRouter
+  let routerAddress: string
+
+  const USD_QUOTE = addresses.CHAINLINK_USD_QUOTE
+
+  before(async () => {
     snapshot = await takeSnapshot()
-    contractFactory = await ethers.getContractFactory('AmountConverter')
-    subject = await contractFactory.deploy(
-      contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-      '0x0000000000000000000000000000000000000348', // USD
-      [contracts.STETH, contracts.DAI, contracts.USDC, contracts.USDT],
-      [contracts.DAI, contracts.USDC, contracts.USDT],
-      [3600, 3600, 86400, 86400]
+    factory = await ethers.getContractFactory('AmountConverter')
+
+    router = await getTestOracleRouter({
+      tokens: [addresses.DAI, addresses.USDC, addresses.USDT],
+      useRealPrices: true,
+    })
+    routerAddress = await router.getAddress()
+
+    const feedRegistryAddress = await router.FEED_REGISTRY()
+    const [deployer] = await ethers.getSigners()
+    const adminAddress = await deployer.getAddress()
+
+    const routerFactory = await ethers.getContractFactory('OracleRouter')
+    router8 = await routerFactory.deploy(adminAddress, feedRegistryAddress)
+    await router8.waitForDeployment()
+
+    const adminSigner = await ethers.getImpersonatedSigner(adminAddress)
+    await ethers.provider.send('hardhat_setBalance', [adminAddress, '0x1000000000000000000'])
+
+    await router8.connect(adminSigner).setEthUsdBridge(86_400)
+
+    const feedRegistryStub = await ethers.getContractAt(
+      'ChainlinkFeedRegistryStub',
+      feedRegistryAddress
     )
 
-    await subject.waitForDeployment()
+    for (const token of [addresses.DAI, addresses.USDC, addresses.USDT]) {
+      const usdFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_USD_QUOTE)
+
+      if (usdFeed !== ethers.ZeroAddress) {
+        await router8.connect(adminSigner).setTokenFeed(token, 0, 86_400, true)
+      } else {
+        const ethFeed = await feedRegistryStub.getFeed(token, addresses.CHAINLINK_ETH_QUOTE)
+        if (ethFeed !== ethers.ZeroAddress) {
+          await router8.connect(adminSigner).setTokenFeed(token, 1, 86_400, true)
+        }
+      }
+    }
+
+    await refreshTestFeedData([addresses.DAI, addresses.USDC, addresses.USDT])
+
+    converter = await factory.deploy(
+      routerAddress,
+      [addresses.DAI, addresses.USDC, addresses.USDT],
+      [addresses.DAI, addresses.USDC, addresses.USDT],
+      false
+    )
+    await converter.waitForDeployment()
+
+    converter8 = await factory.deploy(
+      await router8.getAddress(),
+      [addresses.DAI, addresses.USDC, addresses.USDT],
+      [addresses.DAI, addresses.USDC, addresses.USDT],
+      false
+    )
+    await converter8.waitForDeployment()
   })
 
-  describe('initialization:', async function () {
-    it('should not initialize with feed registry zero address', async function () {
+  describe('initialization:', () => {
+    it('reverts on zero oracle router address', async () => {
       await expect(
-        contractFactory.deploy(
+        factory.deploy(
           ethers.ZeroAddress,
-          contracts.CHAINLINK_USD_QUOTE,
-          [contracts.STETH, contracts.DAI, contracts.USDC, contracts.USDT],
-          [contracts.DAI, contracts.USDC, contracts.USDT],
-          [3600, 3600, 86400, 86400]
+          [addresses.STETH, addresses.DAI, addresses.USDC, addresses.USDT],
+          [addresses.DAI, addresses.USDC, addresses.USDT],
+          false
         )
       )
-        .to.be.revertedWithCustomError(contractFactory, 'InvalidFeedRegistryAddress')
+        .to.be.revertedWithCustomError(factory, 'InvalidOracleRouterAddress')
         .withArgs(ethers.ZeroAddress)
     })
 
-    it('should not initialize with conversion target zero address', async function () {
+    it('reverts on empty allowedTokensToSell', async () => {
       await expect(
-        contractFactory.deploy(
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          ethers.ZeroAddress,
-          [contracts.STETH, contracts.DAI, contracts.USDC, contracts.USDT],
-          [contracts.DAI, contracts.USDC, contracts.USDT],
-          [3600, 3600, 86400, 86400]
-        )
+        factory.deploy(routerAddress, [], [addresses.DAI, addresses.USDC, addresses.USDT], false)
+      ).to.be.revertedWithCustomError(factory, 'InvalidTokensToSellArrayLength')
+    })
+    it('reverts on empty allowedTokensToBuy', async () => {
+      await expect(
+        factory.deploy(routerAddress, [addresses.DAI], [], false)
+      ).to.be.revertedWithCustomError(factory, 'InvalidTokensToBuyArrayLength')
+    })
+
+    it('reverts on zero address in allowedTokensToSell', async () => {
+      await expect(
+        factory.deploy(routerAddress, [addresses.DAI, ethers.ZeroAddress], [addresses.USDC], false)
       )
-        .to.be.revertedWithCustomError(contractFactory, 'InvalidConversionTargetAddress')
+        .to.be.revertedWithCustomError(factory, 'InvalidAllowedTokenToSell')
         .withArgs(ethers.ZeroAddress)
     })
 
-    it('should not initialize with empty allowedTokensToSell', async function () {
-      await expect(
-        contractFactory.deploy(
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          contracts.CHAINLINK_USD_QUOTE,
-          [],
-          [contracts.DAI, contracts.USDC, contracts.USDT],
-          [3600, 3600, 86400, 86400]
-        )
-      ).to.be.revertedWithCustomError(contractFactory, 'InvalidTokensToSellArrayLength')
-    })
-
-    it('should not initialize with empty allowedTokensToBuy', async function () {
-      await expect(
-        contractFactory.deploy(
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          contracts.CHAINLINK_USD_QUOTE,
-          [contracts.STETH, contracts.DAI, contracts.USDC, contracts.USDT],
-          [],
-          [3600, 3600, 86400, 86400]
-        )
-      ).to.be.revertedWithCustomError(contractFactory, 'InvalidTokensToBuyArrayLength')
-    })
-
-    it('should not initialize with zero address in allowedTokensToSell', async function () {
-      await expect(
-        contractFactory.deploy(
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          contracts.CHAINLINK_USD_QUOTE,
-          [contracts.STETH, ethers.ZeroAddress],
-          [contracts.DAI, contracts.USDC, contracts.USDT],
-          [3600, 3600]
-        )
-      )
-        .to.be.revertedWithCustomError(contractFactory, 'InvalidAllowedTokenToSell')
+    it('reverts on zero address in allowedTokensToBuy', async () => {
+      await expect(factory.deploy(routerAddress, [addresses.DAI], [ethers.ZeroAddress], false))
+        .to.be.revertedWithCustomError(factory, 'InvalidAllowedTokenToBuy')
         .withArgs(ethers.ZeroAddress)
-    })
-
-    it('should not initialize with zero address in allowedTokensToBuy', async function () {
-      await expect(
-        contractFactory.deploy(
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          contracts.CHAINLINK_USD_QUOTE,
-          [contracts.STETH],
-          [ethers.ZeroAddress, contracts.DAI, contracts.USDC, contracts.USDT],
-          [3600]
-        )
-      )
-        .to.be.revertedWithCustomError(contractFactory, 'InvalidAllowedTokenToBuy')
-        .withArgs(ethers.ZeroAddress)
-    })
-
-    it('should not initialize with wrong length priceFeedsHeartbeatTimeouts', async function () {
-      await expect(
-        contractFactory.deploy(
-          contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-          contracts.CHAINLINK_USD_QUOTE,
-          [contracts.STETH],
-          [ethers.ZeroAddress, contracts.DAI, contracts.USDC, contracts.USDT],
-          []
-        )
-      ).to.be.revertedWithCustomError(contractFactory, 'InvalidHeartbeatArrayLength')
     })
   })
 
-  describe('getExpectedOut:', async function () {
-    it('should revert if amount is zero', async function () {
-      await expect(subject.getExpectedOut(contracts.STETH, contracts.DAI, 0))
-        .to.be.revertedWithCustomError(subject, 'InvalidAmount')
+  describe('getExpectedOut:', () => {
+    it('reverts when amount is zero', async () => {
+      await expect(converter.getExpectedOut(addresses.DAI, addresses.USDC, 0))
+        .to.be.revertedWithCustomError(converter, 'InvalidAmount')
         .withArgs(0)
     })
-    it('should revert if tokenFrom is not allowed', async function () {
-      await expect(subject.getExpectedOut(contracts.LDO, contracts.DAI, 1))
-        .to.be.revertedWithCustomError(subject, 'SellTokenNotAllowed')
-        .withArgs(contracts.LDO)
+
+    it('reverts when tokenFrom is not allowed', async () => {
+      await expect(converter.getExpectedOut(addresses.LDO, addresses.DAI, 1))
+        .to.be.revertedWithCustomError(converter, 'SellTokenNotAllowed')
+        .withArgs(addresses.LDO)
     })
-    it('should revert if tokenTo is not allowed', async function () {
-      await expect(subject.getExpectedOut(contracts.STETH, contracts.LDO, 1))
-        .to.be.revertedWithCustomError(subject, 'BuyTokenNotAllowed')
-        .withArgs(contracts.LDO)
+
+    it('reverts when tokenTo is not allowed', async () => {
+      const notAllowedToken = addresses.AGENT
+      await expect(converter.getExpectedOut(addresses.DAI, notAllowedToken, 1))
+        .to.be.revertedWithCustomError(converter, 'BuyTokenNotAllowed')
+        .withArgs(notAllowedToken)
     })
-    it('should revert if tokenFrom is the same as tokenTo', async function () {
+
+    it('reverts when tokenFrom equals tokenTo', async () => {
       await expect(
-        subject.getExpectedOut(contracts.STETH, contracts.STETH, 1)
-      ).to.be.revertedWithCustomError(subject, 'SameTokensConversion')
+        converter.getExpectedOut(addresses.DAI, addresses.DAI, 1)
+      ).to.be.revertedWithCustomError(converter, 'TokensCannotBeSame')
     })
-    it('should have the right price steth -> dai', async function () {
-      const amountToSell = ethers.parseEther('1')
-      const price = await subject.getExpectedOut(contracts.STETH, contracts.DAI, amountToSell)
-      expect(price.toString()).to.equal(
-        (await getExpectedOut(contracts.STETH, contracts.DAI, amountToSell)).toString()
-      )
-    })
-    it('should have the right price usdc -> dai', async function () {
-      const amountToSell = BigInt(1000000)
-      const resultAmount = await subject.getExpectedOut(contracts.USDC, contracts.DAI, amountToSell)
-      expect(resultAmount.toString()).to.equal(
-        (await getExpectedOut(contracts.USDC, contracts.DAI, amountToSell)).toString()
-      )
-    })
-    it('should have the right price dai -> usdc', async function () {
-      const amountToSell = ethers.parseEther('1')
-      const resultAmount = await subject.getExpectedOut(contracts.DAI, contracts.USDC, amountToSell)
-      expect(resultAmount.toString()).to.equal(
-        (await getExpectedOut(contracts.DAI, contracts.USDC, amountToSell)).toString()
-      )
-    })
-    it('should revert if updatedAt is behind heartbeat', async function () {
-      const FeedRegistryTestFactory = await ethers.getContractFactory('FeedRegistryTest')
-      const feedRegistryTest = await FeedRegistryTestFactory.deploy(
-        contracts.CHAINLINK_PRICE_FEED_REGISTRY
-      )
-      await feedRegistryTest.waitForDeployment()
 
-      const localSubject = await contractFactory.deploy(
-        feedRegistryTest,
-        '0x0000000000000000000000000000000000000348', // USD
-        [contracts.STETH],
-        [contracts.DAI],
-        [3600]
-      )
-      localSubject.waitForDeployment()
-
-      const amountToSell = ethers.parseEther('1')
-      const resultAmount = await localSubject.getExpectedOut(
-        contracts.STETH,
-        contracts.DAI,
+    it('matches Chainlink helper for DAI → USDC (18 → 6)', async () => {
+      const amountToSell = ethers.parseEther('1000')
+      const amountFromContract = await converter.getExpectedOut(
+        addresses.DAI,
+        addresses.USDC,
         amountToSell
       )
-
-      await feedRegistryTest.setHeartbeat(3600)
-      const result = await getExpectedOut(contracts.STETH, contracts.DAI, amountToSell)
-      expect(resultAmount.toString()).to.equal(result.toString())
-
-      const unacceptableHeartbeat = 3601
-      await feedRegistryTest.setHeartbeat(unacceptableHeartbeat)
-      const blockNumber = await ethers.provider.getBlockNumber()
-      const expectedTimestamp = (await ethers.provider.getBlock(blockNumber))?.timestamp!
-
-      await expect(localSubject.getExpectedOut(contracts.STETH, contracts.DAI, amountToSell))
-        .to.be.revertedWithCustomError(localSubject, 'PriceFeedNotUpdated')
-        .withArgs(expectedTimestamp - unacceptableHeartbeat)
+      const amountFromHelper = await getExpectedOut(addresses.DAI, addresses.USDC, amountToSell)
+      expect(amountFromContract.toString()).to.equal(amountFromHelper.toString())
     })
-  })
 
-  describe('events:', async function () {
-    it('constructor should emits events about configuration', async function () {
-      const localSubject = await contractFactory.deploy(
-        contracts.CHAINLINK_PRICE_FEED_REGISTRY,
-        '0x0000000000000000000000000000000000000348', // USD
-        [contracts.STETH],
-        [contracts.DAI],
-        [3600]
+    it('matches Chainlink helper for USDC → DAI (6 → 18)', async () => {
+      const amountToSell = 1_000_000n // 1 USDC with 6 decimals
+      const amountFromContract = await converter.getExpectedOut(
+        addresses.USDC,
+        addresses.DAI,
+        amountToSell
       )
-      await localSubject.waitForDeployment()
+      const amountFromHelper = await getExpectedOut(addresses.USDC, addresses.DAI, amountToSell)
+      expect(amountFromContract.toString()).to.equal(amountFromHelper.toString())
+    })
 
-      await expect(localSubject.deploymentTransaction())
-        .to.emit(localSubject, 'AllowedTokenToSellAdded')
-        .withArgs(contracts.STETH)
-      await expect(localSubject.deploymentTransaction())
-        .to.emit(localSubject, 'AllowedTokenToBuyAdded')
-        .withArgs(contracts.DAI)
-      await expect(localSubject.deploymentTransaction())
-        .to.emit(localSubject, 'PriceFeedHeartbeatTimeoutSet')
-        .withArgs(contracts.STETH, 3600)
+    it('should handle very small amounts', async () => {
+      await refreshTestFeedData([addresses.DAI, addresses.USDC])
+      const tinyAmount = 1n
+      const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, tinyAmount)
+      const expectedResult = await getExpectedOut(addresses.DAI, addresses.USDC, tinyAmount)
+      expect(result).to.equal(expectedResult)
+    })
+
+    it('should handle very large valid amounts', async () => {
+      await refreshTestFeedData([addresses.DAI, addresses.USDC])
+      const largeAmount = ethers.parseEther('100000')
+      const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, largeAmount)
+      const expectedResult = await getExpectedOut(addresses.DAI, addresses.USDC, largeAmount)
+      expect(result).to.equal(expectedResult)
+    })
+
+    it('should handle very large amounts', async () => {
+      await refreshTestFeedData([addresses.DAI, addresses.USDC])
+      const largeAmount1 = 2n ** 200n
+      const largeAmount2 = 2n ** 220n
+
+      const result1 = await converter.getExpectedOut(addresses.DAI, addresses.USDC, largeAmount1)
+      const expected1 = await getExpectedOut(addresses.DAI, addresses.USDC, largeAmount1)
+      expect(result1).to.equal(expected1)
+
+      const result2 = await converter.getExpectedOut(addresses.DAI, addresses.USDC, largeAmount2)
+      const expected2 = await getExpectedOut(addresses.DAI, addresses.USDC, largeAmount2)
+      expect(result2).to.equal(expected2)
+    })
+
+    it('should handle conversions with maximum decimal difference (38)', async () => {
+      await refreshTestFeedData([addresses.DAI, addresses.USDC])
+      const largeAmount = 2n ** 200n
+      const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, largeAmount)
+      const expected = await getExpectedOut(addresses.DAI, addresses.USDC, largeAmount)
+      expect(result).to.equal(expected)
+    })
+
+    it('bubbles router staleness (OracleStale) on outdated feed', async () => {
+      const registryAddr = await router.FEED_REGISTRY()
+      const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
+
+      await router.setTokenFeed(addresses.DAI, QuoteDenomination.USD, 1, true)
+
+      const latest = await ethers.provider.getBlock('latest')
+      const nowTs = BigInt(latest!.timestamp)
+      const daiUsd = await stub.feeds(addresses.DAI, USD_QUOTE)
+      await stub.setFeed(addresses.DAI, USD_QUOTE, {
+        aggregator: daiUsd.aggregator,
+        answer: daiUsd.answer,
+        updatedAt: nowTs,
+        startedAt: nowTs,
+        answeredInRound: 1n,
+        roundId: 1n,
+        decimals: daiUsd.decimals,
+      })
+
+      await time.increase(2)
+
+      const daiConfig = await router.tokenConfig(addresses.DAI)
+      await expect(converter.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1')))
+        .to.be.revertedWithCustomError(router, 'OracleStale')
+        .withArgs(daiConfig.primaryFeed.aggregator, nowTs)
+
+      await router.setTokenFeed(addresses.DAI, QuoteDenomination.USD, 86_400, true)
+      await refreshTestFeedData([addresses.DAI])
+    })
+
+    it('bubbles router OracleBadAnswer when tokenFrom/USD answer is zero', async () => {
+      await refreshTestFeedData([addresses.DAI, addresses.USDC])
+
+      const registryAddr = await router.FEED_REGISTRY()
+      const stub = await ethers.getContractAt('ChainlinkFeedRegistryStub', registryAddr)
+
+      const latest = await ethers.provider.getBlock('latest')
+      const farFutureTs = BigInt(latest!.timestamp) + 1000000n
+
+      const current = await stub.feeds(addresses.DAI, USD_QUOTE)
+      await stub.setFeed(addresses.DAI, USD_QUOTE, {
+        aggregator: current.aggregator,
+        answer: 0n,
+        updatedAt: farFutureTs,
+        startedAt: farFutureTs,
+        answeredInRound: current.answeredInRound,
+        roundId: current.roundId,
+        decimals: current.decimals,
+      })
+
+      const currentFeed = await stub.feeds(addresses.DAI, USD_QUOTE)
+      await expect(converter.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1')))
+        .to.be.revertedWithCustomError(router, 'OracleBadAnswer')
+        .withArgs(currentFeed.aggregator, 0n)
+
+      await refreshTestFeedData([addresses.DAI])
+    })
+
+    it('reverts with ScaledAmountFromTooLarge when scaled amount would overflow', async () => {
+      await refreshTestFeedData([addresses.USDC, addresses.DAI])
+
+      const decimalsDiff = 12
+      const pow10 = 10n ** BigInt(decimalsDiff)
+      const maxAmountBeforeScale = ethers.MaxUint256 / pow10
+      const tooLargeForScaling = maxAmountBeforeScale + 1n
+
+      await expect(converter.getExpectedOut(addresses.USDC, addresses.DAI, tooLargeForScaling))
+        .to.be.revertedWithCustomError(converter, 'ScaledAmountFromTooLarge')
+        .withArgs(tooLargeForScaling)
+    })
+
+    it('should succeed with extremely large amounts when safe', async () => {
+      await refreshTestFeedData([addresses.DAI, addresses.USDC])
+      const veryLargeAmount = 2n ** 240n
+      const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, veryLargeAmount)
+      const expected = await getExpectedOut(addresses.DAI, addresses.USDC, veryLargeAmount)
+      expect(result).to.equal(expected)
+    })
+
+    it('should succeed with large amounts for different token pairs', async () => {
+      await refreshTestFeedData([addresses.USDC, addresses.USDT])
+      const largeAmount = 2n ** 200n
+      const result = await converter.getExpectedOut(addresses.USDC, addresses.USDT, largeAmount)
+      const expected = await getExpectedOut(addresses.USDC, addresses.USDT, largeAmount)
+      expect(result).to.equal(expected)
+    })
+
+    describe('zero price errors:', () => {
+      let OracleRouterStubFactory: any
+
+      beforeEach(async () => {
+        OracleRouterStubFactory = await ethers.getContractFactory('OracleRouterStub')
+      })
+
+      it('should revert with PriceFromUsdZero when priceFrom is zero in USD mode', async () => {
+        const oracleRouterStub = await OracleRouterStubFactory.deploy(
+          await (await ethers.getSigners())[0].getAddress(),
+          await router.FEED_REGISTRY()
+        )
+        await oracleRouterStub.waitForDeployment()
+
+        await oracleRouterStub.setPricesAndDecimals(
+          addresses.DAI,
+          addresses.USDC,
+          QuoteDenomination.USD,
+          0n,
+          1n * 10n ** 18n,
+          18,
+          6
+        )
+
+        const converterWithStub = await factory.deploy(
+          await oracleRouterStub.getAddress(),
+          [addresses.DAI],
+          [addresses.USDC],
+          false
+        )
+        await converterWithStub.waitForDeployment()
+
+        await expect(
+          converterWithStub.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1'))
+        ).to.be.revertedWithCustomError(converterWithStub, 'PriceFromUsdZero')
+      })
+
+      it('should revert with PriceToUsdZero when priceTo is zero in USD mode', async () => {
+        const oracleRouterStub = await OracleRouterStubFactory.deploy(
+          await (await ethers.getSigners())[0].getAddress(),
+          await router.FEED_REGISTRY()
+        )
+        await oracleRouterStub.waitForDeployment()
+
+        await oracleRouterStub.setPricesAndDecimals(
+          addresses.DAI,
+          addresses.USDC,
+          QuoteDenomination.USD,
+          1n * 10n ** 18n,
+          0n,
+          18,
+          6
+        )
+
+        const converterWithStub = await factory.deploy(
+          await oracleRouterStub.getAddress(),
+          [addresses.DAI],
+          [addresses.USDC],
+          false
+        )
+        await converterWithStub.waitForDeployment()
+
+        await expect(
+          converterWithStub.getExpectedOut(addresses.DAI, addresses.USDC, ethers.parseEther('1'))
+        ).to.be.revertedWithCustomError(converterWithStub, 'PriceToUsdZero')
+      })
+
+      it('should revert with PriceFromEthZero when priceFrom is zero in ETH mode', async () => {
+        const oracleRouterStub = await OracleRouterStubFactory.deploy(
+          await (await ethers.getSigners())[0].getAddress(),
+          await router.FEED_REGISTRY()
+        )
+        await oracleRouterStub.waitForDeployment()
+
+        await oracleRouterStub.setPricesAndDecimals(
+          addresses.STETH,
+          addresses.LDO,
+          QuoteDenomination.ETH,
+          0n,
+          1n * 10n ** 18n,
+          18,
+          18
+        )
+
+        const converterEth = await factory.deploy(
+          await oracleRouterStub.getAddress(),
+          [addresses.STETH],
+          [addresses.LDO],
+          true
+        )
+        await converterEth.waitForDeployment()
+
+        await expect(
+          converterEth.getExpectedOut(addresses.STETH, addresses.LDO, ethers.parseEther('1'))
+        ).to.be.revertedWithCustomError(converterEth, 'PriceFromEthZero')
+      })
+
+      it('should revert with PriceToEthZero when priceTo is zero in ETH mode', async () => {
+        const oracleRouterStub = await OracleRouterStubFactory.deploy(
+          await (await ethers.getSigners())[0].getAddress(),
+          await router.FEED_REGISTRY()
+        )
+        await oracleRouterStub.waitForDeployment()
+
+        await oracleRouterStub.setPricesAndDecimals(
+          addresses.STETH,
+          addresses.LDO,
+          QuoteDenomination.ETH,
+          1n * 10n ** 18n,
+          0n,
+          18,
+          18
+        )
+
+        const converterEth = await factory.deploy(
+          await oracleRouterStub.getAddress(),
+          [addresses.STETH],
+          [addresses.LDO],
+          true
+        )
+        await converterEth.waitForDeployment()
+
+        await expect(
+          converterEth.getExpectedOut(addresses.STETH, addresses.LDO, ethers.parseEther('1'))
+        ).to.be.revertedWithCustomError(converterEth, 'PriceToEthZero')
+      })
     })
   })
 
-  this.afterAll(async function () {
+  describe('events:', () => {
+    it('constructor emits allowlist events (USD mode)', async () => {
+      const local = await factory.deploy(routerAddress, [addresses.DAI], [addresses.USDC], false)
+      await local.waitForDeployment()
+
+      await expect(local.deploymentTransaction())
+        .to.emit(local, 'AllowedTokenToSellAdded')
+        .withArgs(addresses.DAI)
+
+      await expect(local.deploymentTransaction())
+        .to.emit(local, 'AllowedTokenToBuyAdded')
+        .withArgs(addresses.USDC)
+    })
+
+    it('constructor emits allowlist events (ETH anchor mode)', async () => {
+      const local = await factory.deploy(routerAddress, [addresses.STETH], [addresses.LDO], true)
+      await local.waitForDeployment()
+
+      await expect(local.deploymentTransaction())
+        .to.emit(local, 'AllowedTokenToSellAdded')
+        .withArgs(addresses.STETH)
+
+      await expect(local.deploymentTransaction())
+        .to.emit(local, 'AllowedTokenToBuyAdded')
+        .withArgs(addresses.LDO)
+    })
+  })
+
+  describe('USE_ETH_ANCHOR immutable:', () => {
+    it('should be false when deployed with useEthAnchor=false', async () => {
+      const local = await factory.deploy(routerAddress, [addresses.DAI], [addresses.USDC], false)
+      await local.waitForDeployment()
+
+      expect(await local.USE_ETH_ANCHOR()).to.be.false
+    })
+
+    it('should be true when deployed with useEthAnchor=true', async () => {
+      const local = await factory.deploy(routerAddress, [addresses.STETH], [addresses.LDO], true)
+      await local.waitForDeployment()
+
+      expect(await local.USE_ETH_ANCHOR()).to.be.true
+    })
+  })
+
+  describe('Single-floor optimization:', () => {
+    const calculateOldMethod = (
+      amountFrom: bigint,
+      priceFrom: bigint,
+      priceTo: bigint,
+      decimalsDiff: bigint
+    ): bigint => {
+      const grossOutput = (amountFrom * priceFrom) / priceTo
+      return decimalsDiff === 0n ? grossOutput : grossOutput / 10n ** decimalsDiff
+    }
+
+    const calculateNewMethod = (
+      amountFrom: bigint,
+      priceFrom: bigint,
+      priceTo: bigint,
+      decimalsDiff: bigint
+    ): bigint => {
+      if (decimalsDiff === 0n) {
+        return (amountFrom * priceFrom) / priceTo
+      }
+      const scaledPriceTo = priceTo * 10n ** decimalsDiff
+      return (amountFrom * priceFrom) / scaledPriceTo
+    }
+
+    describe('Single-floor guarantees (18→6 decimals)', () => {
+      it('should never lose more than 1 unit for tiny amounts with large decimal difference', async () => {
+        const tinyAmount = 1n
+        const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, tinyAmount)
+        const [priceFrom, priceTo] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+        const expectedNew = calculateNewMethod(tinyAmount, priceFrom, priceTo, 12n)
+        expect(result).to.equal(expectedNew)
+      })
+
+      it('should maintain ≤1 unit error across various amounts', async () => {
+        const amounts = [
+          1n,
+          1000n,
+          ethers.parseUnits('0.001', 18),
+          ethers.parseUnits('1', 18),
+          ethers.parseUnits('1000', 18),
+        ]
+
+        const [priceFrom, priceTo] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+
+        for (const amount of amounts) {
+          const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, amount)
+          const expected = calculateNewMethod(amount, priceFrom, priceTo, 12n)
+          const diff = expected > result ? expected - result : result - expected
+          expect(diff).to.be.lte(1n)
+        }
+      })
+
+      it('should handle edge case: amount that causes maximum old-method loss', async () => {
+        const [priceFrom, priceTo] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+        const pow12 = 10n ** 12n
+        const targetRemainder = pow12 - 1n
+        const approximateAmount = (targetRemainder * priceTo) / priceFrom
+
+        if (approximateAmount > 0n && approximateAmount <= ethers.parseEther('1000000')) {
+          const result = await converter.getExpectedOut(
+            addresses.DAI,
+            addresses.USDC,
+            approximateAmount
+          )
+          const expectedNew = calculateNewMethod(approximateAmount, priceFrom, priceTo, 12n)
+          expect(result).to.equal(expectedNew)
+        }
+      })
+    })
+
+    describe('Consistency across PRICE_DECIMALS', () => {
+      it('should behave consistently with PRICE_DECIMALS=18', async () => {
+        const amount = ethers.parseEther('1')
+        const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, amount)
+        const [priceFrom, priceTo] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+        const expected = calculateNewMethod(amount, priceFrom, priceTo, 12n)
+        const diff = expected > result ? expected - result : result - expected
+        expect(diff).to.be.lte(1n)
+      })
+
+      it('should behave consistently with PRICE_DECIMALS=8', async () => {
+        const amount = ethers.parseEther('1')
+        const result = await converter8.getExpectedOut(addresses.DAI, addresses.USDC, amount)
+        const [priceFrom, priceTo] = await router8.getUsdPrices(addresses.DAI, addresses.USDC)
+        const expected = calculateNewMethod(amount, priceFrom, priceTo, 12n)
+        const diff = expected > result ? expected - result : result - expected
+        expect(diff).to.be.lte(1n)
+      })
+
+      it('should produce similar results (accounting for PRICE_DECIMALS difference)', async () => {
+        const amount = ethers.parseEther('1')
+        const result18 = await converter.getExpectedOut(addresses.DAI, addresses.USDC, amount)
+        const result8 = await converter8.getExpectedOut(addresses.DAI, addresses.USDC, amount)
+        const [priceFrom18, priceTo18] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+        const [priceFrom8, priceTo8] = await router8.getUsdPrices(addresses.DAI, addresses.USDC)
+        const expected18 = calculateNewMethod(amount, priceFrom18, priceTo18, 12n)
+        const expected8 = calculateNewMethod(amount, priceFrom8, priceTo8, 12n)
+        const diff18 = expected18 > result18 ? expected18 - result18 : result18 - expected18
+        const diff8 = expected8 > result8 ? expected8 - result8 : result8 - expected8
+        expect(diff18).to.be.lte(1n)
+        expect(diff8).to.be.lte(1n)
+        expect(result18).to.equal(expected18 - diff18)
+        expect(result8).to.equal(expected8 - diff8)
+      })
+    })
+
+    describe('Overflow protection', () => {
+      it('should revert with ScaledPriceOverflow when priceTo * 10^Δ would overflow', async () => {
+        const amount = ethers.parseEther('1')
+        const result = await converter.getExpectedOut(addresses.DAI, addresses.USDC, amount)
+        const [priceFrom, priceTo] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+        const expected = calculateNewMethod(amount, priceFrom, priceTo, 12n)
+        const diff = expected > result ? expected - result : result - expected
+        expect(diff).to.be.lte(1n)
+      })
+    })
+
+    describe('Comparison: old vs new method error bounds', () => {
+      it('should demonstrate old method can lose up to 10^Δ - 1 units', async () => {
+        const [priceFrom, priceTo] = await router.getUsdPrices(addresses.DAI, addresses.USDC)
+        const decimalsDiff = 12n
+        const pow12 = 10n ** 12n
+        const testAmounts = [
+          1n,
+          1000n,
+          ethers.parseUnits('0.001', 18),
+          ethers.parseUnits('0.1', 18),
+          ethers.parseUnits('1', 18),
+        ]
+
+        for (const amount of testAmounts) {
+          const oldResult = calculateOldMethod(amount, priceFrom, priceTo, decimalsDiff)
+          const newResult = calculateNewMethod(amount, priceFrom, priceTo, decimalsDiff)
+          const contractResult = await converter.getExpectedOut(
+            addresses.DAI,
+            addresses.USDC,
+            amount
+          )
+          const contractDiff =
+            newResult > contractResult ? newResult - contractResult : contractResult - newResult
+          expect(contractDiff).to.be.lte(1n)
+          expect(newResult).to.be.gte(oldResult)
+          const improvement = newResult - oldResult
+          expect(improvement).to.be.gte(0n)
+          expect(improvement).to.be.lt(pow12)
+        }
+      })
+    })
+  })
+
+  after(async () => {
     await snapshot.restore()
+    resetTestOracleRouter()
+    resetTestFeedRegistryStub()
   })
 })

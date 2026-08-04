@@ -6,12 +6,9 @@ import { AmountConverterFactory__factory } from '../typechain-types'
 import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
 import { confirmOrAbort } from '../utils/prompt'
 
-const CHAINLINK_PRICE_FEED_REGISTRY = ''
+const ORACLE_ROUTER = ''
 
-assert(
-  ethers.isAddress(CHAINLINK_PRICE_FEED_REGISTRY),
-  'CHAINLINK_PRICE_FEED_REGISTRY is not a valid address'
-)
+assert(ethers.isAddress(ORACLE_ROUTER), 'ORACLE_ROUTER is not a valid address')
 
 async function main() {
   // prettier-ignore
@@ -22,13 +19,11 @@ async function main() {
   const deployer = await getDeployer()
 
   console.log(`Deployment parameters:`)
-  console.log(`  * Price feed registry address: ${fmt.value(CHAINLINK_PRICE_FEED_REGISTRY)}`)
+  console.log(`  * Oracle router address: ${fmt.value(ORACLE_ROUTER)}\n`)
 
   await confirmOrAbort('Proceed?')
 
-  const amountConverter = await new AmountConverterFactory__factory(deployer).deploy(
-    CHAINLINK_PRICE_FEED_REGISTRY
-  )
+  const amountConverter = await new AmountConverterFactory__factory(deployer).deploy(ORACLE_ROUTER)
 
   const receipt = await waitForDeployment(amountConverter.deploymentTransaction()!)
 
@@ -38,7 +33,7 @@ async function main() {
   )
 
   if (!['localhost', 'hardhat'].includes(network.name)) {
-    await verify(address, [CHAINLINK_PRICE_FEED_REGISTRY], receipt)
+    await verify(address, [ORACLE_ROUTER], receipt)
   } else {
     console.log(`Deployed on the local hardhat network, verification is skipped.`)
   }

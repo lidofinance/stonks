@@ -3,7 +3,7 @@ import { ethers } from 'hardhat'
 import { CoWSwapSettlementStub__factory } from '../../../typechain-types/factories/contracts/stubs'
 
 describe('CoWSwapSettlementStub', () => {
-  it('domainSeparator()', async () => {
+  it('should return correct EIP712 domain separator', async () => {
     const [deployer] = await ethers.getSigners()
     const settlement = await new CoWSwapSettlementStub__factory(deployer).deploy()
 

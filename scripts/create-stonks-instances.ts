@@ -6,6 +6,7 @@ import { confirmOrAbort } from '../utils/prompt'
 import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
 import { StonksFactory__factory } from '../typechain-types'
 import { StonksDeployedEvent } from '../typechain-types/contracts/factories/StonksFactory'
+import { setTimeout } from 'timers/promises'
 
 interface StonksConfig {
   tokenFrom: string
@@ -13,17 +14,22 @@ interface StonksConfig {
   orderDurationInSeconds: bigint
   marginBasisPoints: bigint
   priceToleranceInBasisPoints: bigint
+  maxImprovementInBasisPoints: bigint
+  allowPartialFill: boolean
 }
 
+const ADMIN = ''
 const AGENT = ''
 const STONKS_FACTORY = ''
 const AMOUNT_CONVERTER = ''
 const MANAGER_ADDRESS = ''
 const STONKS_CONFIGS: Record<string, StonksConfig> = {}
 
+assert(ethers.isAddress(ADMIN), 'ADMIN is not a valid address')
 assert(ethers.isAddress(AGENT), 'AGENT is not a valid address')
 assert(ethers.isAddress(STONKS_FACTORY), 'STONKS_FACTORY is not a valid address')
 assert(ethers.isAddress(AMOUNT_CONVERTER), 'AMOUNT_CONVERTER is not a valid address')
+assert(ethers.isAddress(MANAGER_ADDRESS), 'MANAGER_ADDRESS is not a valid address')
 assert(Object.values(STONKS_CONFIGS).length > 0, 'STONKS_CONFIGS is empty')
 
 async function main() {
@@ -44,6 +50,8 @@ async function main() {
     console.log(`  * order duration (sec): ${fmt.value(config.orderDurationInSeconds)}`)
     console.log(`  * margin (bps): ${fmt.value(config.marginBasisPoints)}`)
     console.log(`  * price tolerance (bps): ${fmt.value(config.priceToleranceInBasisPoints)}`)
+    console.log(`  * max improvement (bps): ${fmt.value(config.maxImprovementInBasisPoints)}`)
+    console.log(`  * allow partial fill: ${fmt.value(config.allowPartialFill)}`)
     console.log()
   }
 
@@ -62,7 +70,9 @@ async function main() {
       AMOUNT_CONVERTER,
       config.orderDurationInSeconds,
       config.marginBasisPoints,
-      config.priceToleranceInBasisPoints
+      config.priceToleranceInBasisPoints,
+      config.maxImprovementInBasisPoints,
+      config.allowPartialFill
     )
     const receipt = await waitForDeployment(tx)
 
@@ -77,6 +87,7 @@ async function main() {
     const {
       stonksAddress,
       agent,
+      admin,
       manager,
       tokenFrom,
       tokenTo,
@@ -85,6 +96,8 @@ async function main() {
       orderDurationInSeconds,
       marginInBasisPoints,
       priceToleranceInBasisPoints,
+      maxImprovementInBasisPoints,
+      allowPartialFill,
     } = stonksDeployedLog.args
 
     console.log(
@@ -93,19 +106,29 @@ async function main() {
         `was deployed successfully: ${fmt.address(stonksAddress)}\n`,
       ].join(' ')
     )
+
+    console.log('Waiting for 15 seconds to let Etherscan index the new contract...')
+
+    await setTimeout(15000)
+
     if (!['localhost', 'hardhat'].includes(network.name)) {
       await verify(
         stonksAddress,
         [
-          agent,
-          manager,
-          tokenFrom,
-          tokenTo,
-          amountConverter,
-          orderSample,
-          orderDurationInSeconds,
-          marginInBasisPoints,
-          priceToleranceInBasisPoints,
+          {
+            admin,
+            agent,
+            manager,
+            tokenFrom,
+            tokenTo,
+            amountConverter,
+            orderSample,
+            orderDurationInSeconds,
+            marginInBasisPoints,
+            priceToleranceInBasisPoints,
+            maxImprovementInBasisPoints,
+            allowPartialFill,
+          },
         ],
         receipt
       )
@@ -114,14 +137,19 @@ async function main() {
     }
 
     assert.equal(agent.toLowerCase(), AGENT.toLowerCase())
+    assert.equal(admin.toLowerCase(), ADMIN.toLowerCase())
     assert.equal(manager.toLowerCase(), MANAGER_ADDRESS.toLowerCase())
     assert.equal(tokenFrom.toLowerCase(), config.tokenFrom.toLowerCase())
     assert.equal(tokenTo.toLowerCase(), config.tokenTo.toLowerCase())
     assert.equal(amountConverter.toLowerCase(), AMOUNT_CONVERTER.toLowerCase())
     assert.equal(order.toLowerCase(), orderSample.toLowerCase())
-    assert.equal(orderDurationInSeconds, config.orderDurationInSeconds)
-    assert.equal(marginInBasisPoints, config.marginBasisPoints)
-    assert.equal(priceToleranceInBasisPoints, config.priceToleranceInBasisPoints)
+    assert.equal(orderDurationInSeconds.toString(), config.orderDurationInSeconds.toString())
+    assert.equal(marginInBasisPoints.toString(), config.marginBasisPoints.toString())
+    assert.equal(
+      priceToleranceInBasisPoints.toString(),
+      config.priceToleranceInBasisPoints.toString()
+    )
+    assert.equal(allowPartialFill, config.allowPartialFill)
 
     console.log()
   }

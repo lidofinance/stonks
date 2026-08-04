@@ -9,23 +9,18 @@ import { AmountConverterDeployedEvent } from '../typechain-types/contracts/facto
 
 const AMOUNT_CONVERTER_FACTORY = ''
 
-const CONVERSION_TARGET = ''
+const ORACLE_ROUTER = ''
 const ALLOWED_TOKENS_TO_SELL: string[] = []
 const ALLOWED_TOKENS_TO_BUY: string[] = []
-
-const PRICE_FEEDS_HEARTBEAT_TIMEOUTS: bigint[] = []
+const USE_ETH_ANCHOR = false
 
 assert(
   ethers.isAddress(AMOUNT_CONVERTER_FACTORY),
   'AMOUNT_CONVERTER_FACTORY is not a valid address'
 )
-assert(ethers.isAddress(CONVERSION_TARGET), `CONVERSION_TARGET is not a valid address`)
+assert(ethers.isAddress(ORACLE_ROUTER), `ORACLE_ROUTER is not a valid address`)
 assert(ALLOWED_TOKENS_TO_SELL.length > 0, 'Allowed tokens to sell is empty')
 assert(ALLOWED_TOKENS_TO_BUY.length > 0, 'Allowed tokens to buy is empty')
-assert(
-  ALLOWED_TOKENS_TO_SELL.length === PRICE_FEEDS_HEARTBEAT_TIMEOUTS.length,
-  'Allowed tokens to sell and heartbeat timeouts length mismatch'
-)
 
 async function main() {
   // prettier-ignore
@@ -37,28 +32,23 @@ async function main() {
   const deployer = await getDeployer()
 
   console.log(`Deployment parameters:`)
-  console.log(`  * Conversion target: ${fmt.value(CONVERSION_TARGET)}`)
+  console.log(`  * Oracle router: ${fmt.value(ORACLE_ROUTER)}`)
   console.log(
     `  * Allowed tokens to sell: ${fmt.value('[' + ALLOWED_TOKENS_TO_SELL.join(', ') + ']')}`
   )
   console.log(
     `  * Allowed tokens to buy: ${fmt.value('[' + ALLOWED_TOKENS_TO_BUY.join(', ') + ']')}`
   )
-  console.log(
-    `  * Price feeds heartbeat timeouts: ${fmt.value(
-      '[' + PRICE_FEEDS_HEARTBEAT_TIMEOUTS.join(', ') + ']'
-    )}`
-  )
+  console.log(`  * Use ETH anchor: ${fmt.value(USE_ETH_ANCHOR)}`)
 
   await confirmOrAbort('Proceed?')
 
   const factory = AmountConverterFactory__factory.connect(AMOUNT_CONVERTER_FACTORY, deployer)
 
   const tx = await factory.deployAmountConverter(
-    CONVERSION_TARGET,
     ALLOWED_TOKENS_TO_SELL,
     ALLOWED_TOKENS_TO_BUY,
-    PRICE_FEEDS_HEARTBEAT_TIMEOUTS
+    USE_ETH_ANCHOR
   )
 
   const receipt = await waitForDeployment(tx)
@@ -71,13 +61,8 @@ async function main() {
     throw new Error(`AmountConverterDeployed event is not found in the deploy tx`)
   }
 
-  const {
-    amountConverterAddress,
-    conversionTarget,
-    allowedTokensToSell,
-    allowedStableTokensToBuy,
-    priceFeedsHeartbeatTimeouts,
-  } = amountConverterDeployedLog.args
+  const { amountConverterAddress, oracleRouter, allowedTokensToSell, allowedTokensToBuy } =
+    amountConverterDeployedLog.args
 
   // prettier-ignore
   console.log(
@@ -87,29 +72,21 @@ async function main() {
   if (!['localhost', 'hardhat'].includes(network.name)) {
     await verify(
       amountConverterAddress,
-      [
-        await factory.FEED_REGISTRY(),
-        CONVERSION_TARGET,
-        ALLOWED_TOKENS_TO_SELL,
-        ALLOWED_TOKENS_TO_BUY,
-        PRICE_FEEDS_HEARTBEAT_TIMEOUTS,
-      ],
+      [ORACLE_ROUTER, ALLOWED_TOKENS_TO_SELL, ALLOWED_TOKENS_TO_BUY, USE_ETH_ANCHOR],
       receipt
     )
   } else {
     console.log(`Deployed on the local hardhat network, verification is skipped.`)
   }
-
-  assert.equal(conversionTarget.toLowerCase(), CONVERSION_TARGET.toLowerCase())
+  assert.equal(oracleRouter.toLowerCase(), ORACLE_ROUTER.toLowerCase())
   assert.deepEqual(
     allowedTokensToSell.map((a) => a.toLowerCase()),
     ALLOWED_TOKENS_TO_SELL.map((a) => a.toLowerCase())
   )
   assert.deepEqual(
-    allowedStableTokensToBuy.map((a) => a.toLowerCase()),
+    allowedTokensToBuy.map((a) => a.toLowerCase()),
     ALLOWED_TOKENS_TO_BUY.map((a) => a.toLowerCase())
   )
-  assert.deepEqual(priceFeedsHeartbeatTimeouts, PRICE_FEEDS_HEARTBEAT_TIMEOUTS)
 }
 
 main().catch((error) => {

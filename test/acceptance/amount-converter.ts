@@ -1,17 +1,19 @@
 import { ethers } from 'hardhat'
 import { expect } from 'chai'
-import { getTokensToBuy, getTokensToSell, getPriceFeedTimeouts } from './configuration'
-import { getContracts } from '../../utils/contracts'
 
 const AMOUNT_CONVERTER_ADDRESS: string = ''
+const ORACLE_ROUTER_ADDRESS: string = ''
+
+const tokensToSell: string[] = []
+const tokensToBuy: string[] = []
 
 describe('AmountConverter: acceptance', async function () {
   it('should have correct params', async function () {
     if (AMOUNT_CONVERTER_ADDRESS === '') this.skip()
-    const contracts = getContracts()
-    const tokensToSell = (await getTokensToSell()).map((token) => ethers.getAddress(token))
-    const tokensToBuy = (await getTokensToBuy()).map((token) => ethers.getAddress(token))
-    const priceFeedTimeouts = await getPriceFeedTimeouts()
+    if (ORACLE_ROUTER_ADDRESS === '') this.skip()
+
+    if (tokensToSell.length === 0) this.skip()
+    if (tokensToBuy.length === 0) this.skip()
 
     const amountConverter = await ethers.getContractAt('AmountConverter', AMOUNT_CONVERTER_ADDRESS)
 
@@ -23,23 +25,12 @@ describe('AmountConverter: acceptance', async function () {
       expect(await amountConverter.allowedTokensToBuy(token)).to.equal(true)
     }
 
-    for (let i = 0; i < tokensToSell.length; i++) {
-      expect(await amountConverter.priceFeedsHeartbeatTimeouts(tokensToSell[i])).to.equal(
-        priceFeedTimeouts[i]
-      )
-    }
-
     const allowedTokenToBuyAddedFilter = amountConverter.filters['AllowedTokenToBuyAdded(address)']
     const allowedTokenToSellAddedFilter =
       amountConverter.filters['AllowedTokenToSellAdded(address)']
-    const priceFeedHeartbeatTimeoutSetFilter =
-      amountConverter.filters['PriceFeedHeartbeatTimeoutSet(address,uint256)']
 
     const addTokenToSellEvents = await amountConverter.queryFilter(allowedTokenToSellAddedFilter)
     const addTokenToBuyEvents = await amountConverter.queryFilter(allowedTokenToBuyAddedFilter)
-    const priceFeedHeartbeatTimeoutSetEvents = await amountConverter.queryFilter(
-      priceFeedHeartbeatTimeoutSetFilter
-    )
 
     expect(addTokenToSellEvents.length).to.equal(tokensToSell.length)
     expect(addTokenToBuyEvents.length).to.equal(tokensToBuy.length)
@@ -52,17 +43,6 @@ describe('AmountConverter: acceptance', async function () {
       expect(tokensToBuy).to.include(event.args[0])
     }
 
-    for (const event of priceFeedHeartbeatTimeoutSetEvents) {
-      const token = event.args[0]
-      const timeout = event.args[1]
-
-      const index = tokensToSell.indexOf(token)
-      expect(timeout).to.equal(priceFeedTimeouts[index])
-    }
-
-    expect(await amountConverter.CONVERSION_TARGET()).to.hexEqual(contracts.CHAINLINK_USD_QUOTE)
-    expect(await amountConverter.FEED_REGISTRY()).to.hexEqual(
-      contracts.CHAINLINK_PRICE_FEED_REGISTRY
-    )
+    expect(await amountConverter.ORACLE_ROUTER()).to.hexEqual(ORACLE_ROUTER_ADDRESS)
   })
 })
