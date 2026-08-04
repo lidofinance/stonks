@@ -303,6 +303,7 @@ describe('Scenario test multi-pair', function () {
             priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
             maxImprovementInBasisPoints: 100n, // maxImprovement = 100 bps (1%)
             allowPartialFill: await stonks.ALLOW_PARTIAL_FILL(),
+            receiver: ethers.ZeroAddress,
           })
           await stonksWithCap.waitForDeployment()
 
@@ -354,6 +355,7 @@ describe('Scenario test multi-pair', function () {
             priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
             maxImprovementInBasisPoints: 0n, // maxImprovement = 0 (strict mode)
             allowPartialFill: await stonks.ALLOW_PARTIAL_FILL(),
+            receiver: ethers.ZeroAddress,
           })
           await stonksStrict.waitForDeployment()
 
@@ -405,6 +407,7 @@ describe('Scenario test multi-pair', function () {
             priceToleranceInBasisPoints: await stonks.PRICE_TOLERANCE_IN_BASIS_POINTS(),
             maxImprovementInBasisPoints: 100n, // maxImprovement = 100 bps (1%)
             allowPartialFill: await stonks.ALLOW_PARTIAL_FILL(),
+            receiver: ethers.ZeroAddress,
           })
           await stonksWithCap.waitForDeployment()
 

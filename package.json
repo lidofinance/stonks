@@ -2,7 +2,7 @@
   "name": "hardhat-project",
   "devDependencies": {
     "@nomicfoundation/hardhat-network-helpers": "^1.0.9",
-    "@nomicfoundation/hardhat-toolbox": "^3.0.0",
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
     "@nomicfoundation/hardhat-verify": "^2.1.3",
     "@types/prompts": "^2.4.9",
     "dotenv-cli": "^7.3.0",
@@ -12,13 +12,14 @@
     "typescript": "^5.2.2"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^4.9.3",
+    "@openzeppelin/contracts": "4.9.3",
     "chalk": "^4.1.2",
     "dotenv": "^16.3.1",
     "prompts": "^2.4.2"
   },
   "scripts": {
-    "test": "hardhat test --network localhost",
+    "test": "hardhat test test/unit/*.ts test/unit/*/*.ts test/acceptance/*.ts test/fuzz/*.ts --network localhost",
+    "test:integration": "hardhat test test/integration/*.ts --network localhost",
     "node": "dotenv -- npm run node-hardhat",
     "node-hardhat": "hardhat node --fork $RPC_URL"
   }

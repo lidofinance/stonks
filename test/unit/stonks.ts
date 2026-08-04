@@ -91,6 +91,7 @@ describe('Stonks', function () {
       priceToleranceInBasisPoints: number
       maxImprovementInBasisPoints: bigint
       allowPartialFill: boolean
+      receiver: string
     }
 
     before(async function () {
@@ -107,6 +108,7 @@ describe('Stonks', function () {
         priceToleranceInBasisPoints: 999,
         maxImprovementInBasisPoints: 0n,
         allowPartialFill: false,
+        receiver: ethers.ZeroAddress,
       } as const
     })
 
@@ -148,6 +150,8 @@ describe('Stonks', function () {
         .withArgs(validParams.maxImprovementInBasisPoints)
         .and.to.emit(stonksLocal, 'AllowPartialFillSet')
         .withArgs(validParams.allowPartialFill)
+        .and.to.emit(stonksLocal, 'ReceiverSet')
+        .withArgs(validParams.agent)
     })
 
     it('should emit MaxImprovementInBasisPointsSet event with correct value', async function () {
@@ -391,6 +395,150 @@ describe('Stonks', function () {
         .withArgs(contracts.USDC)
 
       await localSnapshot.restore()
+    })
+  })
+
+  describe('receiver configuration:', function () {
+    const customReceiver = '0x000000000000000000000000000000000000bEEF'
+
+    let baseParams: {
+      admin: string
+      agent: string
+      manager: string
+      tokenFrom: string
+      tokenTo: string
+      amountConverter: string
+      orderSample: string
+      orderDurationInSeconds: number
+      marginInBasisPoints: number
+      priceToleranceInBasisPoints: number
+      maxImprovementInBasisPoints: bigint
+      allowPartialFill: boolean
+      receiver: string
+    }
+
+    before(async function () {
+      baseParams = {
+        admin: contracts.ADMIN,
+        agent: contracts.AGENT,
+        manager: managerAddress,
+        tokenFrom: contracts.STETH,
+        tokenTo: contracts.DAI,
+        amountConverter: await (subjectTokenConverter as AmountConverter).getAddress(),
+        orderSample: await subject.ORDER_SAMPLE(),
+        orderDurationInSeconds: 3600,
+        marginInBasisPoints: 100,
+        priceToleranceInBasisPoints: 100,
+        maxImprovementInBasisPoints: 0n,
+        allowPartialFill: false,
+        receiver: ethers.ZeroAddress,
+      }
+    })
+
+    it('should default RECEIVER to AGENT when constructed with zero receiver', async function () {
+      const stonksLocal = await ContractFactory.deploy(baseParams)
+      await stonksLocal.waitForDeployment()
+
+      expect(await stonksLocal.RECEIVER()).to.equal(contracts.AGENT)
+    })
+
+    it('should emit ReceiverSet with AGENT when constructed with zero receiver', async function () {
+      const stonksLocal = await ContractFactory.deploy(baseParams)
+      await expect(stonksLocal.deploymentTransaction())
+        .to.emit(stonksLocal, 'ReceiverSet')
+        .withArgs(contracts.AGENT)
+    })
+
+    it('should store and expose RECEIVER when constructed with a non-zero receiver', async function () {
+      const stonksLocal = await ContractFactory.deploy({ ...baseParams, receiver: customReceiver })
+      await stonksLocal.waitForDeployment()
+
+      expect(await stonksLocal.RECEIVER()).to.equal(customReceiver)
+    })
+
+    it('should emit ReceiverSet with the explicit receiver', async function () {
+      const stonksLocal = await ContractFactory.deploy({ ...baseParams, receiver: customReceiver })
+      await expect(stonksLocal.deploymentTransaction())
+        .to.emit(stonksLocal, 'ReceiverSet')
+        .withArgs(customReceiver)
+    })
+
+    it('should propagate RECEIVER into Order.initialize when placing an order', async function () {
+      const stonksWithReceiver = await ContractFactory.deploy({
+        ...baseParams,
+        receiver: customReceiver,
+      })
+      await stonksWithReceiver.waitForDeployment()
+
+      await fillUpERC20FromTreasury({
+        token: contracts.STETH,
+        amount: ethers.parseEther('1'),
+        address: await stonksWithReceiver.getAddress(),
+      })
+
+      const expectedBuyAmount = await stonksWithReceiver.estimateTradeOutputFromCurrentBalance()
+      const tx = await stonksWithReceiver.placeOrder(expectedBuyAmount)
+      const receipt = await tx.wait()
+      if (!receipt) throw new Error('No transaction receipt')
+
+      const { address: orderAddress, order } = await getPlaceOrderData(receipt)
+      const orderContract = await ethers.getContractAt('Order', orderAddress)
+
+      expect(order.receiver).to.equal(customReceiver)
+
+      const details = await orderContract.getOrderDetails()
+      expect(details[6]).to.equal(customReceiver)
+    })
+
+    it('should propagate AGENT fallback receiver into Order when RECEIVER defaults', async function () {
+      const stonksAgentReceiver = await ContractFactory.deploy(baseParams)
+      await stonksAgentReceiver.waitForDeployment()
+
+      await fillUpERC20FromTreasury({
+        token: contracts.STETH,
+        amount: ethers.parseEther('1'),
+        address: await stonksAgentReceiver.getAddress(),
+      })
+
+      const expectedBuyAmount = await stonksAgentReceiver.estimateTradeOutputFromCurrentBalance()
+      const tx = await stonksAgentReceiver.placeOrder(expectedBuyAmount)
+      const receipt = await tx.wait()
+      if (!receipt) throw new Error('No transaction receipt')
+
+      const { order } = await getPlaceOrderData(receipt)
+      expect(order.receiver).to.equal(contracts.AGENT)
+    })
+
+    it('should produce distinct order hashes for orders that differ only by receiver', async function () {
+      // Two Stonks instances identical in every field except `receiver` must produce
+      // different CoW order hashes because `receiver` is part of the signed `GPv2Order`
+      // payload. Guards against the receiver being accidentally dropped from the struct
+      // that feeds into `orderHash = order.hash(DOMAIN_SEPARATOR)`.
+      const placeOrder = async (stonksInstance: Stonks): Promise<string> => {
+        await fillUpERC20FromTreasury({
+          token: contracts.STETH,
+          amount: ethers.parseEther('1'),
+          address: await stonksInstance.getAddress(),
+        })
+        const expectedBuyAmount = await stonksInstance.estimateTradeOutputFromCurrentBalance()
+        const tx = await stonksInstance.placeOrder(expectedBuyAmount)
+        const receipt = await tx.wait()
+        if (!receipt) throw new Error('No transaction receipt')
+        const { hash } = await getPlaceOrderData(receipt)
+        return hash
+      }
+
+      const stonksAgent = await ContractFactory.deploy(baseParams)
+      await stonksAgent.waitForDeployment()
+      const stonksCustom = await ContractFactory.deploy({ ...baseParams, receiver: customReceiver })
+      await stonksCustom.waitForDeployment()
+
+      const [hashAgent, hashCustom] = await Promise.all([
+        placeOrder(stonksAgent),
+        placeOrder(stonksCustom),
+      ])
+
+      expect(hashAgent).to.not.equal(hashCustom)
     })
   })
 

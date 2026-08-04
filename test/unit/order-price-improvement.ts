@@ -289,6 +289,7 @@ describe('Order - Price Improvement & Partial Fills', async function () {
         priceToleranceInBasisPoints: PRICE_TOLERANCE_IN_BP,
         maxImprovementInBasisPoints: ethers.MaxUint256, // Pass as bigint directly
         allowPartialFill: false,
+        receiver: ethers.ZeroAddress,
       })
       await stonksNoCap.waitForDeployment()
 

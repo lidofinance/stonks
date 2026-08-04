@@ -1,0 +1,163 @@
+{
+  "oracleRouter": {
+    "implementation": {
+      "contract": "contracts/routers/OracleRouter.sol",
+      "address": "0x79ef3a538200Fe4981D67E7e886bfb36D4Cb5a31",
+      "deployTx": "0x5b10055ad68a135ec447a48ddf73c84c55957ebce35412801eab45358b946299",
+      "constructorArgs": [
+        "0x2e59A20f205bB85a89C53f1936454680651E618e",
+        "0x47Fb2585D2C56Fe188D0E6ec628a38b74fCeeeDf"
+      ]
+    }
+  },
+  "amountConverterEthAnchored": {
+    "implementation": {
+      "contract": "contracts/AmountConverter.sol",
+      "address": "0x70dA04C5D0f325F5AF1426dE6672BF2424B4593d",
+      "deployTx": "0x3d071b5677340c572ff87dd9ae73a853e2fd1df1440c4d45033fe181c3dc7b0d",
+      "constructorArgs": [
+        "0x79ef3a538200Fe4981D67E7e886bfb36D4Cb5a31",
+        [
+          "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84"
+        ],
+        [
+          "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32"
+        ],
+        true
+      ]
+    }
+  },
+  "stonksFactory": {
+    "implementation": {
+      "contract": "contracts/factories/StonksFactory.sol",
+      "address": "0x632C0CCDca849eeD780FC685BBa9AbC3c7407Cb2",
+      "deployTx": "0x395260630ab5d97e67a1a0cc936cc3b8024df63431c731b730f8af8e28247029",
+      "constructorArgs": [
+        "0x2e59A20f205bB85a89C53f1936454680651E618e",
+        "0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c",
+        "0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+        "0xC92E8bdf79f0507f65a392b0ab4667716BFE0110"
+      ]
+    }
+  },
+  "orderSample": {
+    "implementation": {
+      "contract": "contracts/Order.sol",
+      "address": "0x2569633AdB492ca9327cb7433277aa7c68D69e28",
+      "deployTx": "0x395260630ab5d97e67a1a0cc936cc3b8024df63431c731b730f8af8e28247029",
+      "constructorArgs": [
+        "0x2e59A20f205bB85a89C53f1936454680651E618e",
+        "0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c",
+        "0xC92E8bdf79f0507f65a392b0ab4667716BFE0110",
+        "0xc078f884a2676e1345748b1feace7b0abee5d00ecadb6e574dcdd109a63e8943"
+      ]
+    }
+  },
+  "stakingRevenueSource": {
+    "implementation": {
+      "contract": "contracts/automated-buybacks/revenue/StakingRevenueSource.sol",
+      "address": "0x6220212a33a87Ed7Cc386B67eB2c393974F28C38",
+      "deployTx": "0xb839e5fbc25f09a40993a26be4ecc0a502e8b645d592c2f7658e3a50fcf3ec29",
+      "constructorArgs": [
+        "0x79ef3a538200Fe4981D67E7e886bfb36D4Cb5a31",
+        "0xC1d0b3DE6792Bf6b4b37EccdcC24e45978Cfd2Eb"
+      ]
+    }
+  },
+  "buybackExecutor": {
+    "implementation": {
+      "contract": "contracts/automated-buybacks/BuybackExecutor.sol",
+      "address": "0x6c213ca5A10Cc26548C742229569B4AeD2A9C9B7",
+      "deployTx": "0xdfd5443d63ba69183dba380297a1b13799fbc02317d1ec04ec9225dd890766a4",
+      "constructorArgs": [
+        {
+          "admin": "0x2e59A20f205bB85a89C53f1936454680651E618e",
+          "treasury": "0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c",
+          "wstEth": "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",
+          "ldo": "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32",
+          "oracleRouter": "0x79ef3a538200Fe4981D67E7e886bfb36D4Cb5a31",
+          "curvePoolAndToken": "0xD7f1dA0a28E39dd0dB70E6Acdc2B49846AD22760",
+          "poolPriceDivergenceToleranceBps": "200",
+          "minAllowedOrderAmount": "1000000000000000000",
+          "maxAllowedOrderAmount": "20000000000000000000",
+          "minDepositValueUsd": "1000000000000000000000",
+          "maxDepositValueUsd": "50000000000000000000000",
+          "poolBootstrapMinTvlUsd": "250000000000000000000000"
+        }
+      ]
+    }
+  },
+  "buybackStonksLp": {
+    "implementation": {
+      "contract": "contracts/Stonks.sol",
+      "address": "0x8c595aA4AEc6F42B9e7D77F83179768D37CE3042",
+      "deployTx": "0x8155351f1044f448cfa7b25d5ed851d62db77565b490426d417036f577e91db7",
+      "constructorArgs": [
+        {
+          "admin": "0x2e59A20f205bB85a89C53f1936454680651E618e",
+          "agent": "0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c",
+          "manager": "0x6c213ca5A10Cc26548C742229569B4AeD2A9C9B7",
+          "tokenFrom": "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+          "tokenTo": "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32",
+          "amountConverter": "0x70dA04C5D0f325F5AF1426dE6672BF2424B4593d",
+          "orderSample": "0x2569633AdB492ca9327cb7433277aa7c68D69e28",
+          "orderDurationInSeconds": "1800",
+          "marginInBasisPoints": "110",
+          "priceToleranceInBasisPoints": "550",
+          "maxImprovementInBasisPoints": "1000",
+          "allowPartialFill": true,
+          "receiver": "0x6c213ca5A10Cc26548C742229569B4AeD2A9C9B7"
+        }
+      ]
+    }
+  },
+  "buybackStonksTreasury": {
+    "implementation": {
+      "contract": "contracts/Stonks.sol",
+      "address": "0xb368586CB980895E51e1D82102E63b3F69d3F151",
+      "deployTx": "0xee57ff5fe81335c8fa40b261dbcc6a576439a8a7be7d8199f693ab0dcc524401",
+      "constructorArgs": [
+        {
+          "admin": "0x2e59A20f205bB85a89C53f1936454680651E618e",
+          "agent": "0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c",
+          "manager": "0x6c213ca5A10Cc26548C742229569B4AeD2A9C9B7",
+          "tokenFrom": "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+          "tokenTo": "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32",
+          "amountConverter": "0x70dA04C5D0f325F5AF1426dE6672BF2424B4593d",
+          "orderSample": "0x2569633AdB492ca9327cb7433277aa7c68D69e28",
+          "orderDurationInSeconds": "1800",
+          "marginInBasisPoints": "110",
+          "priceToleranceInBasisPoints": "550",
+          "maxImprovementInBasisPoints": "1000",
+          "allowPartialFill": true,
+          "receiver": "0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c"
+        }
+      ]
+    }
+  },
+  "buybackAllocator": {
+    "implementation": {
+      "contract": "contracts/automated-buybacks/BuybackAllocator.sol",
+      "address": "0xAA568141c051f2D1132b110f8391F18D48E8D889",
+      "deployTx": "0x1a83db8a7a0c2ebb95edc5573fceedbbe601ebdfea9ea096c8ab0900cb22ea01",
+      "constructorArgs": [
+        {
+          "admin": "0x2e59A20f205bB85a89C53f1936454680651E618e",
+          "treasury": "0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c",
+          "stEth": "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+          "oracleRouter": "0x79ef3a538200Fe4981D67E7e886bfb36D4Cb5a31",
+          "executor": "0x6c213ca5A10Cc26548C742229569B4AeD2A9C9B7",
+          "dailyCapUSD": "50000000000000000000000",
+          "yearlyCapUSD": "10000000000000000000000000",
+          "reserveDailyRateUSD": "109589000000000000000000",
+          "minStEthPriceUSD": "0",
+          "minSpendPerCallUSD": "1000000000000000000000",
+          "surplusShareBP": "5000",
+          "revenueSources": [
+            "0x6220212a33a87Ed7Cc386B67eB2c393974F28C38"
+          ]
+        }
+      ]
+    }
+  }
+}

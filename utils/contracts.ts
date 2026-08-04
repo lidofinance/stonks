@@ -17,6 +17,8 @@ export type Contracts = {
   DOMAIN_SEPARATOR: string
   MANAGER: string
   ORACLE_ROUTER: string
+  WSTETH: string
+  CURVE_POOL_TWOCRYPTO_NG_FACTORY?: string
 }
 
 export const mainnet: Contracts = {
@@ -37,6 +39,8 @@ export const mainnet: Contracts = {
   DOMAIN_SEPARATOR: '0xc078f884a2676e1345748b1feace7b0abee5d00ecadb6e574dcdd109a63e8943',
   MANAGER: '0xa02FC823cCE0D016bD7e17ac684c9abAb2d6D647',
   ORACLE_ROUTER: '0x0000000000000000000000000000000000000000',
+  WSTETH: '0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0',
+  CURVE_POOL_TWOCRYPTO_NG_FACTORY: '0x98EE851a00abeE0d95D08cF4CA2BdCE32aeaAF7F',
 }
 
 export const hoodi: Contracts = {
@@ -58,6 +62,7 @@ export const hoodi: Contracts = {
   ADMIN: '0x49B3512c44891bef83F8967d075121Bd1b07a01B',
   // DAO Tech and QA ms
   EMERGENCY_MULTISIG: '0x418B816A7c3ecA151A31d98e30aa7DAa33aBf83A',
+  WSTETH: '0x7E99eE3C66636DE415D2d7C880938F2f40f94De4',
 }
 
 export const getContracts = () => {

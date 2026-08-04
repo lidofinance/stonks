@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
+// SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
@@ -39,7 +39,8 @@ contract StonksFactory {
         uint256 marginInBasisPoints,
         uint256 priceToleranceInBasisPoints,
         uint256 maxImprovementInBasisPoints,
-        bool allowPartialFill
+        bool allowPartialFill,
+        address receiver
     );
 
     // ==================== Errors ====================
@@ -73,16 +74,10 @@ contract StonksFactory {
             revert InvalidSettlementAddress(settlement_);
         }
 
-
         ADMIN = admin_;
         AGENT = agent_;
         ORDER_SAMPLE = address(
-            new Order(
-                admin_,
-                agent_,
-                relayer_,
-                ICoWSwapSettlement(settlement_).domainSeparator()
-            )
+            new Order(admin_, agent_, relayer_, ICoWSwapSettlement(settlement_).domainSeparator())
         );
 
         emit AdminSet(admin_);
@@ -103,6 +98,9 @@ contract StonksFactory {
      * @param priceToleranceInBasisPoints_ Price tolerance in basis points
      * @param maxImprovementInBasisPoints_ Maximum price improvement allowed in basis points (type(uint256).max = no cap, 0 = strict mode)
      * @param allowPartialFill_ Whether orders should allow partial fills (useful for rebasable tokens)
+     * @param receiver_ Settlement destination for orders created by the new Stonks instance.
+     *                  Passing `address(0)` maps to `AGENT`, which serves buyback treasury mode and keeps legacy behavior
+     *                  for non-buyback deployments.
      * @return stonks The address of the newly deployed Stonks contract
      */
     function deployStonks(
@@ -114,7 +112,8 @@ contract StonksFactory {
         uint256 marginInBasisPoints_,
         uint256 priceToleranceInBasisPoints_,
         uint256 maxImprovementInBasisPoints_,
-        bool allowPartialFill_
+        bool allowPartialFill_,
+        address receiver_
     ) external returns (address stonks) {
         stonks = address(
             new Stonks(
@@ -130,7 +129,8 @@ contract StonksFactory {
                     marginInBasisPoints_,
                     priceToleranceInBasisPoints_,
                     maxImprovementInBasisPoints_,
-                    allowPartialFill_
+                    allowPartialFill_,
+                    receiver_
                 )
             )
         );
@@ -148,7 +148,8 @@ contract StonksFactory {
             marginInBasisPoints_,
             priceToleranceInBasisPoints_,
             maxImprovementInBasisPoints_,
-            allowPartialFill_
+            allowPartialFill_,
+            receiver_
         );
     }
 }

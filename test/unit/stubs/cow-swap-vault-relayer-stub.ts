@@ -130,6 +130,7 @@ describe('CoWSwapVaultRelayerStub', async () => {
       priceToleranceInBasisPoints: PRICE_TOLERANCE_BPS,
       maxImprovementInBasisPoints: 0,
       allowPartialFill: false,
+      receiver: ethers.ZeroAddress,
     })
     await stonks.waitForDeployment()
 

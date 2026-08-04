@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
+// SPDX-FileCopyrightText: 2026 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
@@ -56,6 +56,10 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         uint256 maxImprovementInBasisPoints;
         /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
         bool allowPartialFill;
+        /// @notice Settlement destination for orders created by this Stonks instance. `address(0)`
+        ///         maps to `AGENT`, which serves buyback treasury mode and keeps legacy behavior
+        ///         for non-buyback deployments.
+        address receiver;
     }
 
     // ==================== Immutables ====================
@@ -80,6 +84,9 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     uint256 public immutable MAX_IMPROVEMENT_IN_BASIS_POINTS;
     /// @notice Whether orders should allow partial fills (useful for rebasable tokens).
     bool public immutable ALLOW_PARTIAL_FILL;
+    /// @notice Settlement destination forwarded to every Order created by this Stonks instance.
+    ///         Defaults to `AGENT` when no receiver is supplied at construction.
+    address public immutable RECEIVER;
 
     // ==================== Constants ====================
 
@@ -105,6 +112,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
     event PriceToleranceInBasisPointsSet(uint256 priceToleranceInBasisPoints);
     event MaxImprovementInBasisPointsSet(uint256 maxImprovementInBasisPoints);
     event AllowPartialFillSet(bool allowPartialFill);
+    event ReceiverSet(address receiver);
     event OrderContractCreated(address indexed orderContract, uint256 minBuyAmount);
     event SignaturesPaused(address indexed by);
     event SignaturesUnpaused(address indexed by);
@@ -189,6 +197,11 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         MAX_IMPROVEMENT_IN_BASIS_POINTS = initParams_.maxImprovementInBasisPoints;
         ALLOW_PARTIAL_FILL = initParams_.allowPartialFill;
 
+        address resolvedReceiver = initParams_.receiver == address(0)
+            ? initParams_.agent
+            : initParams_.receiver;
+        RECEIVER = resolvedReceiver;
+
         emit ManagerSet(initParams_.manager);
         emit AmountConverterSet(initParams_.amountConverter);
         emit OrderSampleSet(initParams_.orderSample);
@@ -199,6 +212,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         emit PriceToleranceInBasisPointsSet(initParams_.priceToleranceInBasisPoints);
         emit MaxImprovementInBasisPointsSet(initParams_.maxImprovementInBasisPoints);
         emit AllowPartialFillSet(initParams_.allowPartialFill);
+        emit ReceiverSet(resolvedReceiver);
     }
 
     // ==================== External Functions ====================
@@ -411,7 +425,7 @@ contract Stonks is IStonks, AssetRecoverer, ReentrancyGuard, Pausable {
         Order orderCopy = Order(Clones.clone(ORDER_SAMPLE));
 
         IERC20(TOKEN_FROM).safeTransfer(address(orderCopy), sellAmount_);
-        orderCopy.initialize(minBuyAmount_, manager);
+        orderCopy.initialize(minBuyAmount_, manager, RECEIVER);
 
         emit OrderContractCreated(address(orderCopy), minBuyAmount_);
 

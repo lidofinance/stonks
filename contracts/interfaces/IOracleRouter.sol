@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2024 Lido <info@lido.fi>
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.23;
+pragma solidity ^0.8.0;
 
 interface IOracleRouter {
     enum QuoteDenomination {
@@ -51,4 +51,6 @@ interface IOracleRouter {
     function syncTokenFeed(address token_) external;
 
     function MAX_DECIMALS() external view returns (uint128);
+
+    function PRICE_UNIT() external view returns (uint256);
 }

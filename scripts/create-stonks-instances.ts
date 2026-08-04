@@ -3,10 +3,11 @@ import { ethers, network } from 'hardhat'
 
 import fmt from '../utils/format'
 import { confirmOrAbort } from '../utils/prompt'
-import { getDeployer, verify, waitForDeployment } from '../utils/deployment'
+import { getDeployer, saveDeployment, verify, waitForDeployment } from '../utils/deployment'
 import { StonksFactory__factory } from '../typechain-types'
 import { StonksDeployedEvent } from '../typechain-types/contracts/factories/StonksFactory'
 import { setTimeout } from 'timers/promises'
+import { AMOUNT_CONVERTER_ADDRESS, STONKS_PARAMS } from './nest-parameters'
 
 interface StonksConfig {
   tokenFrom: string
@@ -16,14 +17,41 @@ interface StonksConfig {
   priceToleranceInBasisPoints: bigint
   maxImprovementInBasisPoints: bigint
   allowPartialFill: boolean
+  receiver: string
 }
 
-const ADMIN = ''
-const AGENT = ''
-const STONKS_FACTORY = ''
-const AMOUNT_CONVERTER = ''
-const MANAGER_ADDRESS = ''
-const STONKS_CONFIGS: Record<string, StonksConfig> = {}
+const ADMIN = '0x2e59A20f205bB85a89C53f1936454680651E618e' // Aragon Voting
+const AGENT = '0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c' // Aragon Agent
+const STONKS_FACTORY = '' // TODO: deployed StonksFactory
+const AMOUNT_CONVERTER = AMOUNT_CONVERTER_ADDRESS
+const MANAGER_ADDRESS = '' // TODO: deployed BuybackExecutor
+
+const STETH = '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84'
+const LDO = '0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32'
+
+// Trade parameters sourced from the shared deploy plan in nest-parameters.ts.
+const TRADE_PARAMS = {
+  tokenFrom: STETH,
+  tokenTo: LDO,
+  orderDurationInSeconds: STONKS_PARAMS.orderDurationInSeconds,
+  marginBasisPoints: STONKS_PARAMS.marginInBasisPoints,
+  priceToleranceInBasisPoints: STONKS_PARAMS.priceToleranceInBasisPoints,
+  maxImprovementInBasisPoints: STONKS_PARAMS.maxImprovementInBasisPoints,
+  allowPartialFill: STONKS_PARAMS.allowPartialFill,
+}
+
+const STONKS_CONFIGS: Record<string, StonksConfig> = {
+  // receiver == manager (the executor) => LP mode
+  buybackStonksLp: {
+    ...TRADE_PARAMS,
+    receiver: MANAGER_ADDRESS,
+  },
+  // receiver == Aragon Agent => treasury mode, the launch instance
+  buybackStonksTreasury: {
+    ...TRADE_PARAMS,
+    receiver: AGENT,
+  },
+}
 
 assert(ethers.isAddress(ADMIN), 'ADMIN is not a valid address')
 assert(ethers.isAddress(AGENT), 'AGENT is not a valid address')
@@ -52,6 +80,7 @@ async function main() {
     console.log(`  * price tolerance (bps): ${fmt.value(config.priceToleranceInBasisPoints)}`)
     console.log(`  * max improvement (bps): ${fmt.value(config.maxImprovementInBasisPoints)}`)
     console.log(`  * allow partial fill: ${fmt.value(config.allowPartialFill)}`)
+    console.log(`  * receiver: ${fmt.value(config.receiver)}`)
     console.log()
   }
 
@@ -72,7 +101,8 @@ async function main() {
       config.marginBasisPoints,
       config.priceToleranceInBasisPoints,
       config.maxImprovementInBasisPoints,
-      config.allowPartialFill
+      config.allowPartialFill,
+      config.receiver
     )
     const receipt = await waitForDeployment(tx)
 
@@ -98,6 +128,7 @@ async function main() {
       priceToleranceInBasisPoints,
       maxImprovementInBasisPoints,
       allowPartialFill,
+      receiver,
     } = stonksDeployedLog.args
 
     console.log(
@@ -106,6 +137,29 @@ async function main() {
         `was deployed successfully: ${fmt.address(stonksAddress)}\n`,
       ].join(' ')
     )
+
+    saveDeployment(pair, {
+      contract: 'contracts/Stonks.sol',
+      address: stonksAddress,
+      deployTx: receipt.hash,
+      constructorArgs: [
+        {
+          admin,
+          agent,
+          manager,
+          tokenFrom,
+          tokenTo,
+          amountConverter,
+          orderSample,
+          orderDurationInSeconds,
+          marginInBasisPoints,
+          priceToleranceInBasisPoints,
+          maxImprovementInBasisPoints,
+          allowPartialFill,
+          receiver,
+        },
+      ],
+    })
 
     console.log('Waiting for 15 seconds to let Etherscan index the new contract...')
 
@@ -128,6 +182,7 @@ async function main() {
             priceToleranceInBasisPoints,
             maxImprovementInBasisPoints,
             allowPartialFill,
+            receiver,
           },
         ],
         receipt

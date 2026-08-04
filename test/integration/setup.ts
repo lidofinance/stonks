@@ -13,6 +13,7 @@ export type TokenPair = {
   priceFeedHeartbeatTimeout: number
   useEthBridge?: boolean
   allowPartialFill?: boolean
+  receiver?: string
 }
 export type Setup = {
   manager: Signer
@@ -188,6 +189,7 @@ export const setup = async (pair: TokenPair): Promise<Setup> => {
       priceToleranceInBps: 100,
       maxImprovementInBps: 100,
       allowPartialFill: pair.allowPartialFill ?? false,
+      receiver: pair.receiver ?? ethers.ZeroAddress,
     },
     amountConverterParams: {
       oracleRouter: await oracleRouter.getAddress(),
@@ -440,74 +442,74 @@ export const pairs = [
     tokenFrom: contracts.STETH,
     tokenTo: contracts.DAI,
     name: 'STETH->DAI',
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
   },
   {
     tokenFrom: contracts.STETH,
     tokenTo: contracts.USDC,
     name: 'STETH->USDC',
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
   },
   {
     tokenFrom: contracts.STETH,
     tokenTo: contracts.USDT,
     name: 'STETH->USDT',
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
   },
   {
     tokenFrom: contracts.USDC,
     tokenTo: contracts.STETH,
     name: 'USDC->STETH',
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
   },
   {
     tokenFrom: contracts.USDC,
     tokenTo: contracts.DAI,
     name: 'USDC->DAI',
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
   },
   {
     tokenFrom: contracts.USDC,
     tokenTo: contracts.USDT,
     name: 'USDC->USDT',
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
   },
   {
     tokenFrom: contracts.USDT,
     tokenTo: contracts.DAI,
     name: 'USDT->DAI',
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
   },
   {
     tokenFrom: contracts.USDT,
     tokenTo: contracts.USDC,
     name: 'USDT->USDC',
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
   },
   {
     tokenFrom: contracts.DAI,
     tokenTo: contracts.USDT,
     name: 'DAI->USDT',
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
   },
   {
     tokenFrom: contracts.DAI,
     tokenTo: contracts.USDC,
     name: 'DAI->USDC',
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
   },
   {
     tokenFrom: contracts.STETH,
     tokenTo: contracts.DAI,
     name: 'STETH->DAI (ETH Bridge)',
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
     useEthBridge: true,
   },
   {
     tokenFrom: contracts.STETH,
     tokenTo: contracts.USDC,
     name: 'STETH->USDC (ETH Bridge)',
-    priceFeedHeartbeatTimeout: 86400,
+    priceFeedHeartbeatTimeout: 86400 * 7,
     useEthBridge: true,
   },
 ]

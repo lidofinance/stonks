@@ -16,3 +16,6 @@ artifacts
 
 # compilers
 solc
+# Foundry
+forge-out/
+forge-cache/
