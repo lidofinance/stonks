@@ -3,7 +3,9 @@ name: Integration tests
 # Integration suite against a mainnet fork with the TokenRateNotifier mock-upgrade.
 # Service runs the fork node; core's mock-upgrade deploys the notifier and rewires LidoLocator.
 #
-# TODO: once the notifier is on mainnet, drop the core checkout, fork-node service, and mock-upgrade.
+# TODO: the NEST notifier is already deployed on mainnet (0xbe05d12Fd10919F1881125006523452F6aFF791b),
+# but the LidoLocator proxy still points at the legacy one. Once the vote flips the locator to the new
+# implementation, drop the core checkout, fork-node service, and mock-upgrade.
 
 on:
   pull_request:
@@ -13,9 +15,8 @@ permissions:
   contents: read
 
 env:
-  # Core branch carrying the new TokenRateNotifier + mock-upgrade step.
-  # TODO: switch to `develop` once the change lands there.
-  CORE_REF: feat/nest-token-rate-notifier
+  # Core ref carrying the TokenRateNotifier + mock-upgrade step
+  CORE_REF: develop
 
 jobs:
   integration-tests:
@@ -51,7 +52,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v6.0.0
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Enable Corepack
         # core pins `packageManager: yarn@4.x`, which needs Corepack; the runner ships yarn 1.x otherwise.
