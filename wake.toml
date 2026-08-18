@@ -1,0 +1,11 @@
+[compiler.solc]
+target_version = "0.8.23"
+
+[compiler.solc.optimizer]
+enabled = true
+runs = 200
+
+[general]
+# Default is 15s. A cold fork read goes anvil -> archive RPC, which can exceed that and surface
+# as a WebSocketTimeoutException mid-sequence rather than a test failure.
+json_rpc_timeout = 120

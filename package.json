@@ -20,6 +20,7 @@
   "scripts": {
     "test": "hardhat test test/unit/*.ts test/unit/*/*.ts test/acceptance/*.ts test/fuzz/*.ts --network localhost",
     "test:integration": "hardhat test test/integration/*.ts --network localhost",
+    "test:wake": "wake test tests/test_fuzz.py",
     "node": "dotenv -- npm run node-hardhat",
     "node-hardhat": "hardhat node --fork $RPC_URL"
   }

@@ -1,14 +1,17 @@
+import os
 import random
-from typing import Dict, Tuple, Union, NamedTuple
+from typing import Dict, List, Optional, Tuple, Union, NamedTuple
 
 from wake.testing import *
 from wake.testing.fuzzing import *
 from pytypes.contracts.AmountConverter import AmountConverter
 from pytypes.contracts.Order import Order
 from pytypes.contracts.Stonks import Stonks
+from pytypes.contracts.routers.OracleRouter import OracleRouter
 from pytypes.tests.AggregatorV2V3Interface import AggregatorV2V3Interface
 from pytypes.contracts.interfaces.ICoWSwapSettlement import ICoWSwapSettlement
 from pytypes.contracts.interfaces.IFeedRegistry import IFeedRegistry
+from pytypes.contracts.interfaces.IOracleRouter import IOracleRouter
 from pytypes.openzeppelin.contracts.token.ERC20.extensions.IERC20Metadata import IERC20Metadata
 
 
@@ -20,6 +23,21 @@ USDT = Address("0xdAC17F958D2ee523a2206206994597C13D831ec7")
 USDC = Address("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
 COW_SETTLEMENT = Address("0x9008D19f58AAbD9eD0D60971565AA8510560ab41")
 COW_VAULT_RELAYER = Address("0xC92E8bdf79f0507f65a392b0ab4667716BFE0110")
+
+SELL_TOKENS = [STETH, DAI, USDT, USDC]
+BUY_TOKENS = [DAI, USDT, USDC]
+
+MAX_BASIS_POINTS = 10_000
+# Stonks caps margin, tolerance and improvement at 10%.
+BASIS_POINTS_PARAMETERS_LIMIT = 1_000
+# OracleRouter normalizes every feed answer to 1e18.
+PRICE_DECIMALS = 18
+PRICE_UNIT = 10**PRICE_DECIMALS
+# Order tolerates a 2 wei mismatch on both amounts and 1e18-scaled prices.
+AMOUNT_EQUALITY_TOLERANCE = 2
+MIN_POSSIBLE_BALANCE = 10
+UINT256_MAX = 2**256 - 1
+ERC1271_MAGIC_VALUE = bytes.fromhex("1626ba7e")
 
 
 def mint(token: Union[Address, Account], to: Union[Address, Account], amount: int):
@@ -51,6 +69,15 @@ def mint(token: Union[Address, Account], to: Union[Address, Account], amount: in
     default_chain.chain_interface.set_storage_at(str(token), balance_slot, (old_balance + amount).to_bytes(32, "big"))
 
 
+def normalize_price(raw_answer: int, feed_decimals: int) -> int:
+    """Mirror of OracleRouter._readNormalizedPrice scaling to PRICE_UNIT."""
+    if feed_decimals == PRICE_DECIMALS:
+        return raw_answer
+    if feed_decimals < PRICE_DECIMALS:
+        return raw_answer * 10 ** (PRICE_DECIMALS - feed_decimals)
+    return raw_answer // 10 ** (feed_decimals - PRICE_DECIMALS)
+
+
 class AggregatorData(NamedTuple):
     round_id: int
     price: int
@@ -58,81 +85,104 @@ class AggregatorData(NamedTuple):
 
 
 class StonksTest(FuzzTest):
+    admin: Account
+    manager: Account
     agent: Account
+    oracle_router: OracleRouter
     amount_converter: AmountConverter
     stonks: Dict[Tuple[Address, Address], Stonks]
-    chainlink_aggregators: Dict[Tuple[Address, Address], Account]
+    chainlink_aggregators: Dict[Address, Account]
+    feed_decimals: Dict[Address, int]
     aggregator_data: Dict[Account, AggregatorData]
-    heartbeat_timeouts: Dict[Address, int]
+    max_staleness: Dict[Address, int]
 
     order_duration: int
     margin_basis_points: int
     price_tolerance_basis_points: int
+    max_improvement_basis_points: int
 
     def pre_sequence(self):
+        self.admin = default_chain.accounts[0]
+        self.manager = default_chain.accounts[1]
         self.agent = Account.new()
-        manager = default_chain.accounts[0]
 
         self.order_duration = random_int(60, 60 * 60 * 24)
-        self.margin_basis_points = random_int(0, 1_000, edge_values_prob=0.33)  # 0% - 10%
-        self.price_tolerance_basis_points = random_int(0, 1_000, edge_values_prob=0.33)  # 0% - 10%
+        self.margin_basis_points = random_int(0, BASIS_POINTS_PARAMETERS_LIMIT, edge_values_prob=0.33)
+        self.price_tolerance_basis_points = random_int(0, BASIS_POINTS_PARAMETERS_LIMIT, edge_values_prob=0.33)
+        # `uint256.max` disables the improvement cap, 0 is strict mode; both are distinct code paths.
+        self.max_improvement_basis_points = random.choice(
+            [0, UINT256_MAX, random_int(1, BASIS_POINTS_PARAMETERS_LIMIT)]
+        )
 
-        self.heartbeat_timeouts = {}
-        for sell_token in [STETH, DAI, USDT, USDC]:
-            self.heartbeat_timeouts[sell_token] = random_int(60, 60 * 60 * 24)
+        registry = IFeedRegistry(CHAINLINK_FEED_REGISTRY)
 
+        self.oracle_router = OracleRouter.deploy(self.admin, CHAINLINK_FEED_REGISTRY)
+
+        self.max_staleness = {}
+        self.chainlink_aggregators = {}
+        self.feed_decimals = {}
+        self.aggregator_data = {}
+
+        for token in SELL_TOKENS:
+            self.max_staleness[token] = random_int(60, 60 * 60 * 24)
+            self.oracle_router.setTokenFeed(
+                token,
+                IOracleRouter.QuoteDenomination.USD,
+                self.max_staleness[token],
+                True,
+                from_=self.admin,
+            )
+
+            aggregator = Account(registry.getFeed(token, USD_DENOMINATION))
+            self.chainlink_aggregators[token] = aggregator
+            self.feed_decimals[token] = registry.decimals(token, USD_DENOMINATION)
+
+            round_id: int = read_storage_variable(aggregator, "s_hotVars", keys=["latestAggregatorRoundId"])  # pyright: ignore reportGeneralTypeIssues
+            _, price, _, updated_at, _ = AggregatorV2V3Interface(aggregator).latestRoundData()
+            self.aggregator_data[aggregator] = AggregatorData(round_id, price, updated_at)
+
+            _, registry_price, _, _, _ = registry.latestRoundData(token, USD_DENOMINATION)
+            assert registry_price == price
+
+            self._update_aggregator_price(aggregator, price + 1)
+
+        # USD anchor: every token is configured with a USD primary quote, so no ETH/USD bridge hop.
         self.amount_converter = AmountConverter.deploy(
-            CHAINLINK_FEED_REGISTRY,
-            USD_DENOMINATION,
-            [STETH, DAI, USDT, USDC],
-            [DAI, USDT, USDC],
-            [
-                self.heartbeat_timeouts[STETH],
-                self.heartbeat_timeouts[DAI],
-                self.heartbeat_timeouts[USDT],
-                self.heartbeat_timeouts[USDC]
-            ]
+            self.oracle_router,
+            SELL_TOKENS,
+            BUY_TOKENS,
+            False,
         )
 
         sample_order = Order.deploy(
+            self.admin,
             self.agent,
             COW_VAULT_RELAYER,
             ICoWSwapSettlement(COW_SETTLEMENT).domainSeparator(),
         )
 
         self.stonks = {}
-        self.chainlink_aggregators = {}
-        self.aggregator_data = {}
-        for sell_token in [STETH, DAI, USDT, USDC]:
-            aggregator = Account(IFeedRegistry(CHAINLINK_FEED_REGISTRY).getFeed(sell_token, USD_DENOMINATION))
-            self.chainlink_aggregators[(sell_token, USD_DENOMINATION)] = aggregator
-            round_id: int = read_storage_variable(aggregator, "s_hotVars", keys=["latestAggregatorRoundId"])  # pyright: ignore reportGeneralTypeIssues
-            _, price, _, updated_at, _ = AggregatorV2V3Interface(aggregator).latestRoundData()
-            self.aggregator_data[aggregator] = AggregatorData(
-                round_id,
-                price,
-                updated_at,
-            )
-
-            _, price, _, _, _ = IFeedRegistry(CHAINLINK_FEED_REGISTRY).latestRoundData(sell_token, USD_DENOMINATION)
-            assert price == self.aggregator_data[aggregator].price
-
-            self._update_aggregator_price(aggregator, price + 1)
-
-            for buy_token in [DAI, USDT, USDC]:
+        for sell_token in SELL_TOKENS:
+            for buy_token in BUY_TOKENS:
                 if sell_token == buy_token:
                     continue
 
                 self.stonks[(sell_token, buy_token)] = Stonks.deploy(
-                    self.agent,
-                    manager,
-                    sell_token,
-                    buy_token,
-                    self.amount_converter,
-                    sample_order,
-                    self.order_duration,
-                    self.margin_basis_points,
-                    self.price_tolerance_basis_points,
+                    Stonks.InitParams(
+                        admin=self.admin.address,
+                        agent=self.agent.address,
+                        manager=self.manager.address,
+                        tokenFrom=sell_token,
+                        tokenTo=buy_token,
+                        amountConverter=self.amount_converter.address,
+                        orderSample=sample_order.address,
+                        orderDurationInSeconds=self.order_duration,
+                        marginInBasisPoints=self.margin_basis_points,
+                        priceToleranceInBasisPoints=self.price_tolerance_basis_points,
+                        maxImprovementInBasisPoints=self.max_improvement_basis_points,
+                        allowPartialFill=False,
+                        receiver=Address.ZERO,
+                    )
                 )
 
     def _update_aggregator_price(self, aggregator: Account, new_price: int):
@@ -145,106 +195,201 @@ class StonksTest(FuzzTest):
         )
 
         write_storage_variable(aggregator, "s_hotVars", round_id, keys=["latestAggregatorRoundId"])
-        write_storage_variable(aggregator, "s_transmissions", {"answer": new_price, "timestamp": timestamp}, keys=[round_id])
+        # `latestRoundData` surfaces transmissionTimestamp as `updatedAt`, which the staleness
+        # checks read; observationsTimestamp only feeds `startedAt`.
+        write_storage_variable(
+            aggregator,
+            "s_transmissions",
+            {
+                "answer": new_price,
+                "observationsTimestamp": timestamp,
+                "transmissionTimestamp": timestamp,
+            },
+            keys=[round_id],
+        )
 
         _, price, _, updated_at, _ = AggregatorV2V3Interface(aggregator).latestRoundData()
         assert price == new_price
         assert updated_at == timestamp
 
-    def _compute_buy_amount(self, sell_amount: int, price: int, sell_decimals: int, price_decimals: int, buy_decimals: int) -> int:
-        buy_amount = self._compute_buy_amount_without_margin(sell_amount, price, sell_decimals, price_decimals, buy_decimals)
-        return buy_amount * (10_000 - self.margin_basis_points) // 10_000
+    def _normalized_price(self, token: Address) -> int:
+        aggregator = self.chainlink_aggregators[token]
+        return normalize_price(self.aggregator_data[aggregator].price, self.feed_decimals[token])
 
-    def _compute_buy_amount_without_margin(self, sell_amount: int, price: int, sell_decimals: int, price_decimals: int, buy_decimals: int) -> int:
-        if sell_decimals + price_decimals >= buy_decimals:
-            buy_amount = sell_amount * price // 10 ** (sell_decimals + price_decimals - buy_decimals)
+    def _stale_feed(self, sell_token: Address, buy_token: Address, timestamp: int) -> Optional[Tuple[Account, int]]:
+        """First feed OracleRouter rejects as stale, in the order it reads them."""
+        for token in (sell_token, buy_token):
+            aggregator = self.chainlink_aggregators[token]
+            updated_at = self.aggregator_data[aggregator].timestamp
+            if timestamp - updated_at > self.max_staleness[token]:
+                return aggregator, updated_at
+        return None
+
+    def _refresh_feeds(self, tokens: List[Address]):
+        for token in tokens:
+            aggregator = self.chainlink_aggregators[token]
+            price = self.aggregator_data[aggregator].price
+            self._update_aggregator_price(aggregator, max(1, round(price * random.uniform(0.9, 1.1))))
+
+    def _expected_out(self, sell_amount: int, price_from: int, price_to: int, sell_decimals: int, buy_decimals: int) -> int:
+        """Mirror of AmountConverter.getExpectedOut with both prices normalized to PRICE_UNIT."""
+        if sell_decimals >= buy_decimals:
+            decimals_diff = sell_decimals - buy_decimals
+            if decimals_diff == 0:
+                return sell_amount * price_from // price_to
+            return sell_amount * price_from // (price_to * 10**decimals_diff)
+
+        scaled_amount_from = sell_amount * 10 ** (buy_decimals - sell_decimals)
+        return scaled_amount_from * price_from // price_to
+
+    def _estimate_trade_output(self, sell_amount: int, price_from: int, price_to: int, sell_decimals: int, buy_decimals: int) -> int:
+        """Mirror of Stonks.estimateTradeOutput: the expected out, less the margin."""
+        expected_out = self._expected_out(sell_amount, price_from, price_to, sell_decimals, buy_decimals)
+        return expected_out * (MAX_BASIS_POINTS - self.margin_basis_points) // MAX_BASIS_POINTS
+
+    def _expected_signature_error(self, sell_amount: int, baseline_buy_amount: int, current_estimate: int):
+        """Mirror of Order.isValidSignature price checks. Returns None when the signature must be accepted."""
+        if current_estimate == 0:
+            return Order.ZeroQuotableAmount(sell_amount)
+
+        if abs(current_estimate - baseline_buy_amount) <= AMOUNT_EQUALITY_TOLERANCE:
+            return None
+
+        original_limit_price = baseline_buy_amount * PRICE_UNIT // sell_amount
+        current_execution_price = current_estimate * PRICE_UNIT // sell_amount
+
+        if original_limit_price == 0:
+            return Order.PriceShortfallExceedsTolerance(baseline_buy_amount, current_estimate)
+
+        if abs(current_execution_price - original_limit_price) <= AMOUNT_EQUALITY_TOLERANCE:
+            return None
+
+        if current_execution_price > original_limit_price:
+            if self.max_improvement_basis_points == UINT256_MAX:
+                return None
+
+            if self.max_improvement_basis_points == 0:
+                return Order.PriceImprovementRejectedInStrictMode(baseline_buy_amount, current_estimate)
+
+            improvement_bps = (current_execution_price - original_limit_price) * MAX_BASIS_POINTS // original_limit_price
+            if improvement_bps > self.max_improvement_basis_points:
+                max_allowed_buy_amount = (
+                    baseline_buy_amount * (MAX_BASIS_POINTS + self.max_improvement_basis_points) // MAX_BASIS_POINTS
+                )
+                if current_estimate > max_allowed_buy_amount + AMOUNT_EQUALITY_TOLERANCE:
+                    return Order.PriceImprovementExceedsLimit(max_allowed_buy_amount, current_estimate)
+
+            return None
+
+        if self.price_tolerance_basis_points == 0:
+            return Order.PriceShortfallExceedsTolerance(baseline_buy_amount, current_estimate)
+
+        shortfall_bps = (original_limit_price - current_execution_price) * MAX_BASIS_POINTS // original_limit_price
+        if shortfall_bps > self.price_tolerance_basis_points:
+            max_tolerated_shortfall = baseline_buy_amount * self.price_tolerance_basis_points // MAX_BASIS_POINTS
+            min_acceptable_buy_amount = baseline_buy_amount - max_tolerated_shortfall
+            if min_acceptable_buy_amount > current_estimate + AMOUNT_EQUALITY_TOLERANCE:
+                return Order.PriceShortfallExceedsTolerance(min_acceptable_buy_amount, current_estimate)
+
+        return None
+
+    def _check_signature(self, order: Order, order_hash: bytes, sell_amount: int, baseline_buy_amount: int, sell_token: Address, buy_token: Address, sell_decimals: int, buy_decimals: int):
+        timestamp = default_chain.blocks["latest"].timestamp
+        stale = self._stale_feed(sell_token, buy_token, timestamp)
+        if stale is not None:
+            aggregator, updated_at = stale
+            with must_revert(OracleRouter.OracleStale(aggregator.address, updated_at)):
+                order.isValidSignature(order_hash, b"")
+            return
+
+        current_estimate = self._estimate_trade_output(
+            sell_amount,
+            self._normalized_price(sell_token),
+            self._normalized_price(buy_token),
+            sell_decimals,
+            buy_decimals,
+        )
+        error = self._expected_signature_error(sell_amount, baseline_buy_amount, current_estimate)
+
+        if error is None:
+            assert order.isValidSignature(order_hash, b"") == ERC1271_MAGIC_VALUE
         else:
-            buy_amount = sell_amount * price * 10 ** (buy_decimals - sell_decimals - price_decimals)
-
-        return buy_amount
+            with must_revert(error):
+                order.isValidSignature(order_hash, b"")
 
     @flow()
     def flow_place_order(self):
-        sell_token = random.choice([STETH, DAI, USDT, USDC])
-        buy_token = random.choice(list({DAI, USDT, USDC} - {sell_token}))
+        sell_token = random.choice(SELL_TOKENS)
+        buy_token = random.choice(list(set(BUY_TOKENS) - {sell_token}))
+        stonks = self.stonks[(sell_token, buy_token)]
         sell_decimals = IERC20Metadata(sell_token).decimals()
         buy_decimals = IERC20Metadata(buy_token).decimals()
-        sell_amount = random_int(1, 10_000 * sell_decimals)
-        aggregator = self.chainlink_aggregators[(sell_token, USD_DENOMINATION)]
+        # A uniform draw over whole tokens never lands under MIN_POSSIBLE_BALANCE; the edge
+        # values are what keep the dust path reachable.
+        sell_amount = random_int(1, 10_000 * 10**sell_decimals, edge_values_prob=0.05)
 
         with default_chain.snapshot_and_revert():
             default_chain.mine()
             block = default_chain.blocks["latest"]
-            _, price, _, _, _ = IFeedRegistry(CHAINLINK_FEED_REGISTRY).latestRoundData(sell_token, USD_DENOMINATION)
-            decimals = IFeedRegistry(CHAINLINK_FEED_REGISTRY).decimals(sell_token, USD_DENOMINATION)
 
         default_chain.set_next_block_timestamp(block.timestamp)
 
-        mint(sell_token, self.stonks[(sell_token, buy_token)], sell_amount)
-        sell_amount = IERC20Metadata(sell_token).balanceOf(self.stonks[(sell_token, buy_token)])
-        buy_amount = self._compute_buy_amount(sell_amount, price, sell_decimals, decimals, buy_decimals)
-        min_buy_amount = random_int(1, round(buy_amount * 1.1)) if buy_amount >= 1 else 1
-        buy_amount = max(buy_amount, min_buy_amount)
+        price_from = self._normalized_price(sell_token)
+        price_to = self._normalized_price(buy_token)
 
-        if sell_amount <= 10:
-            with must_revert(Stonks.MinimumPossibleBalanceNotMet):
-                self.stonks[(sell_token, buy_token)].placeOrder(min_buy_amount)
-            return
-        elif self.aggregator_data[self.chainlink_aggregators[(sell_token, USD_DENOMINATION)]].timestamp + self.heartbeat_timeouts[sell_token] < default_chain.blocks["pending"].timestamp:
-            # Chainlink feed is outdated
-            with must_revert(AmountConverter.PriceFeedNotUpdated):
-                self.stonks[(sell_token, buy_token)].placeOrder(min_buy_amount)
+        mint(sell_token, stonks, sell_amount)
+        sell_amount = IERC20Metadata(sell_token).balanceOf(stonks)
+        estimated_output = self._estimate_trade_output(sell_amount, price_from, price_to, sell_decimals, buy_decimals)
+        min_buy_amount = random_int(1, round(estimated_output * 1.1)) if estimated_output >= 1 else 1
 
-            # update Chainlink feed so it doesn't fail next time
-            self._update_aggregator_price(self.chainlink_aggregators[(sell_token, USD_DENOMINATION)], round(price * random.uniform(0.9, 1.1)))
+        if sell_amount < MIN_POSSIBLE_BALANCE:
+            with must_revert(Stonks.MinimumPossibleBalanceNotMet(MIN_POSSIBLE_BALANCE, sell_amount)):
+                stonks.placeOrder(min_buy_amount)
             return
-        elif self._compute_buy_amount_without_margin(sell_amount, price, sell_decimals, decimals, buy_decimals) == 0:
-            with must_revert(AmountConverter.InvalidExpectedOutAmount):
-                self.stonks[(sell_token, buy_token)].placeOrder(min_buy_amount)
-            return
-        else:
-            # everything should pass
-            tx = self.stonks[(sell_token, buy_token)].placeOrder(min_buy_amount)
-            assert tx.block.number == block.number
-            assert tx.block.timestamp == block.timestamp
 
-            e = next(e for e in tx.events if isinstance(e, Order.OrderCreated))
-            order = Order(e.order)
-            order_hash = e.orderHash
-            # update values with amounts from event
-            sell_amount = e.orderData.sellAmount
-            buy_amount = max(self._compute_buy_amount(sell_amount, price, sell_decimals, decimals, buy_decimals), min_buy_amount)
-            assert buy_amount == e.orderData.buyAmount
+        stale = self._stale_feed(sell_token, buy_token, default_chain.blocks["pending"].timestamp)
+        if stale is not None:
+            aggregator, updated_at = stale
+            with must_revert(OracleRouter.OracleStale(aggregator.address, updated_at)):
+                stonks.placeOrder(min_buy_amount)
+
+            # refresh both feeds so the next flow isn't blocked on the same revert
+            self._refresh_feeds([sell_token, buy_token])
+            return
+
+        # A zero quote does not revert here: Order floors the CoW limit at `minBuyAmount`, so the
+        # zero surfaces in `isValidSignature` instead.
+        tx = stonks.placeOrder(min_buy_amount)
+        assert tx.block.number == block.number
+        assert tx.block.timestamp == block.timestamp
+
+        e = next(e for e in tx.events if isinstance(e, Order.OrderCreated))
+        order = Order(e.order)
+        order_hash = e.orderHash
+        # update values with amounts from event
+        sell_amount = e.orderData.sellAmount
+        estimated_output = self._estimate_trade_output(sell_amount, price_from, price_to, sell_decimals, buy_decimals)
+        buy_amount = max(estimated_output, min_buy_amount)
+        assert buy_amount == e.orderData.buyAmount
 
         with must_revert(Order.OrderNotExpired):
             order.recoverTokenFrom()
 
         with must_revert(Order.CannotRecoverTokenFrom(sell_token)):
-            order.recoverERC20(sell_token, IERC20Metadata(sell_token).balanceOf(order))
+            order.recoverERC20(sell_token, IERC20Metadata(sell_token).balanceOf(order), from_=self.admin)
 
-        # must pass - price didn't change
-        assert order.isValidSignature(order_hash, b"") == bytes.fromhex("1626ba7e")
+        # price didn't change, but `minBuyAmount` may sit above the quote and count as a shortfall
+        self._check_signature(order, order_hash, sell_amount, buy_amount, sell_token, buy_token, sell_decimals, buy_decimals)
 
+        aggregator = self.chainlink_aggregators[sell_token]
         old_price = self.aggregator_data[aggregator].price
-        new_price = round(old_price * random.uniform(0.9, 1.1))
-        self._update_aggregator_price(aggregator, new_price)
+        self._update_aggregator_price(aggregator, max(1, round(old_price * random.uniform(0.9, 1.1))))
 
-        difference = self._compute_buy_amount(sell_amount, new_price, sell_decimals, decimals, buy_decimals) - buy_amount
-        max_tolerated_difference = buy_amount * self.price_tolerance_basis_points // 10_000
-
-        if self._compute_buy_amount_without_margin(sell_amount, new_price, sell_decimals, decimals, buy_decimals) == 0:
-            with must_revert(AmountConverter.InvalidExpectedOutAmount):
-                order.isValidSignature(order_hash, b"")
-        elif difference > max_tolerated_difference:
-            with must_revert(Order.PriceConditionChanged(buy_amount + max_tolerated_difference, buy_amount + difference)):
-                order.isValidSignature(order_hash, b"")
-        else:
-            # must pass - market situation got worse or stayed the same
-            assert order.isValidSignature(order_hash, b"") == bytes.fromhex("1626ba7e")
+        self._check_signature(order, order_hash, sell_amount, buy_amount, sell_token, buy_token, sell_decimals, buy_decimals)
 
         # roll time forward for order to expire
         default_chain.mine(lambda _: tx.block.timestamp + self.order_duration + 1)
-        with must_revert(Order.OrderExpired):
+        with must_revert(Order.OrderExpired(e.orderData.validTo)):
             order.isValidSignature(order_hash, b"")
 
         # must succeed - order expired
@@ -252,11 +397,19 @@ class StonksTest(FuzzTest):
 
 
 def test_stonks():
-    for _ in range(100):
-        fork_block = random_int(17034871, 19049237)
-        with default_chain.connect(fork=f"http://localhost:8545@{fork_block}"):
+    # Defaults reproduce the full local sweep; CI scales both counts down.
+    rpc_url = os.environ.get("WAKE_RPC_URL", "http://localhost:8545")
+    fork_blocks = int(os.environ.get("WAKE_FORK_BLOCKS", "100"))
+    flows_per_sequence = int(os.environ.get("WAKE_FLOWS", "500"))
+
+    for _ in range(fork_blocks):
+        # Floor is the Chainlink migration to AccessControlledOCR2Aggregator: before ~20.9M the
+        # stETH/DAI feeds use an older aggregator and USDT/USDC predate `typeAndVersion`, so the
+        # `s_hotVars`/`s_transmissions` writes below would target the wrong storage layout.
+        fork_block = random_int(21_000_000, 25_700_000)
+        with default_chain.connect(fork=f"{rpc_url}@{fork_block}"):
             try:
-                StonksTest().run(1, 500)
+                StonksTest().run(1, flows_per_sequence)
             except TransactionRevertedError as e:
                 print(e.tx.call_trace if e.tx else "Call reverted")
                 raise

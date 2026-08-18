@@ -102,8 +102,8 @@ describe('StakingRevenueSource — fork (real TokenRateNotifier)', function () {
     ;[deployer, executor] = await ethers.getSigners()
 
     // Resolve the notifier from the locator, mirroring the contract's own lookup. Requires a
-    // prepared fork (mainnet fork + TokenRateNotifier mock-upgrade, see integration-tests.yml);
-    // against any other environment the resolution or the tests below fail loudly — no skip.
+    // mainnet fork at a block where the locator points at the NEST TokenRateNotifier; against any
+    // other environment the resolution or the tests below fail loudly — no skip.
     const locator: ILidoLocator = await ethers.getContractAt('ILidoLocator', LIDO_LOCATOR)
     const notifierAddress = await locator.postTokenRebaseReceiver()
 

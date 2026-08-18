@@ -1,0 +1,3 @@
+# Wake fuzz suite (tests/). Not needed for the Hardhat or Foundry suites.
+# Run with: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+eth-wake==4.22.1

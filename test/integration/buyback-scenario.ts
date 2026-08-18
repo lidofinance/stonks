@@ -65,9 +65,9 @@ import {
 //
 // Prerequisites: a mainnet fork node (`npm run node-hardhat`), run via `npm run test:integration`.
 // The rebase path is detected from the fork: when `LidoLocator.postTokenRebaseReceiver()` is the
-// NEST TokenRateNotifier (CI applies the lidofinance/core mock-upgrade, see
-// .github/workflows/integration-tests.yml; mainnet will carry it post-launch), the test drives the
-// real `handlePostTokenRebase` fan-out. On a plain fork with the legacy notifier it falls back —
+// NEST TokenRateNotifier — which mainnet now carries, so any recent fork block qualifies — the
+// test drives the real `handlePostTokenRebase` fan-out. Forking a block from before the vote
+// leaves the legacy notifier in place, and the test falls back —
 // with a warning — to pushing the rebase straight into the source by impersonating the receiver,
 // which the source authorizes against, exercising the same accounting with no notifier dependency.
 //
@@ -208,8 +208,8 @@ testItems.forEach((deployedItem) => {
         await allocator.connect(adminSigner).activate()
       }
       // Rebase-path detection: register on the notifier when the fork carries the NEST
-      // TokenRateNotifier (CI mock-upgrade, or mainnet post-launch); otherwise push rebases
-      // straight into the source, which authorizes against the receiver address itself.
+      // TokenRateNotifier, as mainnet now does; otherwise push rebases straight into the
+      // source, which authorizes against the receiver address itself.
       const notifier = await ethers.getContractAt('ITokenRateNotifier', notifierAddress)
       viaNotifier = await tryRegisterObserver(notifier, revenueSourceAddress)
       if (!viaNotifier) {

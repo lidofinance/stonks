@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -26,10 +27,9 @@ jobs:
           - name: Acceptance
             path: test/acceptance
             timeout: 30
-          # NOTE: the Integration suite runs in integration-tests.yml — it needs a fork with the
-          # TokenRateNotifier mock-upgrade applied, which this in-process `--network hardhat`
-          # matrix cannot provide. TODO: fold it back here once the vote points LidoLocator at the
-          # NEST notifier already deployed on mainnet.
+          - name: Integration
+            path: test/integration
+            timeout: 60
           - name: Fuzz
             path: test/fuzz
             timeout: 60
@@ -66,6 +66,72 @@ jobs:
           npx hardhat test ${{ matrix.suite.path }}/**/*.ts --network hardhat
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
+          NODE_OPTIONS: --max_old_space_size=6144
+
+  wake:
+    name: Wake (stateful fuzz)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v6.0.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Wake
+        run: pip install -r requirements.txt
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1.8.0
+
+      - name: Check RPC_URL
+        shell: bash
+        run: |
+          if [[ -z "$RPC_URL" ]]; then
+            echo "RPC_URL repository secret is required for mainnet forking." >&2
+            exit 1
+          fi
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+
+      - name: Generate pytypes
+        run: wake init pytypes
+
+      # Regression gate, ~5 min and ~7k RPC calls
+      - name: Run Wake tests
+        run: wake test tests/test_fuzz.py
+        env:
+          WAKE_RPC_URL: ${{ secrets.RPC_URL }}
+          WAKE_FORK_BLOCKS: 4
+          WAKE_FLOWS: 100
+          COLUMNS: 200
+
+      # The seed alone is in the log; these carry the failing sequence.
+      - name: Upload Wake crash logs
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: wake-crash-logs
+          path: .wake/logs/
+          if-no-files-found: ignore
+          retention-days: 14
 
   forge:
     name: Forge (invariant/fuzz)
