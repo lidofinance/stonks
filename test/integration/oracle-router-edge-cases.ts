@@ -241,6 +241,9 @@ describe('OracleRouter edge cases', function () {
   describe('Multi-token conversion chains', function () {
     let localSnapshot: SnapshotRestorer
 
+    // Wide enough that a live 24h-heartbeat feed never reads as stale here.
+    const STALENESS = 604800 // seconds
+
     beforeEach(async () => {
       localSnapshot = await takeSnapshot()
 
@@ -261,9 +264,9 @@ describe('OracleRouter edge cases', function () {
     })
 
     it('should handle A→B→C conversion maintaining accuracy', async () => {
-      await router.setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86400, true)
-      await router.setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
-      await router.setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, true)
+      await router.setTokenFeed(contracts.STETH, QuoteDenomination.USD, STALENESS, true)
+      await router.setTokenFeed(contracts.DAI, QuoteDenomination.USD, STALENESS, true)
+      await router.setTokenFeed(contracts.USDC, QuoteDenomination.USD, STALENESS, true)
 
       const converter = await deployConverter(
         [contracts.STETH, contracts.DAI],
@@ -287,8 +290,8 @@ describe('OracleRouter edge cases', function () {
     })
 
     it('should maintain commutativity: A→B then B→A ≈ original amount', async () => {
-      await router.setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86400, true)
-      await router.setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
+      await router.setTokenFeed(contracts.STETH, QuoteDenomination.USD, STALENESS, true)
+      await router.setTokenFeed(contracts.DAI, QuoteDenomination.USD, STALENESS, true)
 
       const converter = await deployConverter(
         [contracts.STETH, contracts.DAI],
@@ -310,10 +313,10 @@ describe('OracleRouter edge cases', function () {
     })
 
     it('should maintain transitivity across 5 tokens', async () => {
-      await router.setTokenFeed(contracts.STETH, QuoteDenomination.USD, 86400, true)
-      await router.setTokenFeed(contracts.DAI, QuoteDenomination.USD, 86400, true)
-      await router.setTokenFeed(contracts.USDC, QuoteDenomination.USD, 86400, true)
-      await router.setTokenFeed(contracts.USDT, QuoteDenomination.USD, 86400, true)
+      await router.setTokenFeed(contracts.STETH, QuoteDenomination.USD, STALENESS, true)
+      await router.setTokenFeed(contracts.DAI, QuoteDenomination.USD, STALENESS, true)
+      await router.setTokenFeed(contracts.USDC, QuoteDenomination.USD, STALENESS, true)
+      await router.setTokenFeed(contracts.USDT, QuoteDenomination.USD, STALENESS, true)
 
       const converter = await deployConverter(
         [contracts.STETH, contracts.DAI, contracts.USDC, contracts.USDT],
