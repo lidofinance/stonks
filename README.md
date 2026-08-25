@@ -89,5 +89,6 @@ npm run test:integration
 
 The NEST revenue-source integration suite needs `LidoLocator.postTokenRebaseReceiver()` to be
 the NEST `TokenRateNotifier`. That is now the case on mainnet, so a plain recent fork is enough and
-no upgrade prep is required. Forking a block from before the vote leaves the legacy notifier in
-place; the suite detects that and falls back to driving rebases directly.
+no upgrade prep is required. On a fork from before the vote, `buyback-scenario.ts` and
+`buyback-allocator-fork.ts` detect the legacy notifier and drive rebases directly;
+`staking-revenue-source.ts` and `buyback-happy-path.ts` require the NEST notifier and fail.
