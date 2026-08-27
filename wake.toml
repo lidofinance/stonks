@@ -9,3 +9,9 @@ runs = 200
 # Default is 15s. A cold fork read goes anvil -> archive RPC, which can exceed that and surface
 # as a WebSocketTimeoutException mid-sequence rather than a test failure.
 json_rpc_timeout = 120
+
+[testing.anvil]
+# Setting cmd_args replaces wake's defaults, so the leading four flags are wake's own.
+# --timeout/--retries govern the anvil -> archive RPC leg, which json_rpc_timeout does not cover.
+# Anvil's 45s/5 defaults are too tight for the random historical fork blocks in test_fuzz.py.
+cmd_args = "--prune-history 100 --transaction-block-keeper 10 --steps-tracing --silent --timeout 180000 --retries 10"
