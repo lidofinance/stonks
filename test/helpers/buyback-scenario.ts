@@ -222,7 +222,7 @@ function decodeNotifierError(notifier: ITokenRateNotifier, error: unknown): stri
  * reports whether the notifier fan-out path is available on this fork.
  *
  * The flavor is probed with a static two-arg `addObserver` call as the owner. The NEST
- * `TokenRateNotifier` (the core mock-upgrade in CI, or mainnet post-launch) either accepts it or
+ * `TokenRateNotifier`, which mainnet now carries, either accepts it or
  * reverts with a typed custom error; the legacy pre-NEST notifier has no such selector, so the
  * dispatch reverts with empty data. Returns `false` only for the legacy notifier — a genuine
  * registration failure on a NEST notifier is rethrown rather than mistaken for it.
@@ -254,10 +254,10 @@ export async function tryRegisterObserver(
  * Fires one fee-minting rebase report into the revenue source and returns the receipt.
  *
  * `viaNotifier: true` drives the real `TokenRateNotifier.handlePostTokenRebase` fan-out as the
- * `TOKEN_RATE_PROVIDER` (requires the fork prepared with the core mock-upgrade, see the spec
- * header). `viaNotifier: false` bypasses the notifier by impersonating the current
+ * `TOKEN_RATE_PROVIDER` (requires a fork block where the locator points at the NEST notifier,
+ * see the spec header). `viaNotifier: false` bypasses the notifier by impersonating the current
  * `LidoLocator.postTokenRebaseReceiver()` and calling `pushTokenRate` directly — the source only
- * authorizes against that address, so this path needs no mock-upgrade.
+ * authorizes against that address, so this path works on any fork.
  */
 export async function driveRebase(
   revenueSource: StakingRevenueSource,

@@ -19,3 +19,14 @@ solc
 # Foundry
 forge-out/
 forge-cache/
+
+# Wake
+.wake
+pytypes
+__pycache__/
+*.py[cod]
+.hypothesis/
+wake-coverage.cov
+
+# Python venv for the Wake suite
+.venv

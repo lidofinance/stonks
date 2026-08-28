@@ -1,0 +1,7 @@
+# Wake fuzz suite (tests/). Not needed for the Hardhat or Foundry suites.
+# Run with: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+eth-wake==4.22.1
+
+# eth-wake pins eth-account 0.8, which pins eth-keyfile 0.6, which imports pkg_resources.
+# setuptools 81 dropped that module, so newer setuptools breaks the import chain outright.
+setuptools<81

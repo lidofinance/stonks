@@ -87,8 +87,8 @@ Integration tests run against a mainnet fork. With the fork node running in a se
 npm run test:integration
 ```
 
-The NEST revenue-source integration suite additionally needs the new `TokenRateNotifier`
-mock-upgrade applied to the fork (deploys the new notifier and rewires `LidoLocator`). In CI this
-is done automatically by `.github/workflows/integration-tests.yml`, which checks out the core
-branch and runs its mock-upgrade step against the fork before the suite. Once the notifier is on
-mainnet, that prep is dropped and the suite runs on a plain fork like the rest.
+The NEST revenue-source integration suite needs `LidoLocator.postTokenRebaseReceiver()` to be
+the NEST `TokenRateNotifier`. That is now the case on mainnet, so a plain recent fork is enough and
+no upgrade prep is required. On a fork from before the vote, `buyback-scenario.ts` and
+`buyback-allocator-fork.ts` detect the legacy notifier and drive rebases directly;
+`staking-revenue-source.ts` and `buyback-happy-path.ts` require the NEST notifier and fail.
