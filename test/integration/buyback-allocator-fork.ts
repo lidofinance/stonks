@@ -1015,23 +1015,37 @@ describe('BuybackAllocator — deployed contracts (mainnet fork)', function () {
     it('should bank a negative delta on an under-reserve day and net it against later surplus', async function () {
       await time.increase(ONE_DAY)
       await expectQuoteFresh()
-      await earnBudget(UNDER_RESERVE_SHARES)
 
-      // The small report trails the accrued reserve, so the checkpoint banks a deficit. The
-      // post-checkpoint outcome is derived by the mirror, not hardcoded: a deployed allocator
-      // may carry banked surplus, so the clamped budget can still be positive.
+      // The small report trails the accrued reserve, so the checkpoint banks a deficit.
+      // Measuring the report around the rebase gives the exact expected delta.
+      const cumulativeBeforeSmall = await revenueSource.getCumulativeRevenueUSD()
+      await earnBudget(UNDER_RESERVE_SHARES)
+      const smallReportUSD = (await revenueSource.getCumulativeRevenueUSD()) - cumulativeBeforeSmall
+
       const preDeficit = await captureAllocatePreState()
+      expect(preDeficit.totalRevenueUSD - preDeficit.baselineRevenueUSD).to.equal(smallReportUSD)
       const deficit = await expectAllocateMirror(preDeficit)
-      expect(deficit.budgetDeltaUSD).to.be.lt(0n)
+      expect(deficit.budgetDeltaUSD).to.equal(
+        ((smallReportUSD - deficit.reserveUSD) * preDeficit.surplusShareBP) / MAX_BASIS_POINTS
+      )
 
       // Later surplus nets against the recorded signed budget before any spend: the next
-      // mirror starts from the stored post-deficit value.
+      // mirror starts from the stored post-deficit value and banks the surplus share of the
+      // new report on top of it.
       await fundStEth(deployer, allocatorAddress, 2n * stEthOfUsd(ALLOCATOR_PARAMS.dailyCapUSD))
+      const cumulativeBeforeSurplus = await revenueSource.getCumulativeRevenueUSD()
       await earnBudget()
+      const surplusReportUSD =
+        (await revenueSource.getCumulativeRevenueUSD()) - cumulativeBeforeSurplus
+
       const preSurplus = await captureAllocatePreState()
       expect(preSurplus.budgetUSD).to.equal(deficit.budgetCheckpointed - deficit.spendUSD)
       const surplus = await expectAllocateMirror(preSurplus)
-      expect(surplus.status).to.equal(ALLOCATION_STATUS.Eligible)
+      expect(surplus.budgetCheckpointed).to.equal(
+        deficit.budgetCheckpointed -
+          deficit.spendUSD +
+          ((surplusReportUSD - surplus.reserveUSD) * preSurplus.surplusShareBP) / MAX_BASIS_POINTS
+      )
     })
   })
 
