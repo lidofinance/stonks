@@ -8,40 +8,48 @@ import {
   liquidityAddedArgs,
   ForkBuybackContext,
   ADD_LIQUIDITY_STATUS,
+  FORK_BOUNDS,
   PRICE_UNIT,
 } from '../helpers/buyback-executor'
 
+// Seed depths relative to the bootstrap floor. The fork is unpinned and the contract values TVL at the
+// live oracle, so a seed fixed in wstETH would drift across the floor as prices move.
+const BOOTSTRAP_FLOOR_USD = FORK_BOUNDS.poolBootstrapMinTvlUsd
+const MAX_BOOTSTRAP_FLOOR_USD = 1_000_000n * PRICE_UNIT
+const DEEP_SEED_TVL_USD = 10n * BOOTSTRAP_FLOOR_USD
+const SHALLOW_SEED_TVL_USD = BOOTSTRAP_FLOOR_USD / 2n
+
 // Seeds a deep pool sitting on the oracle ratio: the divergence gate is satisfied and TVL clears the
-// 50000 USD bootstrap floor.
+// bootstrap floor.
 function deepOnOracleFixture(): Promise<ForkBuybackContext | undefined> {
-  return setupForkBuyback({ seedWstEth: 80n * PRICE_UNIT })
+  return setupForkBuyback({ seedTvlUsd: DEEP_SEED_TVL_USD })
 }
 
 // Deep pool whose EMA sits 10% off the oracle ratio, so the divergence gate fires once TVL clears the
 // bootstrap floor.
 function deepDivergentFixture(): Promise<ForkBuybackContext | undefined> {
-  return setupForkBuyback({ seedWstEth: 80n * PRICE_UNIT, priceSkewBps: 11000n })
+  return setupForkBuyback({ seedTvlUsd: DEEP_SEED_TVL_USD, priceSkewBps: 11000n })
 }
 
-// Shallow pool whose EMA sits 10% off the oracle ratio. TVL is below the 50000 USD bootstrap floor, so
-// the gate is bypassed and deposits can build the pool up.
+// Shallow pool whose EMA sits 10% off the oracle ratio. TVL is at half the bootstrap floor, so the
+// gate is bypassed and deposits can build the pool up.
 function shallowDivergentFixture(): Promise<ForkBuybackContext | undefined> {
-  return setupForkBuyback({ seedWstEth: 5n * PRICE_UNIT, priceSkewBps: 11000n })
+  return setupForkBuyback({ seedTvlUsd: SHALLOW_SEED_TVL_USD, priceSkewBps: 11000n })
 }
 
 // Shallow pool whose price_scale sits at twice the oracle ratio. The gate is bypassed, so the executor
 // deposits a balanced pair into a pool priced far from the oracle.
 function shallowFarPriceFixture(): Promise<ForkBuybackContext | undefined> {
-  return setupForkBuyback({ seedWstEth: 5n * PRICE_UNIT, priceSkewBps: 20000n })
+  return setupForkBuyback({ seedTvlUsd: SHALLOW_SEED_TVL_USD, priceSkewBps: 20000n })
 }
 
-// PRICE_UNIT at 200x the oracle ratio with the bootstrap floor set to its maximum, so the gate stays
-// bypassed and only Curve's own invariant math decides whether the deposit lands.
+// price_scale at 200x the oracle ratio with the bootstrap floor set to its maximum and TVL at half of
+// it, so the gate stays bypassed and only Curve's own invariant math decides whether the deposit lands.
 function extremeSkewGateOpenFixture(): Promise<ForkBuybackContext | undefined> {
   return setupForkBuyback({
-    seedWstEth: 1n * PRICE_UNIT,
+    seedTvlUsd: MAX_BOOTSTRAP_FLOOR_USD / 2n,
     priceSkewBps: 2000000n,
-    bounds: { poolBootstrapMinTvlUsd: 1_000_000n * PRICE_UNIT },
+    bounds: { poolBootstrapMinTvlUsd: MAX_BOOTSTRAP_FLOOR_USD },
   })
 }
 
