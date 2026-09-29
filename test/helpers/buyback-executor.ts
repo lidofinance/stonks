@@ -476,7 +476,7 @@ const CURVE_POOL_PARAMS = {
   maExpTime: 866n,
 } as const
 
-const FORK_BOUNDS = {
+export const FORK_BOUNDS = {
   poolPriceDivergenceToleranceBps: 100n,
   minAllowedOrderAmount: 1n * PRICE_UNIT,
   maxAllowedOrderAmount: 1000n * PRICE_UNIT,
@@ -508,9 +508,10 @@ export interface ForkBuybackContext {
 }
 
 export interface ForkSetupOptions {
-  // wstETH-denominated depth of the initial balanced seed. Zero leaves the pool empty so a test can
-  // drive the first deposit.
-  seedWstEth?: bigint
+  // Oracle-valued TVL of the initial balanced seed, scaled to 1e18. Sized in USD so a fixture's
+  // position against the bootstrap floor holds at any live price. Zero leaves the pool empty so a
+  // test can drive the first deposit.
+  seedTvlUsd?: bigint
   // Pool initial_price relative to the oracle ratio, in basis points. 10000 sits on the oracle.
   priceSkewBps?: bigint
   bounds?: InitParamOverrides
@@ -553,7 +554,7 @@ export async function setupForkBuyback(
     return undefined
   }
 
-  const seedWstEth = options.seedWstEth ?? 80n * PRICE_UNIT
+  const seedTvlUsd = options.seedTvlUsd ?? 10n * FORK_BOUNDS.poolBootstrapMinTvlUsd
   const priceSkewBps = options.priceSkewBps ?? 10000n
 
   const [deployer, admin, treasury, allocator, manager, emergency, stranger] =
@@ -585,6 +586,11 @@ export async function setupForkBuyback(
   const oracleLdoPerStEth = (stEthUsd * PRICE_UNIT) / ldoUsd
   // price_oracle is LDO per wstETH. Skew it off the oracle ratio for the divergence-gate fixtures.
   const initialPrice = (((oracleLdoPerStEth * shareRate) / PRICE_UNIT) * priceSkewBps) / 10000n
+
+  // Seeded balanced at `initialPrice`, the LDO leg is worth the wstETH leg times the skew at the
+  // oracle, so the wstETH leg carries `seedTvlUsd / (1 + skew)`.
+  const wstEthUsd = (shareRate * stEthUsd) / PRICE_UNIT
+  const seedWstEth = (seedTvlUsd * PRICE_UNIT * 10000n) / (wstEthUsd * (10000n + priceSkewBps))
 
   // Acquire wstETH by staking ETH and wrapping, keeping spare stETH for executor funding.
   const spareStEth = 40n * PRICE_UNIT
